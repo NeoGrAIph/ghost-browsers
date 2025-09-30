@@ -1,0 +1,11 @@
+/node_modules
+/dist
+/build
+/.idea
+/.vscode
+**/__pycache__/
+**/*.pyc
+.venv
+.env
+.env.*
+poetry.lock
