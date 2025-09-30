@@ -1,0 +1,79 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "camofleet.worker.fullname" . }}
+  labels:
+    app: {{ include "camofleet.worker.fullname" . }}
+{{ include "camofleet.labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "camofleet.worker.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "camofleet.worker.fullname" . }}
+        camofleet-role: worker
+{{ include "camofleet.selectorLabels" . | indent 8 }}
+      {{- with .Values.worker.podAnnotations }}
+      annotations:
+{{ toYaml . | indent 8 }}
+      {{- end }}
+    spec:
+{{ include "camofleet.imagePullSecrets" . | indent 6 }}
+      containers:
+        - name: runner
+          image: {{ include "camofleet.image" (dict "Values" .Values "repository" .Values.worker.runnerImage.repository "tag" .Values.worker.runnerImage.tag) }}
+          imagePullPolicy: {{ .Values.worker.runnerImage.pullPolicy }}
+          env:
+            - name: RUNNER_PORT
+              value: "{{ .Values.worker.runnerPort }}"
+            - name: RUNNER_DISABLE_HTTP3
+              value: "{{ ternary "true" "false" .Values.worker.disableHttp3 }}"
+            {{- if .Values.worker.disableHttp3 }}
+            - name: MOZ_DISABLE_HTTP3
+              value: "1"
+            {{- end }}
+            - name: RUNNER_DISABLE_WEBRTC
+              value: "{{ ternary "true" "false" .Values.worker.disableWebrtc }}"
+            - name: RUNNER_NETWORK_DIAGNOSTICS
+              value: '{{ toJson .Values.worker.networkDiagnostics }}'
+            - name: RUNNER_DIAGNOSTICS_TIMEOUT_SECONDS
+              value: "{{ .Values.worker.diagnosticsTimeoutSeconds }}"
+{{- with .Values.worker.runnerExtraEnv }}
+{{ toYaml . | indent 12 }}
+{{- end }}
+          ports:
+            - containerPort: {{ .Values.worker.runnerPort }}
+              name: runner-http
+          resources:
+{{ toYaml .Values.worker.runnerResources | indent 12 }}
+        - name: worker
+          image: {{ include "camofleet.image" (dict "Values" .Values "repository" .Values.worker.image.repository "tag" .Values.worker.image.tag) }}
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          env:
+            - name: WORKER_RUNNER_BASE_URL
+              value: http://localhost:{{ .Values.worker.runnerPort }}
+            - name: WORKER_SUPPORTS_VNC
+              value: "{{ ternary "true" "false" .Values.worker.supportsVnc }}"
+{{- if hasKey .Values.worker.sessionDefaults "headless" }}
+            - name: WORKER_SESSION_DEFAULTS__HEADLESS
+              value: "{{ .Values.worker.sessionDefaults.headless }}"
+{{- end }}
+{{- with .Values.worker.extraEnv }}
+{{ toYaml . | indent 12 }}
+{{- end }}
+          ports:
+            - containerPort: {{ .Values.worker.service.port }}
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+{{ toYaml .Values.worker.resources | indent 12 }}
+{{- end }}

@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: camofleet-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: camofleet-ui
+  template:
+    metadata:
+      labels:
+        app: camofleet-ui
+    spec:
+      containers:
+        - name: ui
+          image: REGISTRY/camofleet-ui:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: camofleet-ui
+spec:
+  selector:
+    app: camofleet-ui
+  ports:
+    - port: 80
+      targetPort: http
+      name: http

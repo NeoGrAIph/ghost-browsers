@@ -1,0 +1,35 @@
+{{- if .Values.workerVnc.enabled }}
+{{- $rawMin := int .Values.workerVnc.vncPortRange.raw.min }}
+{{- $rawMax := int .Values.workerVnc.vncPortRange.raw.max }}
+{{- $httpPort := int .Values.workerVnc.service.port }}
+{{- if gt $rawMin $rawMax }}
+  {{- fail (printf "workerVnc.vncPortRange.raw.min (%d) must be <= raw.max (%d)" $rawMin $rawMax) }}
+{{- end }}
+{{- if and (ge $httpPort $rawMin) (le $httpPort $rawMax) }}
+  {{- fail (printf "workerVnc.service.port (%d) overlaps raw range %d-%d" $httpPort $rawMin $rawMax) }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "camofleet.workerVnc.fullname" . }}
+  labels:
+    app: {{ include "camofleet.workerVnc.fullname" . }}
+{{ include "camofleet.labels" . | indent 4 }}
+spec:
+  type: {{ .Values.workerVnc.service.type }}
+  selector:
+    app: {{ include "camofleet.workerVnc.fullname" . }}
+  ports:
+    - port: {{ .Values.workerVnc.service.port }}
+      targetPort: http
+      name: http
+    - port: {{ .Values.workerVnc.gatewayPort }}
+      targetPort: vnc-ws
+      name: vnc-ws
+{{- $rawUpper := int (add $rawMax 1) }}
+{{- range $port := untilStep $rawMin $rawUpper 1 }}
+    - port: {{ $port }}
+      targetPort: {{ $port }}
+      name: {{ printf "vnc-raw-%d" $port }}
+{{- end }}
+{{- end }}

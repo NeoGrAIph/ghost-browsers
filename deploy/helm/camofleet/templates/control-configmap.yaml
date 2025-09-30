@@ -1,0 +1,35 @@
+{{- $workerService := include "camofleet.worker.fullname" . -}}
+{{- $workerVncService := include "camofleet.workerVnc.fullname" . -}}
+{{- $defaultWorkers := list -}}
+{{- if .Values.worker.enabled -}}
+{{- $defaultWorkers = append $defaultWorkers (dict "name" "worker-headless" "url" (printf "http://%s:%d" $workerService (.Values.worker.service.port | int)) "supports_vnc" false) -}}
+{{- end -}}
+{{- if .Values.workerVnc.enabled -}}
+{{- $workerVncConfig := dict "name" "worker-vnc" "url" (printf "http://%s:%d" $workerVncService (.Values.workerVnc.service.port | int)) "supports_vnc" true -}}
+{{- $vncOverrides := default dict .Values.workerVnc.controlOverrides -}}
+{{- $vncWsOverride := index $vncOverrides "ws" -}}
+{{- if $vncWsOverride -}}
+{{- $_ := set $workerVncConfig "vnc_ws" $vncWsOverride -}}
+{{- else -}}
+{{- $_ := set $workerVncConfig "vnc_ws" (printf "ws://%s:%d/websockify?token={id}" $workerVncService (.Values.workerVnc.gatewayPort | int)) -}}
+{{- end -}}
+{{- $vncHttpOverride := index $vncOverrides "http" -}}
+{{- if $vncHttpOverride -}}
+{{- $_ := set $workerVncConfig "vnc_http" $vncHttpOverride -}}
+{{- else -}}
+{{- $_ := set $workerVncConfig "vnc_http" (printf "http://%s:%d/vnc/{id}" $workerVncService (.Values.workerVnc.gatewayPort | int)) -}}
+{{- end -}}
+{{- $defaultWorkers = append $defaultWorkers $workerVncConfig -}}
+{{- end -}}
+{{- $workers := default $defaultWorkers .Values.control.config.workers -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "camofleet.control.fullname" . }}-config
+  labels:
+    app: {{ include "camofleet.control.fullname" . }}
+{{ include "camofleet.labels" . | indent 4 }}
+data:
+  CONTROL_WORKERS: |-
+{{ toJson $workers | nindent 4 }}
+  CONTROL_PUBLIC_API_PREFIX: {{ .Values.control.publicApiPrefix | quote }}

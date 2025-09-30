@@ -1,0 +1,113 @@
+services:
+  runner-headless:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runner
+    environment:
+      RUNNER_PORT: 8070
+    expose:
+      - '8070'
+    volumes:
+      - ./runner:/opt/app
+
+  runner-vnc:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runner-vnc
+    environment:
+      RUNNER_PORT: 8070
+      RUNNER_VNC_WS_BASE: ws://localhost:6080/vnc
+      RUNNER_VNC_HTTP_BASE: http://localhost:6080/vnc
+    expose:
+      - '8070'
+    ports:
+      - '8071:8070'
+    volumes:
+      - ./runner:/opt/app
+
+  vnc-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vnc-gateway
+      args:
+        INSTALL_MODE: dev
+    environment:
+      VNCGATEWAY_RUNNER_HOST: runner-vnc
+      VNCGATEWAY_MIN_PORT: 6900
+      VNCGATEWAY_MAX_PORT: 6999
+    depends_on:
+      - runner-vnc
+    ports:
+      - '6080:6080'
+    volumes:
+      - ./vnc-gateway:/opt/app
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+      args:
+        INSTALL_MODE: dev
+    environment:
+      WORKER_RUNNER_BASE_URL: http://runner-headless:8070
+      WORKER_SUPPORTS_VNC: 'false'
+    depends_on:
+      - runner-headless
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./worker:/opt/app
+
+  worker-vnc:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+      args:
+        INSTALL_MODE: dev
+    environment:
+      WORKER_RUNNER_BASE_URL: http://runner-vnc:8070
+      WORKER_SUPPORTS_VNC: 'true'
+    depends_on:
+      - runner-vnc
+    ports:
+      - '8081:8080'
+    volumes:
+      - ./worker:/opt/app
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.control
+      args:
+        INSTALL_MODE: dev
+    environment:
+      CONTROL_WORKERS: >-
+        [
+          {"name":"headless","url":"http://worker:8080","supports_vnc":false},
+          {"name":"vnc","url":"http://worker-vnc:8080","supports_vnc":true,
+           "vnc_ws":"ws://localhost:6080/vnc","vnc_http":"http://localhost:6080/vnc"}
+        ]
+    depends_on:
+      - worker
+      - worker-vnc
+    ports:
+      - '9000:9000'
+    volumes:
+      - ./control-plane:/opt/app
+
+  ui:
+    image: node:20
+    working_dir: /app
+    environment:
+      VITE_API_ORIGIN: http://control-plane:9000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    depends_on:
+      - control-plane
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./ui:/app
+      - ui_node_modules:/app/node_modules
+
+volumes:
+  ui_node_modules:

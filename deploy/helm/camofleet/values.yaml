@@ -1,0 +1,126 @@
+nameOverride: camofleet
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+control:
+  replicas: 1
+  image:
+    repository: camofleet-control
+    tag: latest
+    pullPolicy: IfNotPresent
+  podAnnotations: {}
+  resources: {}
+  extraEnv: []
+  service:
+    type: ClusterIP
+    port: 9000
+  publicApiPrefix: /api
+  config:
+    # Leave "workers" unset (null) to use the in-cluster services that are generated
+    # from the enabled worker deployments. Override this array only when the
+    # control plane should talk to external runners.
+    workers: null
+    # Control plane VNC endpoints default to the public overrides declared under
+    # workerVnc.controlOverrides. Set the entries there to match the ingress
+    # route you create manually or set them to null to use the in-cluster
+    # service URLs instead.
+
+ui:
+  replicas: 1
+  image:
+    repository: camofleet-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  podAnnotations: {}
+  resources: {}
+  controlHost: ""
+  controlScheme: http
+  controlPort: null
+  service:
+    type: ClusterIP
+    port: 80
+
+worker:
+  enabled: true
+  replicas: 1
+  runnerImage:
+    repository: camofleet-runner
+    tag: latest
+    pullPolicy: IfNotPresent
+  runnerResources: {}
+  # Keep HTTP/3 disabled and WebRTC off to avoid Firefox using UDP transports
+  disableHttp3: true
+  disableWebrtc: true
+  networkDiagnostics:
+    - https://bot.sannysoft.com
+  diagnosticsTimeoutSeconds: 8
+  runnerExtraEnv: []
+  image:
+    repository: camofleet-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  podAnnotations: {}
+  resources: {}
+  runnerPort: 8070
+  service:
+    type: ClusterIP
+    port: 8080
+  supportsVnc: false
+  sessionDefaults:
+    headless: true
+  extraEnv: []
+
+workerVnc:
+  enabled: true
+  replicas: 1
+  runnerImage:
+    repository: camofleet-runner-vnc
+    tag: latest
+    pullPolicy: IfNotPresent
+  runnerResources: {}
+  # Keep HTTP/3 disabled and WebRTC off to avoid Firefox using UDP transports
+  disableHttp3: true
+  disableWebrtc: true
+  networkDiagnostics:
+    - https://bot.sannysoft.com
+  diagnosticsTimeoutSeconds: 8
+  runnerExtraEnv: []
+  gatewayImage:
+    repository: camofleet-vnc-gateway
+    tag: latest
+    pullPolicy: IfNotPresent
+  gatewayResources: {}
+  gatewayExtraEnv: []
+  # Exposed through the gateway container as VNCGATEWAY_PORT and published by the Service/Ingress.
+  gatewayPort: 6080
+  runnerPathPrefix: ""
+  image:
+    repository: camofleet-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  podAnnotations: {}
+  resources: {}
+  runnerPort: 8070
+  service:
+    type: ClusterIP
+    port: 8080
+  vncPortRange:
+    # Controls the VNCGATEWAY_MIN_PORT/VNCGATEWAY_MAX_PORT environment variables for the
+    # gateway and the dynamic ports allocated by the runner container.
+    ws:
+      min: 6900
+      max: 6909
+    raw:
+      min: 5900
+      max: 5909
+  extraEnv: []
+  sessionDefaults: {}
+  controlOverrides:
+    # Override the public URLs that the control plane returns in API responses.
+    # When setting custom values make sure the URLs resolve to the public route
+    # that exposes the VNC gateway. The runner appends ``vnc.html`` and
+    # ``websockify`` to these bases automatically.
+    ws: null
+    http: null

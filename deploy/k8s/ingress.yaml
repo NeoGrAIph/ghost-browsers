@@ -1,0 +1,36 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: camofleet
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  tls:
+    - hosts:
+        - camofleet.local
+      secretName: camofleet-tls
+  rules:
+    - host: camofleet.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: camofleet-ui
+                port:
+                  name: http
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: camofleet-control
+                port:
+                  name: http
+          - path: /vnc
+            pathType: Prefix
+            backend:
+              service:
+                name: camofleet-vnc-gateway
+                port:
+                  name: http

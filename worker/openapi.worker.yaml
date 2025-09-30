@@ -1,0 +1,190 @@
+openapi: 3.0.3
+info:
+  title: Camofleet Worker API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /sessions:
+    get:
+      summary: List sessions
+      responses:
+        '200':
+          description: Array of active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionDetail'
+    post:
+      summary: Create session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionCreateRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetail'
+  /sessions/{id}:
+    get:
+      summary: Get session detail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetail'
+        '404':
+          description: Session not found
+    delete:
+      summary: Delete session
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session terminated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDeleteResponse'
+        '404':
+          description: Session not found
+  /sessions/{id}/touch:
+    post:
+      summary: Extend TTL
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetail'
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        version:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+    SessionCreateRequest:
+      type: object
+      properties:
+        headless:
+          type: boolean
+        idle_ttl_seconds:
+          type: integer
+          minimum: 30
+          maximum: 3600
+        start_url:
+          type: string
+          maxLength: 1024
+          description: Optional URL to open once the session is ready.
+        start_url_wait:
+          type: string
+          description: |
+            Controls navigation to the optional `start_url`: `none`
+            (skip navigation), `domcontentloaded`, `load`.
+          enum: [none, domcontentloaded, load]
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        vnc:
+          type: boolean
+          default: false
+          description: Request a session with an attached VNC preview.
+      additionalProperties: false
+    SessionDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        browser:
+          type: string
+        headless:
+          type: boolean
+        idle_ttl_seconds:
+          type: integer
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        worker_id:
+          type: string
+        vnc_enabled:
+          type: boolean
+          description: Whether a VNC preview is available for this session.
+        ws_endpoint:
+          type: string
+        vnc:
+          type: object
+          properties:
+            ws:
+              type: string
+              nullable: true
+            http:
+              type: string
+              nullable: true
+            password_protected:
+              type: boolean
+        start_url_wait:
+          type: string
+          description: Runner start URL wait mode.
+          enum: [none, domcontentloaded, load]
+      required: [id, status, created_at, last_seen_at, browser, headless, idle_ttl_seconds, labels, worker_id, vnc_enabled, ws_endpoint, vnc, start_url_wait]
+    SessionDeleteResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+      required: [id, status]

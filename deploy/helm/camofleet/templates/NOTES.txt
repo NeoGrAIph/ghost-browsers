@@ -1,0 +1,4 @@
+Ingress resources are not managed by this chart. Services are exposed via ClusterIP:
+  * {{ include "camofleet.ui.fullname" . }} on port {{ .Values.ui.service.port }}
+  * {{ include "camofleet.control.fullname" . }} on port {{ .Values.control.service.port }}
+Use `kubectl port-forward` for debugging or create ingress resources manually following the deployment guide.

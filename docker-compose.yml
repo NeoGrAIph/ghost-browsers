@@ -1,0 +1,90 @@
+services:
+  runner-headless:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runner
+    environment:
+      RUNNER_PORT: 8070
+      RUNNER_DISABLE_HTTP3: 'true'
+      RUNNER_NETWORK_DIAGNOSTICS: '["https://bot.sannysoft.com"]'
+      RUNNER_DIAGNOSTICS_TIMEOUT_SECONDS: '8'
+    expose:
+      - '8070'
+
+  runner-vnc:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runner-vnc
+    environment:
+      RUNNER_PORT: 8070
+      RUNNER_VNC_WS_BASE: ws://localhost:6080/vnc
+      RUNNER_VNC_HTTP_BASE: http://localhost:6080/vnc
+      RUNNER_DISABLE_HTTP3: 'true'
+      RUNNER_NETWORK_DIAGNOSTICS: '["https://bot.sannysoft.com"]'
+      RUNNER_DIAGNOSTICS_TIMEOUT_SECONDS: '8'
+    expose:
+      - '8070'
+
+  vnc-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vnc-gateway
+    environment:
+      VNCGATEWAY_RUNNER_HOST: runner-vnc
+      VNCGATEWAY_MIN_PORT: 6900
+      VNCGATEWAY_MAX_PORT: 6999
+    depends_on:
+      - runner-vnc
+    ports:
+      - '6080:6080'
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      WORKER_RUNNER_BASE_URL: http://runner-headless:8070
+      WORKER_SUPPORTS_VNC: 'false'
+    depends_on:
+      - runner-headless
+    expose:
+      - '8080'
+
+  worker-vnc:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      WORKER_RUNNER_BASE_URL: http://runner-vnc:8070
+      WORKER_SUPPORTS_VNC: 'true'
+    depends_on:
+      - runner-vnc
+    expose:
+      - '8080'
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.control
+    environment:
+      CONTROL_PUBLIC_API_PREFIX: /api
+      CONTROL_WORKERS: >-
+        [
+          {"name":"headless","url":"http://worker:8080","supports_vnc":false},
+          {"name":"vnc","url":"http://worker-vnc:8080","supports_vnc":true,
+           "vnc_ws":"ws://localhost:6080/vnc","vnc_http":"http://localhost:6080/vnc"}
+        ]
+    depends_on:
+      - worker
+      - worker-vnc
+    ports:
+      - '9000:9000'
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    depends_on:
+      - control-plane
+    ports:
+      - '8080:80'

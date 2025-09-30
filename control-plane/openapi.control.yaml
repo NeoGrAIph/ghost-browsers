@@ -1,0 +1,199 @@
+openapi: 3.0.3
+info:
+  title: Camofleet Control API
+  version: 0.1.0
+servers:
+  - url: http://localhost:9000
+paths:
+  /health:
+    get:
+      summary: Aggregated health
+      responses:
+        '200':
+          description: Status of all workers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  workers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkerStatus'
+  /workers:
+    get:
+      summary: Worker statuses
+      responses:
+        '200':
+          description: List of workers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkerStatus'
+  /sessions:
+    get:
+      summary: List sessions across workers
+      responses:
+        '200':
+          description: Combined session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionDescriptor'
+    post:
+      summary: Create session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDescriptor'
+  /sessions/{worker}/{id}:
+    get:
+      summary: Session detail
+      parameters:
+        - in: path
+          name: worker
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDescriptor'
+        '404':
+          description: Session not found
+    delete:
+      summary: Terminate session
+      parameters:
+        - in: path
+          name: worker
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Delete confirmation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+        '404':
+          description: Session not found
+components:
+  schemas:
+    WorkerStatus:
+      type: object
+      properties:
+        name:
+          type: string
+        healthy:
+          type: boolean
+        detail:
+          type: object
+          additionalProperties: true
+      required: [name, healthy, detail]
+    SessionDescriptor:
+      type: object
+      properties:
+        worker:
+          type: string
+        id:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        browser:
+          type: string
+        headless:
+          type: boolean
+        idle_ttl_seconds:
+          type: integer
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        ws_endpoint:
+          type: string
+        vnc_enabled:
+          type: boolean
+          nullable: true
+          description: Whether a VNC preview is available for this session.
+        vnc:
+          type: object
+          additionalProperties: true
+        start_url_wait:
+          type: string
+          nullable: true
+          description: |
+            How long to wait for the initial navigation. One of `none`,
+            `domcontentloaded`, `load`.
+          enum: [none, domcontentloaded, load]
+      required: [worker, id, status, created_at, last_seen_at, browser, headless, idle_ttl_seconds, labels, ws_endpoint, vnc]
+    CreateSessionRequest:
+      type: object
+      properties:
+        worker:
+          type: string
+        headless:
+          type: boolean
+        idle_ttl_seconds:
+          type: integer
+          minimum: 30
+          maximum: 3600
+        start_url:
+          type: string
+          maxLength: 1024
+          description: Optional URL to open once the session is ready.
+        start_url_wait:
+          type: string
+          description: |
+            Controls whether the runner should automatically open the
+            `start_url` and how long to wait for it: `none`
+            (don't navigate), `domcontentloaded`, `load`.
+          enum: [none, domcontentloaded, load]
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        vnc:
+          type: boolean
+          default: false
+          description: Request a session with an attached VNC preview.
+      additionalProperties: false

@@ -1,0 +1,17 @@
+{{- if .Values.worker.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "camofleet.worker.fullname" . }}
+  labels:
+    app: {{ include "camofleet.worker.fullname" . }}
+{{ include "camofleet.labels" . | indent 4 }}
+spec:
+  type: {{ .Values.worker.service.type }}
+  selector:
+    app: {{ include "camofleet.worker.fullname" . }}
+  ports:
+    - port: {{ .Values.worker.service.port }}
+      targetPort: http
+      name: http
+{{- end }}

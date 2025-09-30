@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "camofleet.control.fullname" . }}
+  labels:
+    app: {{ include "camofleet.control.fullname" . }}
+{{ include "camofleet.labels" . | indent 4 }}
+spec:
+  type: {{ .Values.control.service.type }}
+  selector:
+    app: {{ include "camofleet.control.fullname" . }}
+  ports:
+    - port: {{ .Values.control.service.port }}
+      targetPort: http
+      name: http

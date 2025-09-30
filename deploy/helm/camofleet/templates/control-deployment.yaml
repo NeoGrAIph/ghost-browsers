@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "camofleet.control.fullname" . }}
+  labels:
+    app: {{ include "camofleet.control.fullname" . }}
+{{ include "camofleet.labels" . | indent 4 }}
+spec:
+  replicas: {{ .Values.control.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "camofleet.control.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "camofleet.control.fullname" . }}
+{{ include "camofleet.selectorLabels" . | indent 8 }}
+      annotations:
+        checksum/control-config: {{ include (print $.Template.BasePath "/control-configmap.yaml") . | sha256sum }}
+{{- with .Values.control.podAnnotations }}
+{{ toYaml . | nindent 8 }}
+{{- end }}
+    spec:
+{{ include "camofleet.imagePullSecrets" . | indent 6 }}
+      containers:
+        - name: control
+          image: {{ include "camofleet.image" (dict "Values" .Values "repository" .Values.control.image.repository "tag" .Values.control.image.tag) }}
+          imagePullPolicy: {{ .Values.control.image.pullPolicy }}
+          env:
+            - name: CONTROL_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "camofleet.control.fullname" . }}-config
+                  key: CONTROL_WORKERS
+            - name: CONTROL_PUBLIC_API_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "camofleet.control.fullname" . }}-config
+                  key: CONTROL_PUBLIC_API_PREFIX
+{{- with .Values.control.extraEnv }}
+{{ toYaml . | indent 12 }}
+{{- end }}
+          ports:
+            - containerPort: {{ .Values.control.service.port }}
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+{{ toYaml .Values.control.resources | indent 12 }}

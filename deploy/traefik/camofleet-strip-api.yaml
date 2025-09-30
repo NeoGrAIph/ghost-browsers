@@ -1,0 +1,9 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: camofleet-strip-api
+  namespace: camofleet
+spec:
+  stripPrefix:
+    prefixes:
+      - /api

@@ -1,0 +1,53 @@
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
+
+# Base system packages, locales и шрифты
+RUN echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      curl ffmpeg tzdata locales ca-certificates fontconfig fontconfig-config \
+      cabextract xfonts-utils \
+      fonts-liberation fonts-dejavu-core fonts-dejavu-extra \
+      fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
+      ttf-mscorefonts-installer \
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -f -v
+
+COPY docker/assets/fontconfig/99-windows-fonts.conf /etc/fonts/conf.d/99-windows-fonts.conf
+COPY docker/scripts/install-windows-fonts.sh /tmp/install-windows-fonts.sh
+RUN bash /tmp/install-windows-fonts.sh && rm /tmp/install-windows-fonts.sh && fc-cache -f -v
+
+RUN sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    sed -i 's/# ru_RU.UTF-8 UTF-8/ru_RU.UTF-8 UTF-8/' /etc/locale.gen && \
+    sed -i 's/# fi_FI.UTF-8 UTF-8/fi_FI.UTF-8 UTF-8/' /etc/locale.gen && \
+    locale-gen
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    TZ=Europe/Helsinki
+
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir --break-system-packages --ignore-installed typing_extensions==4.15.0
+
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+WORKDIR /opt/app
+COPY shared /opt/shared
+COPY VERSION /opt/VERSION
+COPY runner /opt/app
+ENV PYTHONPATH=/opt
+RUN pip install --no-cache-dir --break-system-packages -e .
+
+# Pre-fetch Camoufox resources under the pwuser cache
+RUN mkdir -p /data/artifacts /data/userdata /data/tmp /home/pwuser/.cache && \
+    for attempt in 1 2 3; do \
+      HOME=/home/pwuser XDG_CACHE_HOME=/home/pwuser/.cache python -m camoufox fetch && break || \
+      { echo "Camoufox fetch attempt $attempt failed, retrying"; sleep 10; }; \
+    done && \
+    chown -R pwuser:pwuser /data /home/pwuser
+
+USER pwuser
+ENV RUNNER_DATA=/data \
+    XDG_CACHE_HOME=/home/pwuser/.cache \
+    RUNNER_PORT=8070
+
+EXPOSE 8070
+CMD ["python", "-m", "camoufox_runner"]

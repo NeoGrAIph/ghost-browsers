@@ -1,0 +1,61 @@
+# База: официальный Playwright-образ для Python (Ubuntu 24.04 Noble)
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
+
+# Системные пакеты: видео, шрифты, локали, сертификаты
+RUN echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections && \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl ffmpeg tzdata locales ca-certificates fontconfig fontconfig-config \
+    cabextract xfonts-utils \
+    fonts-liberation fonts-dejavu-core fonts-dejavu-extra \
+    fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
+    ttf-mscorefonts-installer \
+ && rm -rf /var/lib/apt/lists/* \
+ && fc-cache -f -v
+
+COPY docker/assets/fontconfig/99-windows-fonts.conf /etc/fonts/conf.d/99-windows-fonts.conf
+COPY docker/scripts/install-windows-fonts.sh /tmp/install-windows-fonts.sh
+RUN bash /tmp/install-windows-fonts.sh && rm /tmp/install-windows-fonts.sh && fc-cache -f -v
+
+# Локали и часовой пояс
+RUN sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
+ && sed -i 's/# ru_RU.UTF-8 UTF-8/ru_RU.UTF-8 UTF-8/' /etc/locale.gen \
+ && sed -i 's/# fi_FI.UTF-8 UTF-8/fi_FI.UTF-8 UTF-8/' /etc/locale.gen \
+ && locale-gen
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    TZ=Europe/Helsinki
+
+# Python-зависимости для будущего Runner'а (без прикладного кода)
+RUN pip install -U pip && pip install -U \
+    "camoufox[geoip]" \
+    fastapi uvicorn[standard] pydantic orjson \
+    httpx websockets \
+    boto3 minio \
+    prometheus-client \
+    tenacity \
+    python-json-logger loguru \
+    pyjwt python-multipart \
+    sse-starlette
+
+# Каталоги для данных и кэша
+RUN mkdir -p /data/artifacts /data/userdata /data/tmp /home/pwuser/.cache
+
+# Качаем всё ОДНИМ шагом под root:
+# - указываем HOME и XDG_CACHE_HOME на /home/pwuser, чтобы бинарь Camoufox попал в его кеш
+# - GeoIP база пишется в site-packages с правами root (это нормально)
+RUN HOME=/home/pwuser XDG_CACHE_HOME=/home/pwuser/.cache python -m camoufox fetch && \
+    chown -R pwuser:pwuser /data /home/pwuser
+
+# Переходим под обычного пользователя
+USER pwuser
+ENV RUNNER_DATA=/data \
+    XDG_CACHE_HOME=/home/pwuser/.cache
+
+# Рабочая директория (прикладного кода пока нет)
+WORKDIR /app
+
+# Healthcheck: camoufox + ffmpeg
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD bash -lc "python -m camoufox version >/dev/null 2>&1 && ffmpeg -version >/dev/null 2>&1 || exit 1"
+
+# Ничего не запускаем по умолчанию
+CMD ["/bin/bash"]
