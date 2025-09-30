@@ -1,0 +1,15 @@
+# ghost-browsers — Архитектура (lean)
+
+## Обзор
+Платформа управляет одноразовыми Camoufox-сессиями с live-доступом (noVNC/WebSocket) и индивидуальными прокси. UI предоставляет мониторинг и операции; внешние клиенты используют REST/SSE.
+
+## Компоненты
+- **Session Runner** — хранит сессии в памяти, управляет Playwright/Firefox, пушит события в Gateway.
+- **Session Gateway** — REST/SSE/WebSocket API, проверка Keycloak JWT, карта `session_id → runner`.
+- **VNC Gateway** — прокси для VNC/WebSocket; валидирует короткоживущие токены.
+- **UI** — React+Vite SPA: Keycloak auth, список сессий, состояние runner’ов, VNC просмотр.
+
+## Нефункциональные требования
+- Время запуска «тёплой» сессии ≤ 10 сек.
+- SLA событий: < 2 сек до доставки в UI.
+- Восстановление карты сессий Gateway после рестарта < 5 сек.
