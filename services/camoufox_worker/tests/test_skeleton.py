@@ -10,6 +10,7 @@ def test_task_files_exist() -> None:
 
     for name in [
         "README-TASK.md",
+        "README.md",
         "AGENTS.md",
         "AGENT_NOTES.md",
         "worker/jobs.py",
