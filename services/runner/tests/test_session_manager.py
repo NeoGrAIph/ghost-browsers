@@ -103,3 +103,38 @@ async def test_end_session_sets_terminal_state_and_event() -> None:
     events = await publisher.drain()
     assert [event.type for event in events] == [SessionEventType.CREATED, SessionEventType.ENDED]
     assert events[-1].reason == "completed"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_metrics_track_active_sessions_and_prewarm_failures() -> None:
+    """Metrics should reflect active sessions and retain bounded prewarm errors."""
+
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(
+            runner_id="runner-metrics",
+            camoufox_path="/usr/bin/camoufox",
+            slot_limit=3,
+            prewarm_failure_history_size=2,
+        ),
+        publisher,
+    )
+
+    first = await manager.create_session(SessionCreatePayload())
+    await manager.create_session(SessionCreatePayload())
+    await manager.record_prewarm_failure("warmup-1")
+    await manager.record_prewarm_failure("warmup-2")
+    metrics = await manager.get_metrics()
+
+    assert metrics.active_sessions == 2
+    assert metrics.prewarm_failure_count == 2
+    assert metrics.prewarm_failures == ["warmup-1", "warmup-2"]
+    assert metrics.last_prewarm_error == "warmup-2"
+
+    await manager.record_prewarm_failure("warmup-3")
+    metrics = await manager.get_metrics()
+    assert metrics.prewarm_failures == ["warmup-2", "warmup-3"]
+
+    await manager.end_session(first.id)
+    metrics = await manager.get_metrics()
+    assert metrics.active_sessions == 1

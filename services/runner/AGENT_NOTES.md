@@ -5,7 +5,9 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 
 ## Interfaces
 - **HTTP**
-  - `GET /health` — returns `{status, runner_id, camoufox_path}` for readiness probes.
+  - `GET /health` — возвращает `{status, runner_id, camoufox_path, slots, vnc, proxy, prewarm}`;
+    `slots.total` считывается из `RunnerSettings.slot_limit`, `slots.active` — количество
+    не-`DEAD` сессий; `prewarm` включает счётчик и последнюю ошибку прогрева.
   - `POST /sessions` — accepts `SessionCreatePayload`, returns created `core.Session` snapshot.
   - `PATCH /sessions/{id}` — accepts `SessionUpdatePayload`, merges labels/metadata, returns updated `core.Session`.
   - `DELETE /sessions/{id}` — marks session as `DEAD`, returns terminal snapshot.
@@ -16,11 +18,15 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - Uses `core.Session`, `SessionEvent`, `SessionProxySettings`, `SessionVncDetails`, and related enums.
 - Local payload models (`SessionCreatePayload`, `SessionUpdatePayload`) act as request DTOs before conversion into immutable core models.
 - Sessions are keyed by UUID and persisted in-memory; timestamps sourced from an injectable clock (UTC aware).
+- `SessionManagerMetrics` агрегирует счётчик активных сессий и историю ошибок прогрева (bounded deque по
+  `RunnerSettings.prewarm_failure_history_size`).
 
 ## Decisions
 - **In-memory publisher stub**: We expose a `SessionEventPublisher` protocol with an in-memory default to unblock tests until a real transport (HTTP/SSE) is integrated.
-- **Automatic VNC stubs**: When sessions are non-headless and no explicit VNC payload is provided, the manager synthesises `SessionVncDetails` using configurable base URLs and bounded TTL (<=300s) to respect `SessionVncDetails` invariants.
-- **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension.
+- **Automatic VNC stubs**: When sessions are non-headless and no explicit VNC payload is provided, the manager synthesises `SessionVncDetails` using configurable base URLs and bounded TTL (<=300s) to respect `SessionVncDetails` invariants. Глобальный флаг `RunnerSettings.vnc_enabled` отключает генерацию stub-значений.
+- **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
+- **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
+  показывать последние сбои без риска утечки памяти.
 
 ## Constraints & Invariants
 - `RunnerSettings.vnc_token_ttl_seconds` capped at 300 seconds to align with `SessionVncDetails` validation.
@@ -30,7 +36,6 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 
 ## Known Gaps / TODO
 - [ ] Replace in-memory publisher with HTTP/SSE integration towards Gateway when endpoint contract is defined.
-- [ ] Enrich `/health` with slot/VNC diagnostics once browser integration lands.
 
 ## How to Test
 - `poetry install --no-root`
@@ -38,4 +43,4 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - `poetry run ruff check .`
 
 ## Changelog (for agents)
-- 2024-09-21 · OpenAI ChatGPT · Initial FastAPI skeleton, in-memory session manager with event publishing, unit tests, and documentation update.
+- 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
