@@ -192,6 +192,66 @@ def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> Non
     assert payload["token_ttl_seconds"] == 120
 
 
+def test_session_reads_reflect_runner_override_updates(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """Stored sessions adopt runner override changes on subsequent reads."""
+
+    now = datetime.now(tz=UTC)
+    session_id = str(uuid4())
+    session_body = {
+        "id": session_id,
+        "runner_id": "runner-1",
+        "status": SessionStatus.INIT.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+        "vnc": {
+            "http_url": "http://127.0.0.1:6901/view",
+            "websocket_url": "ws://127.0.0.1:6901/ws",
+        },
+    }
+
+    response = gateway_client.post("/sessions", json=session_body)
+    assert response.status_code == 201
+    initial = response.json()["vnc"]
+    assert initial["http_url"] == f"https://vnc.example/view/{session_id}"
+
+    registry = gateway_app.state.runner_registry
+    runner = asyncio.run(registry.get("runner-1"))
+    assert runner is not None
+    asyncio.run(
+        registry.upsert(
+            runner.model_copy(
+                update={
+                    "vnc_http_url_template": "https://override.example/custom/{id}",
+                    "vnc_ws_url_template": "wss://override.example/ws/{id}",
+                }
+            )
+        )
+    )
+
+    detail = gateway_client.get(f"/sessions/{session_id}")
+    assert detail.status_code == 200
+    payload = detail.json()["vnc"]
+    http_url = payload["http_url"]
+    ws_url = payload["websocket_url"]
+    assert http_url.startswith("https://override.example/custom/")
+    assert http_url.endswith(f"/view/{session_id}")
+    assert ws_url == f"wss://override.example/ws/{session_id}"
+
+    listing = gateway_client.get("/sessions")
+    assert listing.status_code == 200
+    sessions = listing.json()
+    entry = next(item for item in sessions if item["id"] == session_id)
+    list_http = entry["vnc"]["http_url"]
+    list_ws = entry["vnc"]["websocket_url"]
+    assert list_http.startswith("https://override.example/custom/")
+    assert list_http.endswith(f"/view/{session_id}")
+    assert list_ws == f"wss://override.example/ws/{session_id}"
+
+
 def test_create_command_proxies_to_runner(
     gateway_app: FastAPI, gateway_client: TestClient
 ) -> None:

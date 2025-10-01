@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from collections.abc import Iterable
 from typing import Annotated
 from uuid import UUID
 
@@ -187,11 +188,14 @@ async def execute_delete_command(
 @router.get("", response_model=list[Session])
 async def list_sessions(
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> list[Session]:
     """Return all sessions currently tracked by the gateway."""
 
-    return await registry.list()
+    sessions = await registry.list()
+    return await _enrich_registry_sessions(sessions, runners, token_service, user)
 
 
 @router.post("", response_model=Session, status_code=status.HTTP_201_CREATED)
@@ -219,17 +223,22 @@ async def create_session(
 async def get_session(
     session_id: UUID,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Session:
     """Return a single session by identifier."""
 
     try:
-        return await registry.get(session_id)
+        stored = await registry.get(session_id)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         ) from exc
+
+    enriched = await _enrich_registry_sessions([stored], runners, token_service, user)
+    return enriched[0]
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -269,6 +278,8 @@ async def update_proxy(
     payload: SessionProxySettings,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
     bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Session:
     """Update proxy configuration for a session."""
@@ -280,8 +291,10 @@ async def update_proxy(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         ) from exc
-    await _publish_session_event(bridge, session, SessionEventType.UPDATED)
-    return session
+    enriched = await _enrich_registry_sessions([session], runners, token_service, user)
+    result = enriched[0]
+    await _publish_session_event(bridge, result, SessionEventType.UPDATED)
+    return result
 
 
 @router.post("/{session_id}/touch", response_model=Session)
@@ -290,6 +303,8 @@ async def touch_session(
     payload: TouchPayload,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
     bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Session:
     """Update the ``last_seen_at`` timestamp for a session."""
@@ -301,8 +316,51 @@ async def touch_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         ) from exc
-    await _publish_session_event(bridge, session, SessionEventType.UPDATED)
-    return session
+    enriched = await _enrich_registry_sessions([session], runners, token_service, user)
+    result = enriched[0]
+    await _publish_session_event(bridge, result, SessionEventType.UPDATED)
+    return result
+
+
+async def _enrich_registry_sessions(
+    sessions: Iterable[Session],
+    runners: RunnerRegistry,
+    token_service: VncTokenService,
+    user: AuthenticatedUser,
+) -> list[Session]:
+    """Return sessions enriched with the latest runner overrides and tokens.
+
+    Args:
+        sessions: Iterable of session snapshots obtained from the registry.
+        runners: Source of runner metadata used for VNC override templates.
+        token_service: Issuer responsible for minting short-lived VNC tokens.
+        user: Authenticated subject receiving the session payload.
+
+    Returns:
+        list[Session]: Sessions updated with the most recent VNC URLs and
+        gateway-minted access tokens when necessary.
+
+    Example:
+        >>> await _enrich_registry_sessions([session], runners, token_service, user)  # doctest: +SKIP
+    """
+
+    snapshots = list(sessions)
+    if not snapshots:
+        return []
+
+    runner_cache: dict[str, Runner | None] = {}
+    enriched: list[Session] = []
+    for snapshot in snapshots:
+        runner: Runner | None = None
+        runner_id = snapshot.runner_id
+        if runner_id:
+            if runner_id in runner_cache:
+                runner = runner_cache[runner_id]
+            else:
+                runner = await runners.get(runner_id)
+                runner_cache[runner_id] = runner
+        enriched.append(_enrich_session(snapshot, runner, token_service, user))
+    return enriched
 
 
 async def _publish_session_event(
