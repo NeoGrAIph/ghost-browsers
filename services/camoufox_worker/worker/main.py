@@ -40,7 +40,7 @@ def run(url: str, timeout: int, mode: str) -> None:
 
     Side Effects
     ------------
-    Печатает результат выполнения в stdout и завершает процесс с кодом 0/1 в зависимости от статуса.
+    Печатает JSON-представление результата в stdout и завершает процесс с кодом 0/1 в зависимости от статуса.
     """
 
     job = Job(url=url, timeout_sec=timeout)
@@ -48,8 +48,8 @@ def run(url: str, timeout: int, mode: str) -> None:
         click.echo("Orchestrator mode is not yet implemented.", err=True)
         sys.exit(1)
     result = run_job(job)
-    click.echo(result)
-    if not result.get("ok", False):
+    click.echo(result.model_dump_json(indent=2, exclude_none=True))
+    if not result.ok:
         sys.exit(1)
 
 

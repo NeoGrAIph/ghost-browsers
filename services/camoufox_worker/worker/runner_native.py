@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+import time
+from datetime import UTC, datetime
+from typing import Optional
 
+from camoufox.errors import CamoufoxError
 from camoufox.sync_api import Camoufox
 
-from .jobs import Job
+from .jobs import Job, JobError, JobMetrics, JobResult, JobStatus
 
 
-def run_job(job: Job) -> Dict[str, Any]:
+def run_job(job: Job) -> JobResult:
     """Execute a job inside the current container using Camoufox directly.
 
     Parameters
@@ -20,13 +23,8 @@ def run_job(job: Job) -> Dict[str, Any]:
 
     Returns
     -------
-    dict[str, Any]
-        Словарь с результатами выполнения, включая флаг `ok` и заголовок страницы.
-
-    Raises
-    ------
-    camoufox.errors.CamoufoxError
-        Если Camoufox не смог стартовать или выполнить переход по URL.
+    JobResult
+        Структурированное описание выполнения: статус, таймстемпы и метрики.
 
     Notes
     -----
@@ -36,13 +34,38 @@ def run_job(job: Job) -> Dict[str, Any]:
     Examples
     --------
     >>> run_job(Job(url="https://example.com"))
-    {'ok': True, 'title': 'Example Domain'}
+    JobResult(ok=True, status=<JobStatus.SUCCESS: 'success'>, ...)
     """
-
     headless = os.getenv("CAMOUFOX_HEADLESS", "virtual")
-    with Camoufox(headless=headless, geoip=True) as browser:
-        page = browser.new_page()
-        # TODO: применить прокси к браузеру/контексту, если указано в job
-        page.goto(str(job.url))
-        title = page.title()
-    return {"ok": True, "title": title}
+    started_at = datetime.now(UTC)
+    started_perf = time.perf_counter()
+    title: Optional[str] = None
+    error: Optional[JobError] = None
+    status = JobStatus.SUCCESS
+
+    try:
+        with Camoufox(headless=headless, geoip=True) as browser:
+            page = browser.new_page()
+            # TODO: применить прокси к браузеру/контексту, если указано в job
+            page.goto(str(job.url))
+            title = page.title()
+    except CamoufoxError as exc:  # pragma: no cover - defensive branch for runtime errors
+        status = JobStatus.FAILURE
+        error = JobError(type=exc.__class__.__name__, message=str(exc))
+    except Exception as exc:  # pragma: no cover - unexpected runtime failures
+        status = JobStatus.FAILURE
+        error = JobError(type=exc.__class__.__name__, message=str(exc))
+
+    finished_at = datetime.now(UTC)
+    duration_ms = (time.perf_counter() - started_perf) * 1000
+    metrics = JobMetrics(duration_ms=duration_ms)
+    return JobResult(
+        job=job,
+        status=status,
+        ok=status is JobStatus.SUCCESS,
+        started_at=started_at,
+        finished_at=finished_at,
+        metrics=metrics,
+        title=title,
+        error=error,
+    )
