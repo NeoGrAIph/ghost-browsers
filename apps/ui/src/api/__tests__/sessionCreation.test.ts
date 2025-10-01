@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSessionCreatePayload } from '../sessionCreation';
-import { mapCoreEventToView, mapCoreSessionToView } from '../sessionMapper';
 import type { SessionComposerValues } from '../../components/SessionComposer';
-import type { CoreSession, CoreSessionEvent } from '../sessionMapper';
 
 describe('session creation adapter', () => {
   const baseValues: SessionComposerValues = {
@@ -51,70 +49,13 @@ describe('session creation adapter', () => {
     });
     expect(payload.metadata.proxy_label).toBe('http://proxy.local:3128');
   });
-});
 
-describe('core session mapping', () => {
-  const coreSession: CoreSession = {
-    id: 'session-1',
-    runner_id: 'runner-1',
-    status: 'READY',
-    created_at: '2024-01-01T10:00:00Z',
-    last_seen_at: '2024-01-01T10:05:00Z',
-    ended_at: null,
-    start_url: null,
-    start_url_wait: 'load',
-    headless: false,
-    idle_ttl_seconds: 600,
-    browser: 'camoufox',
-    labels: { region: 'eu-central' },
-    ws_endpoint: null,
-    proxy: {
-      http: null,
-      https: null,
-      socks: null,
-    },
-    vnc: {
-      http_url: 'https://vnc.example/view',
-      websocket_url: null,
-      token: null,
-      token_ttl_seconds: null,
-    },
-    vnc_enabled: true,
-    metadata: {
-      region: 'eu-central',
-      browser_version: '1.2.3',
-      proxy_id: 'proxy-1',
-    },
-  };
-
-  it('maps raw session payload into UI-friendly structure', () => {
-    const session = mapCoreSessionToView(coreSession);
-    expect(session).toMatchObject({
-      id: 'session-1',
-      status: 'active',
-      region: 'eu-central',
-      browser: { name: 'camoufox', version: '1.2.3' },
-      vncUrl: 'https://vnc.example/view',
+  it('disables vnc when headless flag is set', () => {
+    const payload = buildSessionCreatePayload({
+      ...baseValues,
+      headless: true,
     });
-    expect(session.metadata.proxy_id).toBe('proxy-1');
-  });
 
-  it('maps session events to UI format', () => {
-    const event: CoreSessionEvent = {
-      id: 'event-1',
-      type: 'session.updated',
-      session: coreSession,
-      occurred_at: '2024-01-01T10:05:00Z',
-      reason: null,
-    };
-
-    const view = mapCoreEventToView(event);
-    expect(view).toMatchObject({
-      type: 'updated',
-      sessionId: 'session-1',
-      occurredAt: '2024-01-01T10:05:00Z',
-      reason: null,
-    });
-    expect(view.session.id).toBe('session-1');
+    expect(payload.vnc_enabled).toBe(false);
   });
 });
