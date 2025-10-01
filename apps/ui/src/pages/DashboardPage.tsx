@@ -6,11 +6,13 @@ import { SessionList } from '../components/SessionList';
 import { SessionDetailsPanel } from '../components/SessionDetailsPanel';
 import { SessionActions } from '../components/SessionActions';
 import { SessionComposer, SessionComposerValues } from '../components/SessionComposer';
+import { WorkerStatusList } from '../components/WorkerStatusList';
 import { useAuth } from '../hooks/useAuth';
-import { fetchSessions, createSession } from '../api/client';
+import { fetchSessions, createSession, fetchRunners } from '../api/client';
 import { queryKeys } from '../utils/queryKeys';
 import { useSessionFilters, type SessionStatusFilter } from '../store/sessionFilters';
 import { Session } from '../types/session';
+import { buildSessionComposerData } from '../utils/composer';
 
 const filterSessions = (
   sessions: Session[],
@@ -64,7 +66,25 @@ export function DashboardPage(): JSX.Element {
     refetchInterval: 15_000,
   });
 
-  const sessions = data ?? [];
+  const sessions = useMemo(() => data ?? [], [data]);
+
+  const {
+    data: runners,
+    isLoading: isLoadingRunners,
+    error: runnerError,
+    isFetching: isFetchingRunners,
+  } = useQuery({
+    queryKey: queryKeys.runners,
+    queryFn: () => fetchRunners({ token: token ?? undefined }),
+    refetchInterval: 15_000,
+  });
+
+  const composerData = useMemo(
+    () => buildSessionComposerData(runners ?? [], sessions),
+    [runners, sessions],
+  );
+
+  const composerError = runnerError instanceof Error ? runnerError.message : null;
 
   const filteredSessions = useMemo(
     () => filterSessions(sessions, search, status, region, proxyId),
@@ -80,6 +100,7 @@ export function DashboardPage(): JSX.Element {
           browserName: values.browserName,
           region: values.region,
           proxyId: values.proxyId,
+          runnerId: values.runnerId ?? undefined,
         },
         { token: token ?? undefined },
       );
@@ -108,12 +129,29 @@ export function DashboardPage(): JSX.Element {
           {isFetching && <div className="loading loading--inline">Обновление…</div>}
         </div>
         <div className="dashboard__right">
+          <section className="dashboard__panel">
+            <header>
+              <h3>Статус раннеров</h3>
+              {isFetchingRunners && <span className="dashboard__refresh">Обновление…</span>}
+            </header>
+            <WorkerStatusList
+              runners={runners ?? []}
+              isLoading={isLoadingRunners}
+              error={composerError}
+            />
+          </section>
           <SessionActions session={selectedSession} />
           <SessionDetailsPanel session={selectedSession} />
         </div>
       </main>
       {isComposerOpen && (
-        <SessionComposer onSubmit={handleCreate} onCancel={() => setComposerOpen(false)} />
+        <SessionComposer
+          onSubmit={handleCreate}
+          onCancel={() => setComposerOpen(false)}
+          data={composerData}
+          isLoading={isLoadingRunners}
+          error={composerError}
+        />
       )}
     </div>
   );

@@ -6,6 +6,7 @@
 ## Interfaces
 - **REST**: `/sessions` (GET/POST/DELETE) через `api/client.ts`.
 - **REST команды**: `/sessions/commands` (POST/PATCH/DELETE) — создаём/обновляем/завершаем сессии через Runner-клиент.
+- **REST здоровье**: `/runners` (GET) — `fetchRunners` возвращает `RunnerStatus` для сайдбара и динамического composer.
 - **SSE**: `/events` — автообновление списка сессий, перезапуск с экспоненциальной задержкой;
   bearer-токен пробрасывается как query `access_token` для нативного `EventSource`.
 - **VNC**: встраивание внешнего URL `session.vncUrl` в `iframe`.
@@ -21,16 +22,17 @@
 - React Query как единый слой данных (`queryKeys.sessions`) + интеграция с SSE (`useSessionEvents`).
 - UI-паттерн split-view: сетка карточек слева, подробности справа.
 - Локальная тема (light/dark) через `ThemeProvider` с `localStorage`.
-- Команда создания отправляет упрощённый payload (`browserName`, `region`, `proxyId`) и Gateway сам подбирает Runner; успешный ответ закрывает `SessionComposer` и инвалидации выполняются через React Query.
+- Команда создания формирует payload (`browserName`, `region`, `proxyId`, `runnerId?`) на базе выбранных справочников; при отсутствии явного `runnerId` подбор выполняет Gateway.
+- Worker статус-панель повторно использует те же данные `/runners`, что и composer, для единого источника правды.
 
 ## Constraints & Invariants
 - Все сетевые вызовы через `ApiClient` (`fetch` + Zod валидация).
 - SSE обязателен для консистентного кеша React Query.
-- `SessionComposer` отправляет минимально необходимые поля (browser.name, region, proxyId).
+- `SessionComposer` отправляет минимум (`browserName`, `region`, `proxyId?`) и при явном выборе прокидывает `runnerId`.
 - Токен Keycloak обновляется каждые 20 сек. и при событии `onTokenExpired`.
 
 ## Known Gaps / TODO
-- [ ] Реальные справочники браузеров/регионов/прокси брать с backend вместо захардкоженных значений.
+- [x] Реальные справочники браузеров/регионов/прокси брать с backend вместо захардкоженных значений (через `/runners` + агрегацию `buildSessionComposerData`).
 - [ ] Поддержать обновление прокси существующей сессии (UI + endpoint).
 - [ ] Покрыть компонентные сценарии (SessionToolbar/Dashboard) тестами RTL.
 - [ ] Реализовать обработку ошибок SSE (баннер, кнопка повторного подключения).
@@ -48,3 +50,4 @@
   компоненты и тесты под статусы `INIT/READY/TERMINATING/DEAD`.
 - 2024-09-10 · gpt-5-codex · Переключили SSE на `/events`, пробрасываем токен через `access_token`, добавлен vitest для клиента.
 - 2024-09-11 · gpt-5-codex · Перевели UI на командные эндпоинты `/sessions/commands`, покрыли DashboardPage сценарии создания/удаления.
+- 2025-03-17 · gpt-5-codex · Интегрированы `/runners` в UI: динамический SessionComposer, статус-панель воркеров, тесты на загрузку/ошибки и фильтрацию раннеров.

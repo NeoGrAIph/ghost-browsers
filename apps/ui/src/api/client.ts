@@ -8,6 +8,7 @@ import {
   type SessionEvent,
 } from '../types/session';
 import { createUrl } from '../utils/url';
+import { RunnerStatusSchema, adaptRunnerStatus, type RunnerStatus } from '../types/runner';
 
 /**
  * Shape of the session create command accepted by the gateway.
@@ -130,6 +131,14 @@ export const apiClient = new ApiClient({ baseUrl: gatewayUrl });
 export const fetchSessions = async (headers?: AuthHeaders): Promise<Session[]> => {
   const payload = await apiClient.get('/sessions', z.array(SessionSchema), headers);
   return payload.map(adaptSession);
+};
+
+/**
+ * Fetches runner health snapshots and converts them to UI-friendly structures.
+ */
+export const fetchRunners = async (headers?: AuthHeaders): Promise<RunnerStatus[]> => {
+  const payload = await apiClient.get('/runners', z.array(RunnerStatusSchema), headers);
+  return payload.map(adaptRunnerStatus);
 };
 
 /**

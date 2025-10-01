@@ -5,17 +5,33 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardPage } from './DashboardPage';
 import { queryKeys } from '../utils/queryKeys';
 import type { Session } from '../types/session';
+import type { RunnerStatus } from '../types/runner';
 import { ThemeProvider } from '../providers/ThemeProvider';
 
-const fetchSessions = vi.fn();
-const createSession = vi.fn();
-const deleteSession = vi.fn();
+type ApiClientModule = typeof import('../api/client');
 
-vi.mock('../api/client', () => ({
-  fetchSessions: (...args: unknown[]) => fetchSessions(...args),
-  createSession: (...args: unknown[]) => createSession(...args),
-  deleteSession: (...args: unknown[]) => deleteSession(...args),
+const apiClientMocks = vi.hoisted(() => ({
+  fetchSessions: vi.fn<
+    ReturnType<ApiClientModule['fetchSessions']>,
+    Parameters<ApiClientModule['fetchSessions']>
+  >(),
+  createSession: vi.fn<
+    ReturnType<ApiClientModule['createSession']>,
+    Parameters<ApiClientModule['createSession']>
+  >(),
+  deleteSession: vi.fn<
+    ReturnType<ApiClientModule['deleteSession']>,
+    Parameters<ApiClientModule['deleteSession']>
+  >(),
+  fetchRunners: vi.fn<
+    ReturnType<ApiClientModule['fetchRunners']>,
+    Parameters<ApiClientModule['fetchRunners']>
+  >(),
 }));
+
+const { fetchSessions, createSession, deleteSession, fetchRunners } = apiClientMocks;
+
+vi.mock('../api/client', () => apiClientMocks);
 
 vi.mock('../hooks/useAuth', () => ({
   useAuth: () => ({ token: 'token-123' }),
@@ -59,6 +75,8 @@ describe('DashboardPage', () => {
     fetchSessions.mockResolvedValue([]);
     createSession.mockReset();
     deleteSession.mockReset();
+    fetchRunners.mockReset();
+    fetchRunners.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -76,10 +94,25 @@ describe('DashboardPage', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     createSession.mockResolvedValue(sampleSession());
+    const runner: RunnerStatus = {
+      id: 'runner-1',
+      baseUrl: 'http://runner',
+      state: 'idle',
+      totalSlots: 1,
+      availableSlots: 1,
+      healthy: true,
+      supportsVnc: true,
+      lastHeartbeatAt: null,
+      vncHttpUrlTemplate: null,
+      vncWsUrlTemplate: null,
+      capabilities: ['browser:Chrome', 'region:us-east', 'proxy:proxy-9|Proxy 9'],
+    };
+    fetchRunners.mockResolvedValue([runner]);
 
     renderWithClient(<DashboardPage />, queryClient);
 
     await waitFor(() => expect(fetchSessions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchRunners).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole('button', { name: 'Создать сессию' }));
     const dialog = await screen.findByRole('dialog');
@@ -90,14 +123,16 @@ describe('DashboardPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Создать' }));
 
-    await waitFor(() => expect(createSession).toHaveBeenCalledWith(
-      {
-        browserName: 'Chrome',
-        region: 'us-east',
-        proxyId: 'proxy-9',
-      },
-      { token: 'token-123' },
-    ));
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          browserName: 'Chrome',
+          region: 'us-east',
+          proxyId: 'proxy-9',
+        }),
+        { token: 'token-123' },
+      ),
+    );
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.sessions });
@@ -118,10 +153,12 @@ describe('DashboardPage', () => {
     const session = sampleSession({ id: 'session-delete' });
     fetchSessions.mockResolvedValue([session]);
     deleteSession.mockResolvedValue(undefined);
+    fetchRunners.mockResolvedValue([]);
 
     renderWithClient(<DashboardPage />, queryClient);
 
     await waitFor(() => expect(fetchSessions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchRunners).toHaveBeenCalled());
 
     fireEvent.click(await screen.findByRole('button', { name: /Chrome/i }));
     await waitFor(() =>
