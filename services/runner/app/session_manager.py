@@ -20,6 +20,7 @@ from core.models import (
 )
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 
+from .browser import BrowserSessionHandle, launch_browser
 from .config import RunnerSettings
 from .events import SessionEventPublisher
 
@@ -124,6 +125,7 @@ class SessionManager:
             maxlen=settings.prewarm_failure_history_size
         )
         self._last_prewarm_error: str | None = None
+        self._browser_handles: dict[UUID, BrowserSessionHandle] = {}
 
     async def create_session(self, payload: SessionCreatePayload) -> Session:
         """Create, persist, and broadcast a new session object."""
@@ -135,30 +137,49 @@ class SessionManager:
             vnc_details = self._resolve_vnc(
                 payload, session_id, sanitized_vnc=sanitized_vnc
             )
+            browser_handle: BrowserSessionHandle | None = None
+            metadata = dict(payload.metadata)
+            try:
+                browser_handle = await launch_browser(
+                    self._settings,
+                    browser=payload.browser,
+                    headless=payload.headless,
+                )
+            except Exception:
+                if browser_handle is not None:
+                    await browser_handle.shutdown(force=True)
+                raise
+            if browser_handle.pid is not None:
+                metadata.setdefault("runner_browser_pid", browser_handle.pid)
             vnc_enabled = (
                 payload.vnc_enabled
                 if payload.vnc_enabled is not None
                 else (vnc_details is not None and not payload.headless)
             )
-            session = Session(
-                id=session_id,
-                runner_id=self._settings.runner_id,
-                status=payload.status,
-                created_at=now,
-                last_seen_at=now,
-                headless=payload.headless,
-                idle_ttl_seconds=payload.idle_ttl_seconds,
-                start_url=payload.start_url,
-                start_url_wait=payload.start_url_wait,
-                browser=payload.browser,
-                labels=payload.labels,
-                ws_endpoint=payload.ws_endpoint,
-                proxy=payload.proxy,
-                vnc=vnc_details,
-                vnc_enabled=vnc_enabled,
-                metadata=payload.metadata,
-            )
+            try:
+                session = Session(
+                    id=session_id,
+                    runner_id=self._settings.runner_id,
+                    status=payload.status,
+                    created_at=now,
+                    last_seen_at=now,
+                    headless=payload.headless,
+                    idle_ttl_seconds=payload.idle_ttl_seconds,
+                    start_url=payload.start_url,
+                    start_url_wait=payload.start_url_wait,
+                    browser=payload.browser,
+                    labels=payload.labels,
+                    ws_endpoint=browser_handle.ws_endpoint,
+                    proxy=payload.proxy,
+                    vnc=vnc_details,
+                    vnc_enabled=vnc_enabled,
+                    metadata=metadata,
+                )
+            except Exception:
+                await browser_handle.shutdown(force=True)
+                raise
             self._sessions[session_id] = session
+            self._browser_handles[session_id] = browser_handle
             if session.status is not SessionStatus.DEAD:
                 self._active_sessions += 1
             await self._publish(session, SessionEventType.CREATED, reason=None)
@@ -177,6 +198,11 @@ class SessionManager:
             reason = update_data.pop("reason", None)
             merged_labels = update_data.pop("labels", None)
             merged_metadata = update_data.pop("metadata", None)
+            if (
+                update_data.get("status") is SessionStatus.DEAD
+                and "ws_endpoint" not in update_data
+            ):
+                update_data["ws_endpoint"] = None
             if "last_seen_at" not in update_data:
                 update_data["last_seen_at"] = self._clock()
             if (
@@ -191,6 +217,10 @@ class SessionManager:
             session = existing.model_copy(update=update_data, deep=True)
             self._sessions[session_id] = session
             self._recalculate_active_sessions(existing.status, session.status)
+            if self._should_cleanup_browser(existing, session):
+                await self._shutdown_browser(
+                    session_id, force=session.status is SessionStatus.DEAD
+                )
             event_type = (
                 SessionEventType.ENDED
                 if session.status is SessionStatus.DEAD
@@ -214,6 +244,7 @@ class SessionManager:
             vnc_enabled=False,
             reason=reason,
             vnc=None,
+            ws_endpoint=None,
         )
         return await self.update_session(session_id, payload)
 
@@ -332,6 +363,52 @@ class SessionManager:
             reason=reason,
         )
         await self._publisher.publish(event)
+
+    def _should_cleanup_browser(self, previous: Session, current: Session) -> bool:
+        """Return ``True`` when the stored browser handle should be terminated.
+
+        Args:
+            previous: Session snapshot prior to the update.
+            current: Session snapshot after applying the update.
+
+        Returns:
+            bool: ``True`` when the associated Playwright process should be
+            stopped (e.g. terminal status, endpoint cleared or changed).
+
+        Example:
+            >>> manager._should_cleanup_browser(prev, curr)  # doctest: +SKIP
+            True
+        """
+
+        if previous.id != current.id:
+            return False
+        previous_endpoint = previous.ws_endpoint
+        current_endpoint = current.ws_endpoint
+        if previous_endpoint is None:
+            return False
+        if current.status is SessionStatus.DEAD:
+            return True
+        if current_endpoint is None:
+            return True
+        return current_endpoint != previous_endpoint
+
+    async def _shutdown_browser(self, session_id: UUID, *, force: bool) -> None:
+        """Terminate and discard the browser handle for ``session_id``.
+
+        Args:
+            session_id: Identifier of the session whose browser should be
+                terminated.
+            force: When ``True`` kill the process immediately; otherwise allow a
+                graceful shutdown.
+
+        Example:
+            >>> await manager._shutdown_browser(session_id, force=True)  # doctest: +SKIP
+        """
+
+        handle = self._browser_handles.pop(session_id, None)
+        if handle is None:
+            return
+        await handle.shutdown(force=force)
 
 
 __all__ = [

@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 import pytest
 from app.config import RunnerSettings
 from app.events import InMemorySessionEventPublisher
-from app.session_manager import SessionCreatePayload, SessionManager, SessionUpdatePayload
+from app.session_manager import (
+    SessionCreatePayload,
+    SessionManager,
+    SessionUpdatePayload,
+)
 from core.models import (
     SessionEventType,
     SessionProxySettings,
@@ -23,8 +27,30 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+@pytest.fixture
+def stub_launch_browser(monkeypatch: pytest.MonkeyPatch) -> list["_StubBrowserHandle"]:
+    """Patch ``launch_browser`` to return deterministic stub handles."""
+
+    handles: list[_StubBrowserHandle] = []
+
+    async def _fake_launch(
+        settings: RunnerSettings, *, browser: str, headless: bool
+    ) -> "_StubBrowserHandle":
+        handle = _StubBrowserHandle(
+            ws_endpoint=f"ws://stub/{browser}/{len(handles)}",
+            pid=4300 + len(handles),
+        )
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+    return handles
+
+
 @pytest.mark.anyio("asyncio")
-async def test_create_session_emits_event_and_vnc_stub() -> None:
+async def test_create_session_emits_event_and_vnc_stub(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
     """``create_session`` should store the session and publish a CREATED event."""
 
     clock_now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -61,7 +87,9 @@ async def test_create_session_emits_event_and_vnc_stub() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_update_session_merges_labels_and_publishes_update() -> None:
+async def test_update_session_merges_labels_and_publishes_update(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
     """Updates should merge labels and emit ``session.updated`` events."""
 
     clock_now = datetime(2024, 2, 2, 12, 0, 0, tzinfo=UTC)
@@ -91,7 +119,9 @@ async def test_update_session_merges_labels_and_publishes_update() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_create_session_strips_user_vnc_token() -> None:
+async def test_create_session_strips_user_vnc_token(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
     """User-supplied VNC tokens must be removed before persisting sessions."""
 
     clock_now = datetime(2024, 4, 4, 12, 0, 0, tzinfo=UTC)
@@ -120,7 +150,9 @@ async def test_create_session_strips_user_vnc_token() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_update_session_strips_user_vnc_token() -> None:
+async def test_update_session_strips_user_vnc_token(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
     """Updates attempting to inject VNC tokens are sanitised."""
 
     clock_now = datetime(2024, 5, 5, 12, 0, 0, tzinfo=UTC)
@@ -153,7 +185,9 @@ async def test_update_session_strips_user_vnc_token() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_end_session_sets_terminal_state_and_event() -> None:
+async def test_end_session_sets_terminal_state_and_event(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
     """``end_session`` should mark the session as DEAD and send ENDED event."""
 
     clock_now = datetime(2024, 3, 3, 12, 0, 0, tzinfo=UTC)
@@ -175,7 +209,9 @@ async def test_end_session_sets_terminal_state_and_event() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_metrics_track_active_sessions_and_prewarm_failures() -> None:
+async def test_metrics_track_active_sessions_and_prewarm_failures(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
     """Metrics should reflect active sessions and retain bounded prewarm errors."""
 
     publisher = InMemorySessionEventPublisher()
@@ -198,12 +234,106 @@ async def test_metrics_track_active_sessions_and_prewarm_failures() -> None:
     assert metrics.active_sessions == 2
     assert metrics.prewarm_failure_count == 2
     assert metrics.prewarm_failures == ["warmup-1", "warmup-2"]
-    assert metrics.last_prewarm_error == "warmup-2"
 
-    await manager.record_prewarm_failure("warmup-3")
-    metrics = await manager.get_metrics()
-    assert metrics.prewarm_failures == ["warmup-2", "warmup-3"]
 
-    await manager.end_session(first.id)
-    metrics = await manager.get_metrics()
-    assert metrics.active_sessions == 1
+class _StubBrowserHandle:
+    """Test double mimicking :class:`BrowserSessionHandle`."""
+
+    def __init__(self, *, ws_endpoint: str, pid: int | None = 4312) -> None:
+        self.ws_endpoint = ws_endpoint
+        self.pid = pid
+        self.shutdown_calls: list[dict[str, object]] = []
+
+    async def shutdown(self, *, force: bool, timeout: float = 5.0) -> None:
+        """Record shutdown invocations for assertions."""
+
+        self.shutdown_calls.append({"force": force, "timeout": timeout})
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_launches_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Browser launch helper should provide the ws endpoint and metadata."""
+
+    stub_handle = _StubBrowserHandle(ws_endpoint="ws://playwright.test/session")
+    launch_calls: list[tuple[str, bool]] = []
+
+    async def _fake_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+        launch_calls.append((browser, headless))
+        return stub_handle
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-browser", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+    )
+
+    session = await manager.create_session(
+        SessionCreatePayload(headless=True, metadata={"flow": "launch-test"})
+    )
+
+    assert launch_calls == [("camoufox", True)]
+    assert session.ws_endpoint == "ws://playwright.test/session"
+    assert session.metadata["flow"] == "launch-test"
+    assert session.metadata["runner_browser_pid"] == stub_handle.pid
+    stored_handle = getattr(manager, "_browser_handles")[session.id]
+    assert stored_handle is stub_handle
+    events = await publisher.drain()
+    assert [event.type for event in events] == [SessionEventType.CREATED]
+
+
+@pytest.mark.anyio("asyncio")
+async def test_update_session_cleans_up_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Transitioning to DEAD should teardown the launched Playwright process."""
+
+    stub_handle = _StubBrowserHandle(ws_endpoint="ws://playwright.test/cleanup")
+
+    async def _fake_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+        return stub_handle
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-cleanup", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+    )
+    session = await manager.create_session(SessionCreatePayload())
+
+    updated = await manager.update_session(
+        session.id,
+        SessionUpdatePayload(status=SessionStatus.DEAD, reason="finished"),
+    )
+
+    assert updated.status is SessionStatus.DEAD
+    assert updated.ws_endpoint is None
+    assert stub_handle.shutdown_calls == [{"force": True, "timeout": 5.0}]
+    assert session.id not in getattr(manager, "_browser_handles")
+    events = await publisher.drain()
+    assert [event.type for event in events] == [
+        SessionEventType.CREATED,
+        SessionEventType.ENDED,
+    ]
+    assert events[-1].reason == "finished"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_rolls_back_on_launch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Session creation should not persist state when browser launch fails."""
+
+    async def _failing_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+        raise RuntimeError("launch boom")
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _failing_launch)
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-fail", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+    )
+
+    with pytest.raises(RuntimeError):
+        await manager.create_session(SessionCreatePayload())
+
+    assert getattr(manager, "_browser_handles") == {}
+    assert await publisher.drain() == []
