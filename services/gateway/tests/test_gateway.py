@@ -594,7 +594,10 @@ def test_websocket_event_forwarding(gateway_client: TestClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_keycloak_authenticator_logs_subject(caplog: pytest.LogCaptureFixture) -> None:
+async def test_keycloak_authenticator_logs_subject(
+    httpx_mock_transport: "HttpxMockTransport",
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """The authenticator validates a token using JWKS metadata and logs the subject."""
 
     authenticator = KeycloakAuthenticator("http://jwks")
@@ -605,7 +608,7 @@ async def test_keycloak_authenticator_logs_subject(caplog: pytest.LogCaptureFixt
         "k": base64.urlsafe_b64encode(secret.encode("utf-8")).decode("utf-8").rstrip("="),
         "alg": "HS256",
     }
-    authenticator._jwks_cache = {"unit": jwk_entry}  # type: ignore[attr-defined]
+    httpx_mock_transport.enqueue_json({"keys": [jwk_entry]})
     caplog.set_level("INFO", logger="gateway.security")
     payload = {
         "sub": "subject-1",
@@ -616,3 +619,47 @@ async def test_keycloak_authenticator_logs_subject(caplog: pytest.LogCaptureFixt
     user = await authenticator.authenticate(token)
     assert user.subject == "subject-1"
     assert any(record.sub == "subject-1" for record in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_keycloak_authenticator_fetches_and_caches_jwks(
+    httpx_mock_transport: "HttpxMockTransport",
+) -> None:
+    """Keycloak authenticator caches JWKS and retries on cache misses or errors."""
+
+    authenticator = KeycloakAuthenticator("http://jwks")
+    first_key = {
+        "kty": "RSA",
+        "kid": "first",
+        "n": "AQAB",
+        "e": "AQAB",
+    }
+    httpx_mock_transport.enqueue_json({"keys": [first_key]})
+    cached = await authenticator._get_key("first")
+    assert cached == first_key
+    assert len(httpx_mock_transport.requests) == 1
+
+    cached_again = await authenticator._get_key("first")
+    assert cached_again == first_key
+    assert len(httpx_mock_transport.requests) == 1
+
+    second_key = {
+        "kty": "RSA",
+        "kid": "second",
+        "n": "AQAC",
+        "e": "AQAC",
+    }
+    httpx_mock_transport.enqueue_json({"keys": [second_key]})
+    refreshed = await authenticator._get_key("second")
+    assert refreshed == second_key
+    assert len(httpx_mock_transport.requests) == 2
+
+    httpx_mock_transport.enqueue_json({"keys": []}, status_code=500)
+    with pytest.raises(httpx.HTTPStatusError):
+        await authenticator._fetch_jwks()
+    assert len(httpx_mock_transport.requests) == 3
+
+    httpx_mock_transport.enqueue_text("not-a-json-payload")
+    with pytest.raises(ValueError):
+        await authenticator._fetch_jwks()
+    assert len(httpx_mock_transport.requests) == 4
