@@ -40,7 +40,8 @@ def run(url: str, timeout: int, mode: str) -> None:
 
     Side Effects
     ------------
-    Печатает JSON-представление результата в stdout и завершает процесс с кодом 0/1 в зависимости от статуса.
+    Печатает JSON-представление результата в stdout и завершает процесс с
+    кодом 0/1 в зависимости от статуса.
     """
 
     job = Job(url=url, timeout_sec=timeout)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
@@ -24,6 +24,8 @@ class Job(BaseModel):
         Необязательный SOCKS-прокси (например, `socks5://user:pass@host:port`).
     timeout_sec: int
         Предельное время выполнения задачи в секундах; по умолчанию 60.
+    url_source: str
+        Исходная строка URL, сохранённая для навигации без автоматического добавления слэшей.
 
     Returns
     -------
@@ -41,6 +43,30 @@ class Job(BaseModel):
     https_proxy: Optional[str] = None
     socks_proxy: Optional[str] = None
     timeout_sec: int = 60
+    url_source: str = Field(
+        default="",
+        exclude=True,
+        repr=False,
+        description="Исходная строка URL до нормализации Pydantic.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _capture_original_url(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Сохранить исходную строку URL до валидации HttpUrl."""
+
+        raw_url = data.get("url")
+        if isinstance(raw_url, str) and not data.get("url_source"):
+            data["url_source"] = raw_url
+        return data
+
+    @model_validator(mode="after")
+    def _ensure_original_url(self) -> "Job":
+        """Гарантировать наличие исходной строки URL после нормализации."""
+
+        if not self.url_source:
+            self.url_source = str(self.url)
+        return self
 
 
 class JobStatus(str, Enum):
@@ -69,6 +95,9 @@ class JobError(BaseModel):
     details: Optional[str] = None
 
 
+MetricValue = Union[float, int, str, bool, None]
+
+
 class JobMetrics(BaseModel):
     """Execution metrics captured for a worker job run.
 
@@ -76,14 +105,16 @@ class JobMetrics(BaseModel):
     ----------
     duration_ms: float
         Полное время выполнения задачи, включая прогрев браузера и навигацию.
-    extra: dict[str, float]
-        Дополнительные числовые показатели (сетевые задержки, размер артефактов и т.п.).
+    extra: dict[str, MetricValue]
+        Дополнительные показатели (сетевые задержки, коды статуса, флаги таймаутов и т.п.).
     """
 
-    duration_ms: float = Field(..., ge=0, description="Полное время выполнения задачи в миллисекундах.")
-    extra: Dict[str, float] = Field(
+    duration_ms: float = Field(
+        ..., ge=0, description="Полное время выполнения задачи (мс)."
+    )
+    extra: Dict[str, MetricValue] = Field(
         default_factory=dict,
-        description="Произвольные числовые метрики (например, сетевые задержки).",
+        description="Произвольные метрики (например, задержки, статусы навигации, флаги ошибок).",
     )
 
 
