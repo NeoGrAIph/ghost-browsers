@@ -19,6 +19,7 @@ class GatewaySettings:
         runners: Initial list of runners that should be registered on startup.
         jwt_jwks_url: HTTP URL pointing to the Keycloak JWKS document.
         vnc_token_ttl_seconds: Lifetime of the issued VNC tokens in seconds.
+        vnc_token_secret: Shared HMAC secret used for signing VNC JWT tokens.
 
     Example:
         >>> settings = GatewaySettings.from_env({
@@ -36,6 +37,7 @@ class GatewaySettings:
     runners: list[Runner] = field(default_factory=list)
     jwt_jwks_url: str = "http://localhost/.well-known/jwks.json"
     vnc_token_ttl_seconds: int = 300
+    vnc_token_secret: str = "dev-secret"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "GatewaySettings":
@@ -65,6 +67,7 @@ class GatewaySettings:
             runners=runners,
             jwt_jwks_url=jwt_jwks_url,
             vnc_token_ttl_seconds=ttl,
+            vnc_token_secret=env_map.get("VNC_TOKEN_SECRET", cls.vnc_token_secret),
         )
 
 

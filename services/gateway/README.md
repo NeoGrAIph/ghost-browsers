@@ -13,6 +13,7 @@ Keycloak-protected endpoints.
 | `RUNNERS`           | JSON-массив с объектами `Runner` (см. `packages/core`).            |
 | `JWT_JWKS_URL`      | URL JWKS-документа Keycloak.                                       |
 | `VNC_TOKEN_TTL_SEC` | Время жизни VNC JWT (≤300 секунд).                                 |
+| `VNC_TOKEN_SECRET`  | Общий HMAC-секрет для подписания VNC JWT (делится с VNC Gateway).  |
 
 ## Endpoints
 

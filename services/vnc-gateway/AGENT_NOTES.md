@@ -9,10 +9,10 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 
 ## Data & Models
 - `Settings` (`app/camou_vnc_gateway/config.py`): environment-driven configuration using `pydantic-settings`. Includes runner HTTP/WS base URLs and shared token secret.
-- `TokenValidator`: issues/validates Base64-encoded `{session}:{hmac}` tokens with HMAC-SHA256 signatures.
+- `TokenValidator`: валидирует HS256 JWT с claim'ами `sid`, `exp`, `iss`, `sub`, подписанные общим секретом с Gateway.
 
 ## Decisions
-- Token format implemented as `base64url(session_id:signature)` to keep validation deterministic without external dependencies.
+- Токены — стандартные HS256 JWT; валидация выполняется через `python-jose` с проверкой `iss`, `exp` и `sid`.
 - Connection metrics backed by in-memory `ConnectionRegistry` with async context manager; logs `connection.started/finished` events.
 - WebSocket proxy implemented via `websockets` library using two relay tasks; HTTP proxy uses `httpx.AsyncClient` streaming API.
 - Dependency wiring relies on `typing.Annotated` wrappers to avoid Ruff `B008` violations while keeping FastAPI semantics.
@@ -26,7 +26,7 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 ## Known Gaps / TODO
 - [ ] Replace manual websocket proxy with production-ready solution once Runner API stabilises (e.g. uvicorn websockets integration).
 - [ ] Integrate metrics registry with Prometheus/OpenTelemetry backend when available.
-- [ ] Harden token validator against replay (needs issued-at/expiry semantics from Gateway).
+- [ ] Harden token validator against replay (нужен учёт `iat`/одноразовых токенов поверх проверки истечения).
 
 ## How to Test
 ```bash
@@ -38,3 +38,4 @@ poetry run pytest -q
 
 ## Changelog (for agents)
 - 2025-02-14 · gpt-5-codex · Initial FastAPI service implementation with token validator, proxy wiring, and unit tests.
+- 2025-10-03 · gpt-5-codex · Переведён валидатор на HS256 JWT и синхронизирован с Gateway `VncTokenService`.
