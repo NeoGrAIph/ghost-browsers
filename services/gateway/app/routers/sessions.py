@@ -10,9 +10,20 @@ from core import Runner, Session, SessionProxySettings
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
-from ..deps import get_runner_registry, get_session_registry, get_vnc_token_service
+from ..deps import (
+    get_runner_command_client,
+    get_runner_registry,
+    get_session_registry,
+    get_vnc_token_service,
+)
 from ..deps.security import get_current_user
 from ..security import AuthenticatedUser, VncTokenService
+from ..services.runner_client import (
+    RunnerCommandClient,
+    RunnerCommandError,
+    SessionCreateCommand,
+    SessionUpdateCommand,
+)
 from ..services.runner_registry import RunnerRegistry
 from ..services.session_registry import SessionRegistry
 from ..services.vnc_overrides import apply_vnc_overrides
@@ -25,6 +36,128 @@ class TouchPayload(BaseModel):
 
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+@router.post("/commands", response_model=Session, status_code=status.HTTP_201_CREATED)
+async def execute_create_command(
+    payload: SessionCreateCommand,
+    registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    runner_client: Annotated[RunnerCommandClient, Depends(get_runner_command_client)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> Session:
+    """Issue ``POST /sessions`` against a runner and persist the response."""
+
+    runner = None
+    if payload.runner_id is not None:
+        runner = await runners.get(payload.runner_id)
+        if runner is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Runner not found",
+            )
+    else:
+        available = await runners.list()
+        if not available:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No runners available",
+            )
+        runner = available[0]
+
+    assert runner is not None  # Narrow type after selection.
+
+    try:
+        session = await runner_client.create_session(runner, payload)
+    except RunnerCommandError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    enriched = _enrich_session(session, runner, token_service, user)
+    await registry.upsert(enriched)
+    return enriched
+
+
+@router.patch("/commands/{session_id}", response_model=Session)
+async def execute_update_command(
+    session_id: UUID,
+    payload: SessionUpdateCommand,
+    registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    runner_client: Annotated[RunnerCommandClient, Depends(get_runner_command_client)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> Session:
+    """Proxy ``PATCH /sessions`` to the runner and mirror the outcome locally."""
+
+    try:
+        current = await registry.get(session_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        ) from exc
+
+    runner = await runners.get(current.runner_id)
+    if runner is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Runner unavailable",
+        )
+
+    try:
+        session = await runner_client.update_session(runner, session_id, payload)
+    except RunnerCommandError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    enriched = _enrich_session(session, runner, token_service, user)
+    await registry.upsert(enriched)
+    return enriched
+
+
+@router.delete("/commands/{session_id}", response_model=Session)
+async def execute_delete_command(
+    session_id: UUID,
+    registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    runner_client: Annotated[RunnerCommandClient, Depends(get_runner_command_client)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> Session:
+    """Proxy ``DELETE /sessions`` to the runner and drop the local record."""
+
+    try:
+        current = await registry.get(session_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        ) from exc
+
+    runner = await runners.get(current.runner_id)
+    if runner is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Runner unavailable",
+        )
+
+    try:
+        session = await runner_client.delete_session(runner, session_id)
+    except RunnerCommandError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    enriched = _enrich_session(session, runner, token_service, user)
+    await registry.delete(session_id)
+    return enriched
 
 
 @router.get("", response_model=list[Session])

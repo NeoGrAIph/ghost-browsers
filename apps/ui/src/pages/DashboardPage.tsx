@@ -75,14 +75,14 @@ export function DashboardPage(): JSX.Element {
 
   const createMutation = useMutation({
     mutationFn: async (values: SessionComposerValues) => {
-      const payload = {
-        browser: {
-          name: values.browserName,
+      await createSession(
+        {
+          browserName: values.browserName,
+          region: values.region,
+          proxyId: values.proxyId,
         },
-        region: values.region,
-        proxyId: values.proxyId,
-      };
-      await createSession(payload, { token: token ?? undefined });
+        { token: token ?? undefined },
+      );
     },
     onSuccess: () => {
       setComposerOpen(false);

@@ -10,6 +10,20 @@ import {
 import { createUrl } from '../utils/url';
 
 /**
+ * Shape of the session create command accepted by the gateway.
+ */
+export interface CreateSessionCommandPayload {
+  /** Human readable browser preset selected in the composer. */
+  readonly browserName: string;
+  /** Region label propagated as a session label. */
+  readonly region: string;
+  /** Optional proxy identifier, forwarded as a label. */
+  readonly proxyId: string | null;
+  /** Explicit runner selection; when omitted the gateway will pick one. */
+  readonly runnerId?: string;
+}
+
+/**
  * Declares the shape of the API client configuration.
  */
 export interface ApiClientConfig {
@@ -122,15 +136,28 @@ export const fetchSessions = async (headers?: AuthHeaders): Promise<Session[]> =
  * Creates a new session.
  */
 export const createSession = async (
-  payload: Record<string, unknown>,
+  payload: CreateSessionCommandPayload,
   headers?: AuthHeaders,
-): Promise<Session> => apiClient.post('/sessions', SessionSchema, payload, headers).then(adaptSession);
+): Promise<Session> =>
+  apiClient
+    .post(
+      '/sessions/commands',
+      SessionSchema,
+      {
+        browser_name: payload.browserName,
+        region: payload.region,
+        proxy_id: payload.proxyId,
+        ...(payload.runnerId ? { runner_id: payload.runnerId } : {}),
+      },
+      headers,
+    )
+    .then(adaptSession);
 
 /**
  * Deletes an existing session.
  */
 export const deleteSession = (sessionId: string, headers?: AuthHeaders) =>
-  apiClient.delete(`/sessions/${sessionId}`, headers);
+  apiClient.delete(`/sessions/commands/${sessionId}`, headers);
 
 /**
  * Opens a typed EventSource connection for session updates.

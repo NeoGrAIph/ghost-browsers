@@ -43,6 +43,13 @@ class SessionRegistry:
         async with self._lock:
             return list(self._sessions.values())
 
+    async def upsert(self, session: Session) -> Session:
+        """Insert or replace a session entry and return the stored instance."""
+
+        async with self._lock:
+            self._sessions[session.id] = session
+            return session
+
     async def get(self, session_id: UUID) -> Session:
         """Retrieve a session by identifier."""
 

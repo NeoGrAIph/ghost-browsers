@@ -5,6 +5,7 @@
 
 ## Interfaces
 - **REST**: `/sessions` (GET/POST/DELETE) через `api/client.ts`.
+- **REST команды**: `/sessions/commands` (POST/PATCH/DELETE) — создаём/обновляем/завершаем сессии через Runner-клиент.
 - **SSE**: `/events` — автообновление списка сессий, перезапуск с экспоненциальной задержкой;
   bearer-токен пробрасывается как query `access_token` для нативного `EventSource`.
 - **VNC**: встраивание внешнего URL `session.vncUrl` в `iframe`.
@@ -20,6 +21,7 @@
 - React Query как единый слой данных (`queryKeys.sessions`) + интеграция с SSE (`useSessionEvents`).
 - UI-паттерн split-view: сетка карточек слева, подробности справа.
 - Локальная тема (light/dark) через `ThemeProvider` с `localStorage`.
+- Команда создания отправляет упрощённый payload (`browserName`, `region`, `proxyId`) и Gateway сам подбирает Runner; успешный ответ закрывает `SessionComposer` и инвалидации выполняются через React Query.
 
 ## Constraints & Invariants
 - Все сетевые вызовы через `ApiClient` (`fetch` + Zod валидация).
@@ -32,6 +34,7 @@
 - [ ] Поддержать обновление прокси существующей сессии (UI + endpoint).
 - [ ] Покрыть компонентные сценарии (SessionToolbar/Dashboard) тестами RTL.
 - [ ] Реализовать обработку ошибок SSE (баннер, кнопка повторного подключения).
+- [ ] Визуализировать выбор раннера в composer, когда на бэке появится стратегия балансировки.
 
 ## How to Test
 - `pnpm -C apps/ui lint`
@@ -44,3 +47,4 @@
   `types/session.ts`, хранение списка сессий напрямую в React Query, обновлены фильтры,
   компоненты и тесты под статусы `INIT/READY/TERMINATING/DEAD`.
 - 2024-09-10 · gpt-5-codex · Переключили SSE на `/events`, пробрасываем токен через `access_token`, добавлен vitest для клиента.
+- 2024-09-11 · gpt-5-codex · Перевели UI на командные эндпоинты `/sessions/commands`, покрыли DashboardPage сценарии создания/удаления.

@@ -6,6 +6,7 @@ from core import AbstractSessionEventBridge
 from fastapi import Request
 
 from ..security import VncTokenService
+from ..services.runner_client import RunnerCommandClient
 from ..services.runner_registry import RunnerRegistry
 from ..services.session_registry import SessionRegistry
 
@@ -32,3 +33,9 @@ def get_vnc_token_service(request: Request) -> VncTokenService:
     """Return the VNC token service stored on the application."""
 
     return request.app.state.vnc_tokens  # type: ignore[attr-defined]
+
+
+def get_runner_command_client(request: Request) -> RunnerCommandClient:
+    """Return the Runner command client shared by the application."""
+
+    return request.app.state.runner_client  # type: ignore[attr-defined]
