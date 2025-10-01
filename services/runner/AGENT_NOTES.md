@@ -5,11 +5,14 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 
 ## Interfaces
 - **HTTP**
-  - `GET /health` — возвращает `{status, runner_id, camoufox_path, slots, vnc, proxy, prewarm}`;
+  - `GET /health` — возвращает `{status, runner_id, camoufox_path, slots, vnc, proxy, prewarm, ttl}`;
     `slots.total` считывается из `RunnerSettings.slot_limit`, `slots.active` — количество
-    не-`DEAD` сессий; `prewarm` включает счётчик и последнюю ошибку прогрева.
+    не-`DEAD` сессий; `prewarm` включает счётчик и последнюю ошибку прогрева;
+    `ttl` содержит ближайшее истечение (`next_expiry_at`) и счетчики работы
+    фонового reaper-а (`total_runs`, `expired_sessions`, `last_run_at`).
   - `POST /sessions` — accepts `SessionCreatePayload`, returns created `core.Session` snapshot.
   - `PATCH /sessions/{id}` — accepts `SessionUpdatePayload`, merges labels/metadata, returns updated `core.Session`.
+  - `POST /sessions/{id}/touch` — обновляет `last_seen_at`, продлевая TTL и публикуя heartbeat-событие.
   - `DELETE /sessions/{id}` — marks session as `DEAD`, returns terminal snapshot.
 - **Event transport**
   - `SessionEventPublisher.publish(SessionEvent)` — protocol for pushing lifecycle events downstream. Default implementation stores events in memory (`InMemorySessionEventPublisher`) but can be swapped for HTTP/SSE bridges via `CallbackSessionEventPublisher`.
@@ -20,7 +23,8 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - Local payload models (`SessionCreatePayload`, `SessionUpdatePayload`) act as request DTOs before conversion into immutable core models.
 - Sessions are keyed by UUID and persisted in-memory; timestamps sourced from an injectable clock (UTC aware).
 - `SessionManagerMetrics` агрегирует счётчик активных сессий и историю ошибок прогрева (bounded deque по
-  `RunnerSettings.prewarm_failure_history_size`).
+  `RunnerSettings.prewarm_failure_history_size`), ближайшее истечение TTL и статистику
+  фонового reaper-а (кол-во запусков, количество завершённых сессий и отметку последнего запуска).
 
 ## Decisions
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
@@ -33,6 +37,10 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
   показывать последние сбои без риска утечки памяти.
 - **Gateway proxy compatibility**: `SessionCreatePayload` остаётся публичным контрактом, но теперь вызывается через Gateway, потому важна обратная совместимость и строгая валидация.
 - **Playwright launch lifecycle**: `app.browser.launch_browser` стартует Playwright в режиме `launch-server`, сохраняет `wsEndpoint`/PID в метаданных и позволяет `SessionManager` останавливать процесс при переходе в `DEAD` или очистке endpoint. Исключения при старте выполняют откат без публикации событий.
+- **Idle TTL reaper**: `SessionManager` содержит AnyIO-based reaper, который вызывает
+  `reap_expired_sessions`, завершает истёкшие по `idle_ttl_seconds` сессии и публикует события
+  `session.ended` с reason=`idle-timeout`. Запускается/останавливается через `start()`/`stop()` и
+  lifecycle-хуки FastAPI.
 
 ## Constraints & Invariants
 - `RunnerSettings.vnc_token_ttl_seconds` capped at 300 seconds to align with `SessionVncDetails` validation.
@@ -42,6 +50,8 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - Health payload normalises proxy base URLs by stripping trailing slashes
   only when the configured path is empty, preserving operator-provided
   values.
+- Idle reaper использует инъецируемые часы и общее состояние `SessionManager`; пересчёт ближайшего TTL выполняется после любых
+  апдейтов/завершений, чтобы метрики `next_expiry_at`/`reaper` оставались консистентными.
 
 ## Known Gaps / TODO
 - [ ] Зафиксировать профиль нагрузки для in-memory издателя после появления боевых метрик, чтобы подтвердить соответствие latency требованиям.
@@ -59,3 +69,4 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - 2025-10-09 · gpt-5-codex · Переключили зависимость `camoufox` на локальный stub-пакет и нормализовали выдачу proxy URL в `/health`,
   чтобы `poetry install` и unit-тесты проходили в офлайн-окружении без лишних слешей.
 - 2025-10-10 · gpt-5-codex · Добавлен модуль `app.browser` с управлением процессом Playwright/Camoufox и интеграционными тестами на создание/завершение сессий.
+- 2025-10-11 · gpt-5-codex · Добавлены фоновые reaper-задачи, TTL-метрики в `/health`, эндпоинт `POST /sessions/{id}/touch` и покрытие тестами.

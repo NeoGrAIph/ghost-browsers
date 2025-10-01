@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
 
@@ -36,6 +38,23 @@ class _MainStubHandle:
         return None
 
 
+class _ApiStubClock:
+    """Mutable clock used to produce deterministic timestamps in API tests."""
+
+    def __init__(self, start: datetime) -> None:
+        self._now = start
+
+    def advance(self, seconds: float) -> None:
+        """Advance the current timestamp by ``seconds``."""
+
+        self._now += timedelta(seconds=seconds)
+
+    def __call__(self) -> datetime:
+        """Return the current timestamp."""
+
+        return self._now
+
+
 @pytest.fixture
 def stub_launch_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch session manager browser launch to avoid spawning Playwright."""
@@ -56,6 +75,7 @@ async def test_health_endpoint_reports_extended_metrics(
 ) -> None:
     """``GET /health`` should expose slots, proxy, VNC, and prewarm diagnostics."""
 
+    clock = _ApiStubClock(datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC))
     settings = RunnerSettings(
         runner_id="runner-health",
         camoufox_path="/usr/bin/camoufox",
@@ -68,7 +88,12 @@ async def test_health_endpoint_reports_extended_metrics(
         prewarm_failure_history_size=5,
     )
     publisher = InMemorySessionEventPublisher()
-    manager = SessionManager(settings, publisher)
+    manager = SessionManager(
+        settings,
+        publisher,
+        clock=clock,
+        reaper_interval_seconds=5.0,
+    )
 
     await manager.create_session(SessionCreatePayload())
     await manager.create_session(SessionCreatePayload())
@@ -106,3 +131,54 @@ async def test_health_endpoint_reports_extended_metrics(
         "failures": 2,
         "last_error": "prewarm retry failed",
     }
+    ttl = payload["ttl"]
+    assert ttl["reaper"] == {
+        "total_runs": 0,
+        "expired_sessions": 0,
+        "last_run_at": None,
+    }
+    assert ttl["next_expiry_at"] == (
+        clock() + timedelta(seconds=300)
+    ).isoformat()
+
+
+@pytest.mark.anyio("asyncio")
+async def test_touch_endpoint_extends_idle_deadline(
+    stub_launch_browser: None,
+) -> None:
+    """``POST /sessions/{id}/touch`` should refresh ``last_seen_at``."""
+
+    clock = _ApiStubClock(datetime(2024, 2, 2, 10, 0, 0, tzinfo=UTC))
+    settings = RunnerSettings(
+        runner_id="runner-touch",
+        camoufox_path="/usr/bin/camoufox",
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        settings,
+        publisher,
+        clock=clock,
+        reaper_interval_seconds=5.0,
+    )
+    session = await manager.create_session(
+        SessionCreatePayload(idle_ttl_seconds=45)
+    )
+
+    app.dependency_overrides[get_runner_settings] = lambda: settings
+    app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            clock.advance(20)
+            response = await client.post(f"/sessions/{session.id}/touch")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(session.id)
+    expected_last_seen = clock().isoformat().replace("+00:00", "Z")
+    assert body["last_seen_at"] == expected_last_seen
+    metrics = await manager.get_metrics()
+    assert metrics.next_idle_expiry_at == clock() + timedelta(seconds=45)
