@@ -26,7 +26,14 @@ from app.config import GatewaySettings  # noqa: E402
 from app.deps import get_vnc_token_service  # noqa: E402
 from app.deps.security import get_authenticator, get_current_user  # noqa: E402
 from app.security import AuthenticatedUser, KeycloakAuthenticator, VncTokenService  # noqa: E402
-from core import Runner, Session, SessionEvent, SessionEventType, SessionStatus  # noqa: E402
+from core import (
+    Runner,
+    Session,
+    SessionEvent,
+    SessionEventType,
+    SessionStatus,
+    SessionVncDetails,
+)  # noqa: E402
 
 
 @pytest.fixture()
@@ -179,6 +186,20 @@ def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> Non
     assert payload["http_url"] == f"https://vnc.example/view/{session_id}"
     assert payload["websocket_url"] == f"wss://vnc.example/ws/{session_id}"
     assert payload["token"]
+    assert payload["token_ttl_seconds"] == 120
+
+
+def test_vnc_token_service_enriches_missing_token() -> None:
+    """``enrich_vnc_details`` must mint a token whenever one is absent."""
+
+    service = VncTokenService(secret="secret", ttl_seconds=90)
+    details = SessionVncDetails(http_url="https://viewer.example/session")
+
+    enriched = service.enrich_vnc_details(details, session_id="session-1", subject="user")
+
+    assert enriched.token is not None
+    assert enriched.token_ttl_seconds == 90
+    assert enriched is not details
 
 
 @pytest.mark.anyio("asyncio")

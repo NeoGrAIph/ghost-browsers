@@ -96,6 +96,12 @@ class VncTokenService:
         Returns:
             SessionVncDetails: Updated descriptor including ``token`` and
             ``token_ttl_seconds`` fields.
+
+        Notes:
+            Runner services intentionally leave ``token`` and
+            ``token_ttl_seconds`` empty so the gateway can append a signature.
+            Whenever a token is absent this method will mint a fresh JWT using
+            :meth:`issue`.
         """
 
         if details.token is not None:

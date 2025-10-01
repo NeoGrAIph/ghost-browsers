@@ -131,7 +131,10 @@ class SessionManager:
         async with self._lock:
             session_id = uuid4()
             now = self._clock()
-            vnc_details = self._resolve_vnc(payload, session_id)
+            sanitized_vnc = self._sanitize_vnc_payload(payload.vnc)
+            vnc_details = self._resolve_vnc(
+                payload, session_id, sanitized_vnc=sanitized_vnc
+            )
             vnc_enabled = (
                 payload.vnc_enabled
                 if payload.vnc_enabled is not None
@@ -169,6 +172,8 @@ class SessionManager:
                 raise SessionNotFoundError(session_id)
             existing = self._sessions[session_id]
             update_data = payload.model_dump(exclude_unset=True)
+            if "vnc" in update_data:
+                update_data["vnc"] = self._sanitize_vnc_payload(payload.vnc)
             reason = update_data.pop("reason", None)
             merged_labels = update_data.pop("labels", None)
             merged_metadata = update_data.pop("metadata", None)
@@ -257,20 +262,47 @@ class SessionManager:
         self,
         payload: SessionCreatePayload,
         session_id: UUID,
+        *,
+        sanitized_vnc: SessionVncDetails | None,
     ) -> SessionVncDetails | None:
         """Return VNC details honouring payload overrides and settings defaults."""
 
         if payload.headless or not self._settings.vnc_enabled:
             return None
-        if payload.vnc is not None:
-            return payload.vnc
-        token = uuid4().hex
+        if sanitized_vnc is not None:
+            return sanitized_vnc
         return SessionVncDetails(
             http_url=f"{self._settings.vnc_http_base_url}/{session_id}",
             websocket_url=f"{self._settings.vnc_ws_base_url}/{session_id}",
-            token=token,
-            token_ttl_seconds=self._settings.vnc_token_ttl_seconds,
+            token=None,
+            token_ttl_seconds=None,
         )
+
+    def _sanitize_vnc_payload(
+        self, details: SessionVncDetails | None
+    ) -> SessionVncDetails | None:
+        """Strip runner-controlled VNC tokens so the gateway can re-sign them.
+
+        Args:
+            details: Raw VNC descriptor supplied via create or update payloads.
+
+        Returns:
+            SessionVncDetails | None: Either the original descriptor when no
+            token metadata is present or a copy with ``token`` and
+            ``token_ttl_seconds`` cleared, ensuring that downstream services are
+            responsible for issuing signatures.
+
+        Example:
+            Runner-supplied descriptors containing ``token="abc"`` and
+            ``token_ttl_seconds=30`` are returned with both values cleared so that
+            downstream gateways can inject fresh credentials.
+        """
+
+        if details is None:
+            return None
+        if details.token is None and details.token_ttl_seconds is None:
+            return details
+        return details.model_copy(update={"token": None, "token_ttl_seconds": None})
 
     def _recalculate_active_sessions(
         self, previous_status: SessionStatus, current_status: SessionStatus
