@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from core import AbstractSessionEventBridge
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from core import AbstractSessionEventBridge, SessionEvent
+from fastapi import APIRouter, Depends, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import StreamingResponse
 
 from ..deps import get_event_bridge
@@ -13,6 +13,31 @@ from ..deps.security import authenticate_websocket, get_authenticator, get_curre
 from ..security import AuthenticatedUser, KeycloakAuthenticator
 
 router = APIRouter(prefix="/events", tags=["events"])
+
+
+@router.post("", status_code=status.HTTP_202_ACCEPTED)
+async def publish_session_event(
+    event: SessionEvent,
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
+) -> Response:
+    """Accept a :class:`SessionEvent` from a runner and fan it out to clients.
+
+    Args:
+        event: Payload describing the session transition that occurred on the
+            runner.
+        bridge: Application-scoped event bridge that relays events to SSE and
+            WebSocket subscribers.
+
+    Returns:
+        Response: ``202 Accepted`` response confirming that the event was
+        enqueued for broadcasting.
+
+    Example:
+        >>> await publish_session_event(event, bridge)  # doctest: +SKIP
+    """
+
+    await bridge.publish(event)
+    return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
 @router.get("", response_class=StreamingResponse)

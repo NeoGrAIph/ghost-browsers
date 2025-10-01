@@ -5,7 +5,11 @@ from __future__ import annotations
 from functools import lru_cache
 
 from ..config import RunnerSettings
-from ..events import InMemorySessionEventPublisher, SessionEventPublisher
+from ..events import (
+    HttpSessionEventPublisher,
+    InMemorySessionEventPublisher,
+    SessionEventPublisher,
+)
 from ..session_manager import SessionManager
 
 
@@ -18,8 +22,11 @@ def get_runner_settings() -> RunnerSettings:
 
 @lru_cache
 def get_event_publisher() -> SessionEventPublisher:
-    """Return the default in-memory session event publisher."""
+    """Return the configured session event publisher based on settings."""
 
+    settings = get_runner_settings()
+    if settings.event_endpoint is not None:
+        return HttpSessionEventPublisher(str(settings.event_endpoint))
     return InMemorySessionEventPublisher()
 
 

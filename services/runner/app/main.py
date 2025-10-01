@@ -19,6 +19,36 @@ from .session_manager import (
 
 app = FastAPI(title="Ghost Browsers Runner", version="0.1.0")
 
+
+def _normalise_base_url(url: Any | None) -> str | None:
+    """Return a stable string representation for optional base URLs.
+
+    ``AnyUrl`` instances produced by Pydantic append a trailing slash when the
+    original value contains no path segment. The health endpoint should return
+    URLs exactly as operators configured them, therefore this helper trims the
+    extra slash only when the underlying path is empty.
+
+    Args:
+        url: Value received from the settings model.
+
+    Returns:
+        str | None: ``None`` when no URL is configured, otherwise the
+        normalised textual representation.
+
+    Example:
+        >>> _normalise_base_url("http://proxy:3128/")
+        'http://proxy:3128'
+    """
+
+    if url is None:
+        return None
+
+    text = str(url)
+    path = getattr(url, "path", "")
+    if text.endswith("/") and path in {"", "/"}:
+        return text[:-1]
+    return text
+
 RunnerSettingsDep = Annotated[RunnerSettings, Depends(get_runner_settings)]
 SessionManagerDep = Annotated[SessionManager, Depends(get_session_manager)]
 
@@ -49,21 +79,9 @@ async def health(
         },
         "proxy": {
             "enabled": settings.proxy_enabled,
-            "http_base_url": (
-                str(settings.proxy_http_base_url)
-                if settings.proxy_http_base_url is not None
-                else None
-            ),
-            "https_base_url": (
-                str(settings.proxy_https_base_url)
-                if settings.proxy_https_base_url is not None
-                else None
-            ),
-            "socks_base_url": (
-                str(settings.proxy_socks_base_url)
-                if settings.proxy_socks_base_url is not None
-                else None
-            ),
+            "http_base_url": _normalise_base_url(settings.proxy_http_base_url),
+            "https_base_url": _normalise_base_url(settings.proxy_https_base_url),
+            "socks_base_url": _normalise_base_url(settings.proxy_socks_base_url),
         },
         "prewarm": {
             "failures": metrics.prewarm_failure_count,

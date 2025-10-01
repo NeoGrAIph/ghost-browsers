@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 import anyio
+import httpx
 from core.models import SessionEvent
 
 
@@ -63,8 +64,72 @@ class CallbackSessionEventPublisher:
         await self._callback(event)
 
 
+class HttpSessionEventPublisher:
+    """Publish session events to the gateway over HTTP.
+
+    Args:
+        endpoint: Absolute URL of the gateway endpoint that accepts
+            ``SessionEvent`` payloads.
+        client: Optional :class:`httpx.AsyncClient` instance that will be used
+            for requests. When omitted a short-lived client is created for each
+            call.
+        timeout: Request timeout applied when instantiating internal clients.
+
+    Example:
+        >>> publisher = HttpSessionEventPublisher("https://gateway/events")
+        >>> await publisher.publish(event)  # doctest: +SKIP
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        client: httpx.AsyncClient | None = None,
+        timeout: float = 5.0,
+    ) -> None:
+        self._endpoint = endpoint
+        self._client = client
+        self._timeout = timeout
+
+    async def publish(self, event: SessionEvent) -> None:
+        """Serialise ``event`` and POST it to the configured gateway endpoint.
+
+        Args:
+            event: Immutable session event to send upstream.
+
+        Returns:
+            None. The coroutine completes once the gateway acknowledges the
+            request with a successful HTTP status code.
+
+        Raises:
+            httpx.HTTPStatusError: If the gateway responds with a non-success
+                status code.
+            httpx.RequestError: If the HTTP request fails before receiving a
+                response.
+        """
+
+        payload = event.model_dump(mode="json", by_alias=True)
+        if self._client is not None:
+            response = await self._client.post(
+                self._endpoint,
+                json=payload,
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            return
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                self._endpoint,
+                json=payload,
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+
+
 __all__ = [
     "CallbackSessionEventPublisher",
+    "HttpSessionEventPublisher",
     "InMemorySessionEventPublisher",
     "SessionEventPublisher",
 ]
