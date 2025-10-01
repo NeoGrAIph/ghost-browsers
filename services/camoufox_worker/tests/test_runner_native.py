@@ -2,28 +2,9 @@
 
 from __future__ import annotations
 
-import sys
-import types
 from typing import Any, Dict, List, Optional
 
-# Provide lightweight stubs for the optional camoufox dependency when running tests.
-if "camoufox" not in sys.modules:
-    camoufox_module = types.ModuleType("camoufox")
-    camoufox_sync_api_module = types.ModuleType("camoufox.sync_api")
-    camoufox_errors_module = types.ModuleType("camoufox.errors")
-
-    class _CamoufoxError(Exception):
-        """Fallback Camoufox error stub for tests."""
-
-    camoufox_errors_module.CamoufoxError = _CamoufoxError
-    camoufox_sync_api_module.Camoufox = object  # type: ignore[assignment]
-
-    camoufox_module.sync_api = camoufox_sync_api_module  # type: ignore[attr-defined]
-    camoufox_module.errors = camoufox_errors_module  # type: ignore[attr-defined]
-
-    sys.modules["camoufox"] = camoufox_module
-    sys.modules["camoufox.sync_api"] = camoufox_sync_api_module
-    sys.modules["camoufox.errors"] = camoufox_errors_module
+import pytest
 
 from worker.jobs import Job, JobStatus
 from worker.runner_native import run_job

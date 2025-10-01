@@ -20,6 +20,13 @@ Camoufox worker обеспечивает выполнение короткожи
 * CLI основан на Click для дальнейшего расширения команды `run` под дополнительные опции.
 * При ошибках исполнения Camoufox исключения конвертируются в `JobResult` со статусом `failure`, чтобы потребители могли логировать/ретраить без исключений.
 * Orchestrator-helpers используют `httpx.AsyncClient` с Bearer-аутентификацией, экспоненциальным бэкоффом (5xx/сетевые ошибки) и гарантированным `DELETE` в блоке `finally`.
+* Pytest-конфигурация добавляет каталог `services/camoufox_worker` в `sys.path`,
+  регистрирует маркер `anyio` и оставляет только `--strict-markers`/`--maxfail=1`
+  для базового запуска без `pytest-cov`. Поскольку защитные пропуски удалены,
+  тесты требуют установки зависимостей (`pydantic`, `httpx`, `camoufox`).
+  Авто-fixture `reset_worker_environment` продолжает сбрасывать `WORKER_MODE`,
+  прокси и креды Gateway между тестами, а `conftest.py` подменяет модуль
+  `camoufox` лёгкой заглушкой до monkeypatch'ей тестов.
 * Dockerfile устанавливает зависимости через Poetry (`poetry.lock`), копирует `worker/` и `bin/worker-launch.sh` под пользователем `pwuser` и допускает переопределение версии `camoufox` build-аргументом.
 
 ## Constraints & Invariants
@@ -38,7 +45,8 @@ Camoufox worker обеспечивает выполнение короткожи
 ## How to Test
 * `poetry install` — установка зависимостей и публикация пакета `worker`.
 * `poetry run ruff check .` — статический анализ.
-* `poetry run pytest -q` — запуск юнит-тестов (покрытие моделей, нативного раннера и orchestrator-хелперов через `httpx.MockTransport`).
+* `poetry run pytest -q` — юнит-тесты (модели задач, CLI, нативный раннер с Camoufox-моками и orchestrator-хелперы через `httpx.MockTransport`).
+  - Дополнительно: `poetry run pytest --cov=worker --cov-report=term-missing`, если установлен `pytest-cov`.
 * `poetry run python -m camoufox path` и `poetry run python -m camoufox version` — валидация окружения Camoufox.
 * `docker run --rm ghcr.io/<org>/camoufox-worker:latest -- --help` — smoke-проверка entrypoint `worker-launch.sh`.
 
@@ -51,3 +59,6 @@ Camoufox worker обеспечивает выполнение короткожи
 * 2025-02-15 · gpt-5-codex · Зафиксирована версия camoufox 0.4.11, добавлены `Job.url_source` и гибкие `JobMetrics.extra`, обновлены статусы навигации, тесты и гайд по запуску.
 * 2025-02-17 · gpt-5-codex · Реализованы async-хелперы orchestrator-режима (create/touch/proxy/delete/poll) с ретраями, обновлён CLI (ENV + gateway credentials) и добавлены pytest-моки `httpx.MockTransport` для проверки ретраев/ошибок.
 * 2025-02-20 · gpt-5-codex · Добавлен `poetry.lock`, переработан Dockerfile (Poetry-install под `pwuser`, entrypoint `worker-launch.sh`, build-arg camoufox) и описан контейнерный запуск.
+* 2025-02-21 · ChatGPT · Расширены юнит-тесты (CLI, Camoufox мок, orchestrator HTTP flow), добавлен автofixture для очистки ENV и pytest-конфигурация с покрытием.
+* 2025-02-23 · gpt-5-codex · Удалены `pytest.importorskip`, глобально прокинут shim `camoufox`,
+  обновлены инструкции по зависимостям и тестам.
