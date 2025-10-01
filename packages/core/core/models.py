@@ -243,6 +243,10 @@ class Runner(BaseModel):
         available_slots: Currently free slots; derived from total minus active sessions.
         healthy: Whether the runner passes health checks.
         supports_vnc: Whether the runner can expose VNC previews.
+        vnc_http_url_template: Optional public HTTP viewer template exposed via
+            the gateway (e.g. ``https://vnc.example/view/{id}``).
+        vnc_ws_url_template: Optional public WebSocket template proxied through
+            the shared VNC gateway (e.g. ``wss://vnc.example/ws/{id}``).
         last_heartbeat_at: Timestamp of the most recent heartbeat.
         capabilities: Arbitrary capability flags advertised by the runner.
 
@@ -264,6 +268,14 @@ class Runner(BaseModel):
     )
     healthy: bool = Field(default=True, description="True if health checks pass")
     supports_vnc: bool = Field(default=False, description="Runner can allocate VNC sessions")
+    vnc_http_url_template: str | None = Field(
+        default=None,
+        description="Template used by the gateway to expose a public VNC HTTP viewer",
+    )
+    vnc_ws_url_template: str | None = Field(
+        default=None,
+        description="Template used by the gateway to expose a public VNC WebSocket endpoint",
+    )
     last_heartbeat_at: datetime | None = Field(
         default=None,
         description="Timestamp of the last heartbeat received by the gateway",

@@ -40,6 +40,9 @@ def gateway_app() -> FastAPI:
                 id="runner-1",
                 base_url="http://runner-1",
                 total_slots=1,
+                supports_vnc=True,
+                vnc_http_url_template="https://vnc.example/view/{id}",
+                vnc_ws_url_template="wss://vnc.example/ws/{id}",
             )
         ],
         jwt_jwks_url="http://jwks.local",
@@ -148,6 +151,33 @@ def test_vnc_token_generation(gateway_client: TestClient) -> None:
     assert payload["token_ttl_seconds"] == 120
     claims = jwt.decode(payload["token"], "unit-test-secret", algorithms=["HS256"])
     assert claims["sid"] == session_body["id"]
+
+
+def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> None:
+    """Runner-provided VNC templates are substituted with the session identifier."""
+
+    now = datetime.now(tz=UTC)
+    session_id = str(uuid4())
+    session_body = {
+        "id": session_id,
+        "runner_id": "runner-1",
+        "status": SessionStatus.INIT.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+        "vnc": {
+            "http_url": "http://127.0.0.1:6901/view",  # runner-local endpoint
+            "websocket_url": "ws://127.0.0.1:6901/ws",
+        },
+    }
+
+    response = gateway_client.post("/sessions", json=session_body)
+    assert response.status_code == 201
+    payload = response.json()["vnc"]
+    assert payload["http_url"] == f"https://vnc.example/view/{session_id}"
+    assert payload["websocket_url"] == f"wss://vnc.example/ws/{session_id}"
+    assert payload["token"]
 
 
 @pytest.mark.anyio("asyncio")

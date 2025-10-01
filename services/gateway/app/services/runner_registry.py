@@ -32,3 +32,9 @@ class RunnerRegistry:
         async with self._lock:
             self._runners[runner.id] = runner
             return runner
+
+    async def get(self, runner_id: str) -> Runner | None:
+        """Return a runner by identifier if it is known to the registry."""
+
+        async with self._lock:
+            return self._runners.get(runner_id)
