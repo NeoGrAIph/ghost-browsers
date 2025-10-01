@@ -122,7 +122,18 @@ class SessionProxySettings(BaseModel):
 
     @model_validator(mode="after")
     def ensure_at_least_one_proxy(self) -> "SessionProxySettings":
-        """Ensure that when the block is provided it defines at least one proxy value."""
+        """Validate that at least one proxy endpoint is configured.
+
+        Returns:
+            SessionProxySettings: The validated proxy configuration instance.
+
+        Raises:
+            ValueError: If none of ``http``, ``https`` or ``socks`` is provided.
+
+        Example:
+            >>> SessionProxySettings(http="http://proxy.local:3128")
+            SessionProxySettings(http=Url('http://proxy.local:3128/'), https=None, socks=None)
+        """
 
         if not any((self.http, self.https, self.socks)):
             raise ValueError(
@@ -171,7 +182,21 @@ class SessionVncDetails(BaseModel):
     @field_validator("token")
     @classmethod
     def _trim_token(cls, value: str | None) -> str | None:
-        """Strip whitespace to avoid subtle authentication issues."""
+        """Strip incidental whitespace from tokens before validation.
+
+        Args:
+            value: Raw token value supplied by the gateway.
+
+        Returns:
+            str | None: The trimmed token or ``None`` when not provided.
+
+        Raises:
+            ValueError: If the token becomes empty after trimming.
+
+        Example:
+            >>> SessionVncDetails._trim_token("  opaque  ")
+            'opaque'
+        """
 
         if value is None:
             return None
@@ -182,7 +207,21 @@ class SessionVncDetails(BaseModel):
 
     @model_validator(mode="after")
     def check_payload(self) -> "SessionVncDetails":
-        """Ensure URLs and tokens follow configuration constraints."""
+        """Validate cross-field invariants for VNC connection data.
+
+        Returns:
+            SessionVncDetails: The validated VNC descriptor.
+
+        Raises:
+            ValueError: If no URL is provided, the token TTL exceeds 300 seconds,
+                or a token is supplied without a TTL.
+
+        Example:
+            >>> SessionVncDetails(
+            ...     websocket_url="wss://vnc/ws", token="opaque", token_ttl_seconds=60
+            ... ).token_ttl_seconds
+            60
+        """
 
         if not any((self.http_url, self.websocket_url)):
             raise ValueError("at least one of http_url or websocket_url must be provided")
@@ -237,7 +276,21 @@ class Runner(BaseModel):
     @field_validator("id")
     @classmethod
     def _strip_identifier(cls, value: str) -> str:
-        """Ensure identifiers do not contain leading or trailing whitespace."""
+        """Normalise runner identifiers prior to validation.
+
+        Args:
+            value: Identifier provided by the runner.
+
+        Returns:
+            str: The stripped identifier string.
+
+        Raises:
+            ValueError: If the identifier is blank after trimming.
+
+        Example:
+            >>> Runner._strip_identifier("  runner-1  ")
+            'runner-1'
+        """
 
         trimmed = value.strip()
         if not trimmed:
@@ -246,7 +299,23 @@ class Runner(BaseModel):
 
     @model_validator(mode="after")
     def _post_init(self) -> "Runner":
-        """Compute defaults and enforce relationships between fields."""
+        """Derive defaults and enforce field relationships.
+
+        Returns:
+            Runner: The validated runner instance with ``available_slots`` populated.
+
+        Raises:
+            ValueError: If ``available_slots`` is negative, exceeds ``total_slots``,
+                the runner is ``OFFLINE`` yet marked ``healthy``, or the heartbeat
+                timestamp lacks timezone information.
+
+        Example:
+            >>> Runner(
+            ...     id="runner-1", base_url="http://runner:8080", total_slots=2,
+            ...     available_slots=1, state=RunnerState.IDLE
+            ... )
+            Runner(id='runner-1', base_url=AnyUrl('http://runner:8080', ...), ...)
+        """
 
         object.__setattr__(
             self,
@@ -363,7 +432,21 @@ class Session(BaseModel):
     @field_validator("runner_id")
     @classmethod
     def _trim_runner_id(cls, value: str) -> str:
-        """Strip incidental whitespace from runner identifiers."""
+        """Normalise the ``runner_id`` string before persistence.
+
+        Args:
+            value: Raw runner identifier supplied by the runner service.
+
+        Returns:
+            str: The trimmed identifier.
+
+        Raises:
+            ValueError: If the identifier is empty after trimming.
+
+        Example:
+            >>> Session._trim_runner_id(" runner-1 ")
+            'runner-1'
+        """
 
         trimmed = value.strip()
         if not trimmed:
@@ -373,7 +456,21 @@ class Session(BaseModel):
     @field_validator("browser")
     @classmethod
     def _trim_browser(cls, value: str) -> str:
-        """Normalise browser identifiers returned by runners."""
+        """Normalise browser identifiers returned by runners.
+
+        Args:
+            value: Browser identifier string.
+
+        Returns:
+            str: Trimmed browser identifier.
+
+        Raises:
+            ValueError: If the identifier is empty after trimming.
+
+        Example:
+            >>> Session._trim_browser(" camoufox ")
+            'camoufox'
+        """
 
         trimmed = value.strip()
         if not trimmed:
@@ -383,7 +480,21 @@ class Session(BaseModel):
     @field_validator("ws_endpoint")
     @classmethod
     def _clean_ws_endpoint(cls, value: str | None) -> str | None:
-        """Ensure WebSocket endpoints are stripped of incidental whitespace."""
+        """Normalise optional WebSocket endpoints prior to validation.
+
+        Args:
+            value: Raw endpoint string provided by the runner.
+
+        Returns:
+            str | None: Trimmed endpoint or ``None`` when absent.
+
+        Raises:
+            ValueError: If the endpoint is blank after trimming.
+
+        Example:
+            >>> Session._clean_ws_endpoint("  /sessions/1/ws  ")
+            '/sessions/1/ws'
+        """
 
         if value is None:
             return None
@@ -395,7 +506,21 @@ class Session(BaseModel):
     @field_validator("labels")
     @classmethod
     def _validate_labels(cls, value: dict[str, str]) -> dict[str, str]:
-        """Coerce labels to trimmed strings."""
+        """Ensure label keys are meaningful and values coerced to strings.
+
+        Args:
+            value: Arbitrary mapping provided by upstream services.
+
+        Returns:
+            dict[str, str]: Sanitised mapping with trimmed keys and values.
+
+        Raises:
+            ValueError: If a label key is empty after trimming.
+
+        Example:
+            >>> Session._validate_labels({" env ": " staging "})
+            {'env': 'staging'}
+        """
 
         cleaned: dict[str, str] = {}
         for key, raw_value in value.items():
@@ -408,7 +533,20 @@ class Session(BaseModel):
 
     @model_validator(mode="after")
     def _validate_temporal_relationships(self) -> "Session":
-        """Validate timestamp ordering and timezone awareness."""
+        """Assert time fields are ordered and timezone-aware.
+
+        Returns:
+            Session: The validated session instance.
+
+        Raises:
+            ValueError: If any timestamp lacks timezone info, ``last_seen_at`` is
+                before ``created_at``, or ``ended_at`` precedes ``created_at``.
+
+        Example:
+            >>> session = build_session()  # doctest: +SKIP
+            >>> session.last_seen_at >= session.created_at
+            True
+        """
 
         for attribute_name in ("created_at", "last_seen_at", "ended_at"):
             timestamp = getattr(self, attribute_name)
@@ -425,7 +563,16 @@ class Session(BaseModel):
 
     @property
     def updated_at(self) -> datetime:
-        """Backwards compatible alias for :attr:`last_seen_at`."""
+        """Backwards compatible alias for :attr:`last_seen_at`.
+
+        Returns:
+            datetime: Timestamp of the last heartbeat received for the session.
+
+        Example:
+            >>> session = Session(...).model_copy(update={})  # doctest: +SKIP
+            >>> session.updated_at == session.last_seen_at
+            True
+        """
 
         return self.last_seen_at
 
@@ -465,7 +612,25 @@ class SessionEvent(BaseModel):
 
     @model_validator(mode="after")
     def _validate_event(self) -> "SessionEvent":
-        """Validate event semantics for created and terminal events."""
+        """Validate event semantics for created and terminal events.
+
+        Returns:
+            SessionEvent: The validated event instance.
+
+        Raises:
+            ValueError: If ``occurred_at`` lacks timezone info, a CREATED event
+                references a non-initial status, or an ENDED event does not
+                point to a ``DEAD`` session.
+
+        Example:
+            >>> event = SessionEvent(
+            ...     session=Session(...),  # doctest: +SKIP
+            ...     occurred_at=datetime.now(datetime.UTC),
+            ...     type=SessionEventType.CREATED,
+            ... )
+            >>> isinstance(event, SessionEvent)
+            True
+        """
 
         if self.occurred_at.tzinfo is None:
             raise ValueError("occurred_at must be timezone-aware")
@@ -483,13 +648,29 @@ class SessionEvent(BaseModel):
 
     @property
     def runner_id(self) -> str:
-        """Return the identifier of the runner that emitted the event."""
+        """Return the identifier of the runner that emitted the event.
+
+        Returns:
+            str: Runner identifier copied from the underlying session snapshot.
+
+        Example:
+            >>> SessionEvent(session=Session(...)).runner_id  # doctest: +SKIP
+            'runner-1'
+        """
 
         return self.session.runner_id
 
     @property
     def is_terminal(self) -> bool:
-        """Return ``True`` when the event represents a fully terminated session."""
+        """Return ``True`` when the event represents a fully terminated session.
+
+        Returns:
+            bool: ``True`` if the associated session status is :class:`SessionStatus.DEAD`.
+
+        Example:
+            >>> SessionEvent(session=Session(...)).is_terminal  # doctest: +SKIP
+            False
+        """
 
         return self.session.status is SessionStatus.DEAD
 
