@@ -5,7 +5,8 @@
 
 ## Interfaces
 - **REST**: `/sessions` (GET/POST/DELETE) через `api/client.ts`.
-- **SSE**: `/sessions/stream` — автообновление списка сессий, перезапуск с экспоненциальной задержкой.
+- **SSE**: `/events` — автообновление списка сессий, перезапуск с экспоненциальной задержкой;
+  bearer-токен пробрасывается как query `access_token` для нативного `EventSource`.
 - **VNC**: встраивание внешнего URL `session.vncUrl` в `iframe`.
 
 ## Data & Models
@@ -42,3 +43,4 @@
 - 2024-09-09 · gpt-5-codex · Перешли на модели core.Session/core.SessionEvent: адаптеры в
   `types/session.ts`, хранение списка сессий напрямую в React Query, обновлены фильтры,
   компоненты и тесты под статусы `INIT/READY/TERMINATING/DEAD`.
+- 2024-09-10 · gpt-5-codex · Переключили SSE на `/events`, пробрасываем токен через `access_token`, добавлен vitest для клиента.

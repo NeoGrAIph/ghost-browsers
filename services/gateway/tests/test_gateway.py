@@ -12,10 +12,11 @@ from uuid import uuid4
 
 import anyio
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from jose import jwt
 from starlette.responses import StreamingResponse
+from starlette.types import Scope
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
@@ -200,6 +201,24 @@ def test_vnc_token_service_enriches_missing_token() -> None:
     assert enriched.token is not None
     assert enriched.token_ttl_seconds == 90
     assert enriched is not details
+
+
+@pytest.mark.anyio("asyncio")
+async def test_sse_accepts_access_token_query_parameter(gateway_app: FastAPI) -> None:
+    """SSE authentication falls back to the ``access_token`` query parameter."""
+
+    scope: Scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/events",
+        "headers": [],
+        "query_string": b"access_token=test-token",
+    }
+    request = Request(scope)
+    authenticator = gateway_app.state.authenticator
+
+    user = await get_current_user(request=request, credentials=None, authenticator=authenticator)
+    assert user.subject == "tester"
 
 
 @pytest.mark.anyio("asyncio")
