@@ -4,4 +4,5 @@ __all__ = [
     "jobs",
     "runner_native",
     "runner_orch",
+    "queue",
 ]
