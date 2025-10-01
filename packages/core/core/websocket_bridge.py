@@ -1,9 +1,10 @@
 """Asynchronous utilities for propagating session events via WebSockets.
 
-The real gateway will bridge events from runners to UI subscribers using
-Redis streams or another broker. This module defines the abstract API
-and provides an in-memory implementation that is suitable for unit tests
-and local development.
+Ghost Browsers standardises on an in-memory fan-out bridge for session
+events. The bridge is production-backed by `asyncio` primitives and does
+not depend on external brokers, which keeps local development and
+container deployments self-contained. This module defines the abstract
+API and exposes the in-memory implementation that all services share.
 """
 
 from __future__ import annotations

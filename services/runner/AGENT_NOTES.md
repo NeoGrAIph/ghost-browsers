@@ -22,7 +22,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
   `RunnerSettings.prewarm_failure_history_size`).
 
 ## Decisions
-- **In-memory publisher stub**: We expose a `SessionEventPublisher` protocol with an in-memory default to unblock tests until a real transport (HTTP/SSE) is integrated.
+- **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
 - **Automatic VNC stubs**: When sessions are non-headless and no explicit VNC payload is provided, the manager synthesises `SessionVncDetails` using configurable base URLs and bounded TTL (<=300s) to respect `SessionVncDetails` invariants. Глобальный флаг `RunnerSettings.vnc_enabled` отключает генерацию stub-значений.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
@@ -36,7 +36,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - Session mutations occur under an `anyio.Lock` to avoid race conditions in async contexts.
 
 ## Known Gaps / TODO
-- [ ] Replace in-memory publisher with HTTP/SSE integration towards Gateway when endpoint contract is defined.
+- [ ] Зафиксировать профиль нагрузки для in-memory издателя после появления боевых метрик, чтобы подтвердить соответствие latency требованиям.
 
 ## How to Test
 - `poetry install --no-root`
@@ -46,3 +46,4 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 ## Changelog (for agents)
 - 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
 - 2025-10-05 · gpt-5-codex · Sanitised runner VNC payloads to defer token issuance to the gateway and extended unit tests.
+- 2025-10-07 · gpt-5-codex · Зафиксировано использование in-memory event publisher как основного транспорта, обновлены Known Gaps.
