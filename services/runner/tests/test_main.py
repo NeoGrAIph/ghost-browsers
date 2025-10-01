@@ -23,8 +23,37 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+class _MainStubHandle:
+    """Minimal stub mirroring :class:`BrowserSessionHandle` for API tests."""
+
+    def __init__(self, endpoint: str, pid: int) -> None:
+        self.ws_endpoint = endpoint
+        self.pid = pid
+
+    async def shutdown(self, *, force: bool, timeout: float = 5.0) -> None:
+        """Pretend to terminate the Playwright subprocess."""
+
+        return None
+
+
+@pytest.fixture
+def stub_launch_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch session manager browser launch to avoid spawning Playwright."""
+
+    counter = 0
+
+    async def _fake_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+        nonlocal counter
+        counter += 1
+        return _MainStubHandle(f"ws://health/{counter}", pid=4500 + counter)
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+
+
 @pytest.mark.anyio("asyncio")
-async def test_health_endpoint_reports_extended_metrics() -> None:
+async def test_health_endpoint_reports_extended_metrics(
+    stub_launch_browser: None,
+) -> None:
     """``GET /health`` should expose slots, proxy, VNC, and prewarm diagnostics."""
 
     settings = RunnerSettings(
