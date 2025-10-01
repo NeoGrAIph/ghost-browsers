@@ -1,4 +1,10 @@
-"""Unit tests for the shared core models and utilities."""
+"""Unit tests for the camou-core shared models and utilities.
+
+The suite validates structural invariants, serialisation behaviour and
+the in-memory WebSocket bridge used for local development. Each test
+focuses on a specific contract to surface regressions quickly for
+services that depend on the core package.
+"""
 
 from __future__ import annotations
 

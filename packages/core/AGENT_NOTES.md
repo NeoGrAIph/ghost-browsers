@@ -35,6 +35,8 @@
 - TTL токена ограничен 300 сек в соответствии с `docs/configuration.md`.
 - В `InMemorySessionEventBridge` каждый подписчик получает собственную очередь —
   гарантирует отсутствие влияния подписчиков друг на друга.
+- Все валидаторы снабжены подробными docstring’ами с аргументами и примерами,
+  чтобы соблюсти корневые требования к документации.
 
 ## Constraints & Invariants
 - Все временные метки должны быть timezone-aware (`tzinfo` не `None`).
@@ -54,6 +56,8 @@
 - Тесты: `poetry run pytest -q`
 
 ## Changelog (for agents)
+- 2025-02-14 · ChatGPT — Уточнены docstring’и валидаторов, добавлен модульный
+  docstring для тестов; функциональное поведение не изменено.
 - 2025-10-02 · ChatGPT — Согласованы поля с beta-веткой: статусы `INIT→DEAD`, `StartUrlWait`,
   расширенные `SessionVncDetails`, флаг `supports_vnc`, TTL `idle_ttl_seconds`, обновлены тесты.
 - 2025-10-01 · ChatGPT — Добавлена поддержка replay_latest для моста, усилены валидаторы идентификаторов, добавлен флаг is_terminal.
