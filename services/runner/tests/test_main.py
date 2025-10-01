@@ -16,15 +16,8 @@ from app.main import app
 from app.session_manager import SessionCreatePayload, SessionManager
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Force the anyio plugin to use the asyncio backend."""
-
-    return "asyncio"
-
-
 @pytest.mark.anyio("asyncio")
-async def test_health_endpoint_reports_extended_metrics() -> None:
+async def test_health_endpoint_reports_extended_metrics(fake_playwright) -> None:
     """``GET /health`` should expose slots, proxy, VNC, and prewarm diagnostics."""
 
     settings = RunnerSettings(
@@ -49,12 +42,15 @@ async def test_health_endpoint_reports_extended_metrics() -> None:
     app.dependency_overrides[get_runner_settings] = lambda: settings
     app.dependency_overrides[get_event_publisher] = lambda: publisher
     app.dependency_overrides[get_session_manager] = lambda: manager
+    app.state.session_manager_override = manager
 
     try:
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.get("/health")
     finally:
         app.dependency_overrides.clear()
+        if hasattr(app.state, "session_manager_override"):
+            delattr(app.state, "session_manager_override")
 
     assert response.status_code == 200
     payload = response.json()

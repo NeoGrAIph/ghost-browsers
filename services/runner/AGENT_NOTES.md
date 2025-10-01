@@ -26,6 +26,8 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
 - **Camoufox stub dependency**: Для unit-тестов в CI runner использует локальный путь-зависимость `packages/camoufox`, реализующую CLI/API-совместимый stub. Это позволяет выполнять `poetry install` без доступа к проприетарному пакету.
+- **Playwright lifecycle management**: `SessionManager` запускает `camoufox launch-server <browser>` через `asyncio.create_subprocess_exec`, парсит `wsEndpoint` из stdout и отслеживает `Process` на каждую сессию. Термитация происходит при переходе в `SessionStatus.DEAD` и при остановке сервиса (FastAPI `shutdown`).
+- **Stub browser server for tests**: Интеграционные тесты используют `services/runner/tests/playwright_stub_server.py`, который поднимает минимальный WebSocket-сервер и печатает `{"wsEndpoint": ...}` — поведение аналогично `playwright launch-server`.
 - **Automatic VNC stubs**: When sessions are non-headless and no explicit VNC payload is provided, the manager synthesises `SessionVncDetails` using configurable base URLs and bounded TTL (<=300s) to respect `SessionVncDetails` invariants. Глобальный флаг `RunnerSettings.vnc_enabled` отключает генерацию stub-значений.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
@@ -48,6 +50,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - `poetry install --no-root`
 - `poetry run pytest -q` (anyio-powered unit tests)
 - `poetry run ruff check .`
+- Интеграционные тесты поднимают stub Playwright-сервер: `poetry run pytest -q services/runner/tests/test_session_integration.py`
 
 ## Changelog (for agents)
 - 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
@@ -56,3 +59,4 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - 2025-10-08 · gpt-5-codex · Добавлен HTTP publisher (`POST /events`) и покрытие unit-тестами + конфиг-переключатель в зависимостях.
 - 2025-10-09 · gpt-5-codex · Переключили зависимость `camoufox` на локальный stub-пакет и нормализовали выдачу proxy URL в `/health`,
   чтобы `poetry install` и unit-тесты проходили в офлайн-окружении без лишних слешей.
+- 2025-10-10 · gpt-5-codex · Реализован запуск/остановка Camoufox Playwright-серверов в `SessionManager`, добавлен FastAPI shutdown-хук и интеграционные тесты с живым WebSocket-эндпоинтом.

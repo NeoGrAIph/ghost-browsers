@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import re
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -9,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import anyio
+from asyncio.subprocess import PIPE, Process, STDOUT
 from core.models import (
     Session,
     SessionEvent,
@@ -22,6 +27,19 @@ from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 
 from .config import RunnerSettings
 from .events import SessionEventPublisher
+
+
+LOGGER = logging.getLogger(__name__)
+
+# ``playwright launch-server`` outputs either JSON or a plain text line containing
+# the ``wsEndpoint``. The pattern below extracts the URL from both formats so the
+# runner can interoperate with Camoufox as well as local stubs used in tests.
+_WS_ENDPOINT_PATTERN = re.compile(r"wsEndpoint\s*[:=]\s*(?P<endpoint>\S+)")
+
+# Upper bound for waiting on the Playwright server to report its WebSocket
+# endpoint. Real-world launches are typically well below a second but the timeout
+# is generous to accommodate slow CI environments.
+PLAYWRIGHT_READY_TIMEOUT = 15.0
 
 
 class SessionCreatePayload(BaseModel):
@@ -118,6 +136,7 @@ class SessionManager:
         self._publisher = event_publisher
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sessions: dict[UUID, Session] = {}
+        self._session_processes: dict[UUID, Process] = {}
         self._lock = anyio.Lock()
         self._active_sessions = 0
         self._prewarm_failures: deque[str] = deque(
@@ -128,18 +147,20 @@ class SessionManager:
     async def create_session(self, payload: SessionCreatePayload) -> Session:
         """Create, persist, and broadcast a new session object."""
 
+        session_id = uuid4()
+        sanitized_vnc = self._sanitize_vnc_payload(payload.vnc)
+        vnc_details = self._resolve_vnc(
+            payload, session_id, sanitized_vnc=sanitized_vnc
+        )
+        vnc_enabled = (
+            payload.vnc_enabled
+            if payload.vnc_enabled is not None
+            else (vnc_details is not None and not payload.headless)
+        )
+        process, ws_endpoint = await self._start_browser_process(session_id, payload)
+
         async with self._lock:
-            session_id = uuid4()
             now = self._clock()
-            sanitized_vnc = self._sanitize_vnc_payload(payload.vnc)
-            vnc_details = self._resolve_vnc(
-                payload, session_id, sanitized_vnc=sanitized_vnc
-            )
-            vnc_enabled = (
-                payload.vnc_enabled
-                if payload.vnc_enabled is not None
-                else (vnc_details is not None and not payload.headless)
-            )
             session = Session(
                 id=session_id,
                 runner_id=self._settings.runner_id,
@@ -152,13 +173,14 @@ class SessionManager:
                 start_url_wait=payload.start_url_wait,
                 browser=payload.browser,
                 labels=payload.labels,
-                ws_endpoint=payload.ws_endpoint,
+                ws_endpoint=ws_endpoint,
                 proxy=payload.proxy,
                 vnc=vnc_details,
                 vnc_enabled=vnc_enabled,
                 metadata=payload.metadata,
             )
             self._sessions[session_id] = session
+            self._session_processes[session_id] = process
             if session.status is not SessionStatus.DEAD:
                 self._active_sessions += 1
             await self._publish(session, SessionEventType.CREATED, reason=None)
@@ -167,6 +189,7 @@ class SessionManager:
     async def update_session(self, session_id: UUID, payload: SessionUpdatePayload) -> Session:
         """Apply a partial update to a stored session and broadcast the change."""
 
+        process_to_stop: Process | None = None
         async with self._lock:
             if session_id not in self._sessions:
                 raise SessionNotFoundError(session_id)
@@ -191,13 +214,17 @@ class SessionManager:
             session = existing.model_copy(update=update_data, deep=True)
             self._sessions[session_id] = session
             self._recalculate_active_sessions(existing.status, session.status)
+            if session.status is SessionStatus.DEAD:
+                process_to_stop = self._session_processes.pop(session_id, None)
             event_type = (
                 SessionEventType.ENDED
                 if session.status is SessionStatus.DEAD
                 else SessionEventType.UPDATED
             )
             await self._publish(session, event_type, reason=reason)
-            return session
+        if process_to_stop is not None:
+            await self._stop_browser_process(process_to_stop)
+        return session
 
     async def end_session(
         self,
@@ -257,6 +284,23 @@ class SessionManager:
             prewarm_failures=failures,
             last_prewarm_error=last_error,
         )
+
+    async def startup(self) -> None:
+        """Initialise background state before serving requests."""
+
+        # The manager currently has no asynchronous start-up work but the hook is
+        # exposed so FastAPI lifecycle events can call it symmetrically with
+        # :meth:`shutdown`.
+        return None
+
+    async def shutdown(self) -> None:
+        """Terminate all managed browser processes and release resources."""
+
+        async with self._lock:
+            processes = list(self._session_processes.values())
+            self._session_processes.clear()
+        for process in processes:
+            await self._stop_browser_process(process)
 
     def _resolve_vnc(
         self,
@@ -332,6 +376,104 @@ class SessionManager:
             reason=reason,
         )
         await self._publisher.publish(event)
+
+    async def _start_browser_process(
+        self, session_id: UUID, payload: SessionCreatePayload
+    ) -> tuple[Process, str]:
+        """Launch a Playwright-compatible process and read its WebSocket endpoint.
+
+        Args:
+            session_id: Identifier of the session being provisioned. Used only for
+                logging and to disambiguate diagnostics.
+            payload: The creation payload associated with the session.
+
+        Returns:
+            tuple[Process, str]: The running subprocess handle and the
+            ``wsEndpoint`` advertised by Playwright.
+
+        Raises:
+            RuntimeError: If the process exits before emitting an endpoint or the
+                output cannot be parsed.
+        """
+
+        command = [str(self._settings.camoufox_path), "launch-server", payload.browser]
+        LOGGER.debug("Starting Playwright server", extra={"session_id": session_id, "cmd": command})
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=PIPE,
+            stderr=STDOUT,
+        )
+        try:
+            ws_endpoint = await self._read_ws_endpoint(process)
+        except Exception:
+            await self._stop_browser_process(process)
+            raise
+        LOGGER.info(
+            "Playwright server ready",
+            extra={"session_id": session_id, "ws_endpoint": ws_endpoint},
+        )
+        return process, ws_endpoint
+
+    async def _read_ws_endpoint(self, process: Process) -> str:
+        """Consume stdout until a Playwright ``wsEndpoint`` is discovered."""
+
+        if process.stdout is None:
+            raise RuntimeError("Playwright process has no stdout pipe")
+
+        buffered: list[str] = []
+        try:
+            async with asyncio.timeout(PLAYWRIGHT_READY_TIMEOUT):
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace").strip()
+                    if not text:
+                        continue
+                    buffered.append(text)
+                    endpoint = self._extract_ws_endpoint(text)
+                    if endpoint is not None:
+                        return endpoint
+        except TimeoutError as exc:  # pragma: no cover - defensive timeout
+            raise RuntimeError("Timed out waiting for Playwright wsEndpoint") from exc
+
+        returncode = await process.wait()
+        diagnostic = "\n".join(buffered)
+        raise RuntimeError(
+            f"Playwright process exited ({returncode}) without wsEndpoint. Output: {diagnostic}"
+        )
+
+    @staticmethod
+    def _extract_ws_endpoint(text: str) -> str | None:
+        """Return the WebSocket endpoint encoded in ``text`` if present."""
+
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            match = _WS_ENDPOINT_PATTERN.search(text)
+            if match is not None:
+                return match.group("endpoint")
+            return None
+        if isinstance(payload, dict):
+            endpoint = payload.get("wsEndpoint") or payload.get("ws_endpoint")
+            if endpoint:
+                return str(endpoint)
+        return None
+
+    async def _stop_browser_process(self, process: Process) -> None:
+        """Stop a running Playwright process, handling stubborn children."""
+
+        if process.returncode is not None:
+            return
+
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            LOGGER.warning("Playwright process did not terminate gracefully; killing")
+            process.kill()
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+
 
 
 __all__ = [

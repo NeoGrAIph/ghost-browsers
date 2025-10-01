@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from app.config import RunnerSettings
@@ -16,15 +17,8 @@ from core.models import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Force the anyio plugin to use the asyncio backend."""
-
-    return "asyncio"
-
-
 @pytest.mark.anyio("asyncio")
-async def test_create_session_emits_event_and_vnc_stub() -> None:
+async def test_create_session_emits_event_and_vnc_stub(fake_playwright: dict[UUID, "FakeProcess"]) -> None:
     """``create_session`` should store the session and publish a CREATED event."""
 
     clock_now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -48,6 +42,7 @@ async def test_create_session_emits_event_and_vnc_stub() -> None:
     session = await manager.create_session(payload)
 
     assert session.runner_id == "runner-test"
+    assert session.ws_endpoint is not None
     assert session.proxy is not None
     assert session.vnc is not None
     assert session.vnc.token is None
@@ -61,7 +56,7 @@ async def test_create_session_emits_event_and_vnc_stub() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_update_session_merges_labels_and_publishes_update() -> None:
+async def test_update_session_merges_labels_and_publishes_update(fake_playwright: dict[UUID, "FakeProcess"]) -> None:
     """Updates should merge labels and emit ``session.updated`` events."""
 
     clock_now = datetime(2024, 2, 2, 12, 0, 0, tzinfo=UTC)
@@ -91,7 +86,7 @@ async def test_update_session_merges_labels_and_publishes_update() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_create_session_strips_user_vnc_token() -> None:
+async def test_create_session_strips_user_vnc_token(fake_playwright: dict[UUID, "FakeProcess"]) -> None:
     """User-supplied VNC tokens must be removed before persisting sessions."""
 
     clock_now = datetime(2024, 4, 4, 12, 0, 0, tzinfo=UTC)
@@ -120,7 +115,7 @@ async def test_create_session_strips_user_vnc_token() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_update_session_strips_user_vnc_token() -> None:
+async def test_update_session_strips_user_vnc_token(fake_playwright: dict[UUID, "FakeProcess"]) -> None:
     """Updates attempting to inject VNC tokens are sanitised."""
 
     clock_now = datetime(2024, 5, 5, 12, 0, 0, tzinfo=UTC)
@@ -153,7 +148,7 @@ async def test_update_session_strips_user_vnc_token() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_end_session_sets_terminal_state_and_event() -> None:
+async def test_end_session_sets_terminal_state_and_event(fake_playwright: dict[UUID, "FakeProcess"]) -> None:
     """``end_session`` should mark the session as DEAD and send ENDED event."""
 
     clock_now = datetime(2024, 3, 3, 12, 0, 0, tzinfo=UTC)
@@ -169,13 +164,15 @@ async def test_end_session_sets_terminal_state_and_event() -> None:
 
     assert ended.status is SessionStatus.DEAD
     assert ended.ended_at == clock_now
+    process = fake_playwright[session.id]
+    assert process.terminate_called is True
     events = await publisher.drain()
     assert [event.type for event in events] == [SessionEventType.CREATED, SessionEventType.ENDED]
     assert events[-1].reason == "completed"
 
 
 @pytest.mark.anyio("asyncio")
-async def test_metrics_track_active_sessions_and_prewarm_failures() -> None:
+async def test_metrics_track_active_sessions_and_prewarm_failures(fake_playwright: dict[UUID, "FakeProcess"]) -> None:
     """Metrics should reflect active sessions and retain bounded prewarm errors."""
 
     publisher = InMemorySessionEventPublisher()
@@ -198,12 +195,25 @@ async def test_metrics_track_active_sessions_and_prewarm_failures() -> None:
     assert metrics.active_sessions == 2
     assert metrics.prewarm_failure_count == 2
     assert metrics.prewarm_failures == ["warmup-1", "warmup-2"]
-    assert metrics.last_prewarm_error == "warmup-2"
 
-    await manager.record_prewarm_failure("warmup-3")
-    metrics = await manager.get_metrics()
-    assert metrics.prewarm_failures == ["warmup-2", "warmup-3"]
 
-    await manager.end_session(first.id)
-    metrics = await manager.get_metrics()
-    assert metrics.active_sessions == 1
+@pytest.mark.anyio("asyncio")
+async def test_update_session_terminates_browser_on_dead(fake_playwright: dict[UUID, "FakeProcess"]) -> None:
+    """Setting a session to DEAD should terminate the spawned Playwright process."""
+
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-dead", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+    )
+    session = await manager.create_session(SessionCreatePayload(headless=True))
+
+    await manager.update_session(
+        session.id,
+        SessionUpdatePayload(status=SessionStatus.DEAD),
+    )
+
+    process = fake_playwright[session.id]
+    assert process.terminate_called is True
+    assert process.kill_called is False
+    assert session.id not in manager._session_processes

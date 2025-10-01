@@ -20,6 +20,31 @@ from .session_manager import (
 app = FastAPI(title="Ghost Browsers Runner", version="0.1.0")
 
 
+@app.on_event("startup")
+async def on_startup() -> None:
+    """Initialise shared dependencies before serving requests."""
+
+    manager = getattr(app.state, "session_manager_override", None)
+    if manager is None:
+        manager = get_session_manager()
+    app.state.session_manager = manager
+    await manager.startup()
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    """Release long-lived resources when the application stops."""
+
+    manager = getattr(app.state, "session_manager", None)
+    if manager is None:
+        manager = getattr(app.state, "session_manager_override", None)
+    if manager is None:
+        manager = get_session_manager()
+    await manager.shutdown()
+    if hasattr(app.state, "session_manager"):
+        delattr(app.state, "session_manager")
+
+
 def _normalise_base_url(url: Any | None) -> str | None:
     """Return a stable string representation for optional base URLs.
 
