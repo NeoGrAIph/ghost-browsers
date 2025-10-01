@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import anyio
+import httpx
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -27,6 +28,7 @@ from app.config import GatewaySettings  # noqa: E402
 from app.deps import get_vnc_token_service  # noqa: E402
 from app.deps.security import get_authenticator, get_current_user  # noqa: E402
 from app.security import AuthenticatedUser, KeycloakAuthenticator, VncTokenService  # noqa: E402
+from app.services.runner_client import RunnerCommandClient  # noqa: E402
 from core import (
     Runner,
     Session,
@@ -188,6 +190,148 @@ def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> Non
     assert payload["websocket_url"] == f"wss://vnc.example/ws/{session_id}"
     assert payload["token"]
     assert payload["token_ttl_seconds"] == 120
+
+
+def test_create_command_proxies_to_runner(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """Command endpoint issues POST to the runner and stores the response."""
+
+    now = datetime.now(tz=UTC)
+    session_id = uuid4()
+    session = Session(
+        id=session_id,
+        runner_id="runner-1",
+        status=SessionStatus.INIT,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+        labels={"region": "eu-central", "proxy_id": "proxy-1"},
+    )
+    recorded: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return httpx.Response(201, json=session.model_dump(mode="json"))
+
+    gateway_app.state.runner_client = RunnerCommandClient(
+        transport=httpx.MockTransport(_handler)
+    )
+
+    response = gateway_client.post(
+        "/sessions/commands",
+        json={
+            "runner_id": "runner-1",
+            "browser_name": "Chrome",
+            "region": "eu-central",
+            "proxy_id": "proxy-1",
+        },
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["id"] == str(session_id)
+    assert payload["labels"]["region"] == "eu-central"
+    assert recorded and recorded[0].method == "POST"
+    assert recorded[0].url.path == "/sessions"
+
+    sessions = gateway_client.get("/sessions").json()
+    assert any(item["id"] == str(session_id) for item in sessions)
+
+
+def test_update_command_mirrors_runner_changes(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """PATCH command updates the registry with the runner response."""
+
+    now = datetime.now(tz=UTC)
+    session_id = uuid4()
+    base_session = {
+        "id": str(session_id),
+        "runner_id": "runner-1",
+        "status": SessionStatus.INIT.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+    }
+    assert gateway_client.post("/sessions", json=base_session).status_code == 201
+
+    updated = Session(
+        id=session_id,
+        runner_id="runner-1",
+        status=SessionStatus.READY,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+    )
+    recorded: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return httpx.Response(200, json=updated.model_dump(mode="json"))
+
+    gateway_app.state.runner_client = RunnerCommandClient(
+        transport=httpx.MockTransport(_handler)
+    )
+
+    response = gateway_client.patch(
+        f"/sessions/commands/{session_id}",
+        json={"status": SessionStatus.READY.value},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == SessionStatus.READY.value
+    assert recorded and recorded[0].method == "PATCH"
+    payload = json.loads(recorded[0].content.decode())
+    assert payload == {"status": SessionStatus.READY.value}
+
+    lookup = gateway_client.get(f"/sessions/{session_id}")
+    assert lookup.status_code == 200
+    assert lookup.json()["status"] == SessionStatus.READY.value
+
+
+def test_delete_command_removes_session(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """DELETE command proxies to the runner and purges the registry."""
+
+    now = datetime.now(tz=UTC)
+    session_id = uuid4()
+    base_session = {
+        "id": str(session_id),
+        "runner_id": "runner-1",
+        "status": SessionStatus.READY.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+    }
+    assert gateway_client.post("/sessions", json=base_session).status_code == 201
+
+    terminated = Session(
+        id=session_id,
+        runner_id="runner-1",
+        status=SessionStatus.DEAD,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+        ended_at=now,
+    )
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=terminated.model_dump(mode="json"))
+
+    gateway_app.state.runner_client = RunnerCommandClient(
+        transport=httpx.MockTransport(_handler)
+    )
+
+    response = gateway_client.delete(f"/sessions/commands/{session_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == SessionStatus.DEAD.value
+
+    assert gateway_client.get(f"/sessions/{session_id}").status_code == 404
 
 
 def test_vnc_token_service_enriches_missing_token() -> None:
