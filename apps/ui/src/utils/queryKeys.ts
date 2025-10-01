@@ -3,4 +3,5 @@
  */
 export const queryKeys = {
   sessions: ['sessions'] as const,
+  runners: ['runners'] as const,
 };

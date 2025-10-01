@@ -13,7 +13,7 @@ class MockEventSource {
 
   public readyState = 0;
 
-  public constructor(public readonly url: string, _initDict?: EventSourceInit) {
+  public constructor(public readonly url: string) {
     MockEventSource.createdUrls.push(url);
   }
 
@@ -42,8 +42,7 @@ describe('openSessionEventStream', () => {
     if (originalEventSource) {
       globalThis.EventSource = originalEventSource;
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- test cleanup
-      delete (globalThis as { EventSource?: typeof EventSource }).EventSource;
+      Reflect.deleteProperty(globalThis as { EventSource?: typeof EventSource }, 'EventSource');
     }
   });
 
