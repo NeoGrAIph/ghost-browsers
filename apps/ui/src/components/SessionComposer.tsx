@@ -1,5 +1,9 @@
 import { useState, type FormEvent } from 'react';
+import type { StartUrlWait } from '../types/session';
 
+/**
+ * Form values emitted by {@link SessionComposer} when creating a session.
+ */
 export interface SessionComposerValues {
   readonly browserName: string;
   readonly region: string;
@@ -7,7 +11,7 @@ export interface SessionComposerValues {
   readonly headless: boolean;
   readonly idleTtlSeconds: number;
   readonly startUrl: string;
-  readonly startUrlWait: 'load' | 'domcontentloaded' | 'none';
+  readonly startUrlWait: StartUrlWait;
   readonly proxyHttp: string;
   readonly proxyHttps: string;
   readonly proxySocks: string;
@@ -126,7 +130,7 @@ export function SessionComposer({ onSubmit, onCancel }: SessionComposerProps): J
             onChange={(event) =>
               setValues((current) => ({
                 ...current,
-                startUrlWait: event.target.value as SessionComposerValues['startUrlWait'],
+                startUrlWait: event.target.value as StartUrlWait,
               }))
             }
           >

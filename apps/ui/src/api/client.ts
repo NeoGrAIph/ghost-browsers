@@ -1,18 +1,14 @@
 import { z } from 'zod';
 import {
-  CoreSessionSchema,
-  CoreSessionEventSchema,
-  mapCoreEventToView,
-  mapCoreSessionToView,
-} from './sessionMapper';
-import type { Session } from '../types/session';
-import type { SessionEvent } from '../types/session';
+  SessionSchema,
+  SessionEventSchema,
+  adaptSession,
+  adaptSessionEvent,
+  type Session,
+  type SessionEvent,
+} from '../types/session';
 import type { SessionCreateRequest } from './sessionCreation';
 import { createUrl } from '../utils/url';
-
-const sessionCollectionSchema = z.object({
-  sessions: z.array(CoreSessionSchema),
-});
 
 /**
  * Declares the shape of the API client configuration.
@@ -131,30 +127,25 @@ export class ApiClient {
 const gatewayUrl = import.meta.env.VITE_GATEWAY_URL ?? 'http://localhost:8000';
 
 /**
- * Shared API client instance used by React Query hooks for gateway requests.
+ * Shared API client instance used by React Query hooks.
  */
 export const apiClient = new ApiClient({ baseUrl: gatewayUrl });
 
 /**
- * Fetches the session collection.
+ * Fetches the session collection and normalises the payload for the UI.
  */
-export const fetchSessions = async (headers?: AuthHeaders): Promise<{ sessions: Session[] }> => {
-  const payload = await apiClient.get('/sessions', sessionCollectionSchema, headers);
-  return {
-    sessions: payload.sessions.map(mapCoreSessionToView),
-  };
+export const fetchSessions = async (headers?: AuthHeaders): Promise<Session[]> => {
+  const payload = await apiClient.get('/sessions', z.array(SessionSchema), headers);
+  return payload.map(adaptSession);
 };
 
 /**
- * Creates a new session via the gateway.
+ * Creates a new session by delegating to the gateway launch endpoint.
  */
 export const createSession = async (
   payload: SessionCreateRequest,
   headers?: AuthHeaders,
-): Promise<Session> => {
-  const response = await apiClient.post('/sessions', CoreSessionSchema, payload, headers);
-  return mapCoreSessionToView(response);
-};
+): Promise<Session> => apiClient.post('/sessions', SessionSchema, payload, headers).then(adaptSession);
 
 /**
  * Deletes an existing session.
@@ -176,8 +167,8 @@ export const openSessionEventStream = (headers?: AuthHeaders) => {
     eventSource,
     parseEvent: (event: MessageEvent<string>): SessionEvent => {
       const payload: unknown = JSON.parse(event.data);
-      const coreEvent = CoreSessionEventSchema.parse(payload);
-      return mapCoreEventToView(coreEvent);
+      const parsed = SessionEventSchema.parse(payload);
+      return adaptSessionEvent(parsed);
     },
   };
 };

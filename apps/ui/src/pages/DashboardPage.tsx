@@ -13,8 +13,6 @@ import { queryKeys } from '../utils/queryKeys';
 import { useSessionFilters, type SessionStatusFilter } from '../store/sessionFilters';
 import { Session } from '../types/session';
 
-const EMPTY_SESSIONS: Session[] = [];
-
 const filterSessions = (
   sessions: Session[],
   search: string,
@@ -32,7 +30,7 @@ const filterSessions = (
       return false;
     }
 
-    if (proxyId && session.proxy?.id !== proxyId) {
+    if (proxyId && session.proxyId !== proxyId) {
       return false;
     }
 
@@ -40,10 +38,12 @@ const filterSessions = (
       return true;
     }
 
-    const proxyLabel = session.proxy?.label?.toLowerCase() ?? '';
+    const regionLabel = session.region?.toLowerCase() ?? '';
+    const proxyLabel = session.proxyLabel?.toLowerCase() ?? '';
     return (
       session.id.toLowerCase().includes(normalized) ||
-      session.region.toLowerCase().includes(normalized) ||
+      session.runnerId.toLowerCase().includes(normalized) ||
+      regionLabel.includes(normalized) ||
       proxyLabel.includes(normalized)
     );
   });
@@ -64,8 +64,7 @@ export function DashboardPage(): JSX.Element {
     queryFn: () => fetchSessions({ token: token ?? undefined }),
     refetchInterval: 15_000,
   });
-
-  const sessions = data?.sessions ?? EMPTY_SESSIONS;
+  const sessions = useMemo(() => data ?? [], [data]);
 
   const filteredSessions = useMemo(
     () => filterSessions(sessions, search, status, region, proxyId),

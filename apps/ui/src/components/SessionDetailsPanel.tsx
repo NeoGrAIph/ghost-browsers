@@ -29,11 +29,17 @@ export function SessionDetailsPanel({ session }: SessionDetailsPanelProps): JSX.
     );
   }
 
+  const regionLabel = session.region ?? '—';
+  const proxyLabel =
+    session.proxyLabel ?? session.proxy?.http ?? session.proxy?.https ?? session.proxy?.socks ?? '—';
+  const snapshotUrl = session.snapshotUrl;
+  const vncUrl = session.vnc?.httpUrl ?? session.vnc?.websocketUrl ?? null;
+
   return (
     <aside className="session-details">
       <header>
-        <h2>{session.browser.name}</h2>
-        <span className="session-details__subtitle">{session.browser.version}</span>
+        <h2>{session.browser}</h2>
+        <span className="session-details__subtitle">{session.runnerId}</span>
       </header>
       <section>
         <dl className="session-details__grid">
@@ -43,11 +49,11 @@ export function SessionDetailsPanel({ session }: SessionDetailsPanelProps): JSX.
           </div>
           <div>
             <dt>Регион</dt>
-            <dd>{session.region}</dd>
+            <dd>{regionLabel}</dd>
           </div>
           <div>
             <dt>Прокси</dt>
-            <dd>{session.proxy?.label ?? '—'}</dd>
+            <dd>{proxyLabel}</dd>
           </div>
           <div>
             <dt>Создана</dt>
@@ -55,7 +61,7 @@ export function SessionDetailsPanel({ session }: SessionDetailsPanelProps): JSX.
           </div>
           <div>
             <dt>Обновлена</dt>
-            <dd>{formatTimestamp(session.updatedAt)}</dd>
+            <dd>{formatTimestamp(session.lastSeenAt)}</dd>
           </div>
         </dl>
       </section>
@@ -71,18 +77,18 @@ export function SessionDetailsPanel({ session }: SessionDetailsPanelProps): JSX.
           </ul>
         </section>
       )}
-      {session.snapshotUrl && (
+      {snapshotUrl && (
         <section>
           <h3>Снимок</h3>
-          <img src={session.snapshotUrl} alt="Снимок экрана" className="session-details__snapshot" />
+          <img src={snapshotUrl} alt="Снимок экрана" className="session-details__snapshot" />
         </section>
       )}
-      {session.vncUrl && (
+      {vncUrl && (
         <section>
           <h3>Онлайн доступ</h3>
           <iframe
             title="VNC"
-            src={session.vncUrl}
+            src={vncUrl}
             className="session-details__vnc"
             allow="clipboard-read; clipboard-write"
           />

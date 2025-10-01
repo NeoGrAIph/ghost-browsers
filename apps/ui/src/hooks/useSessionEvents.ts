@@ -45,24 +45,9 @@ export const useSessionEvents = ({ enabled, token }: UseSessionEventsOptions) =>
 
       eventSource.onmessage = (event: MessageEvent<string>) => {
         const data = parseEvent(event);
-        queryClient.setQueryData<{ sessions: Session[] }>(queryKeys.sessions, (current) => {
-          if (!current) {
-            return current;
-          }
-
-          if (data.type === 'deleted') {
-            return {
-              sessions: current.sessions.filter((session) => session.id !== data.sessionId),
-            };
-          }
-
-          if (data.session) {
-            return {
-              sessions: mergeSession(current.sessions, data.session),
-            };
-          }
-
-          return current;
+        queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) => {
+          const baseline = current ?? [];
+          return mergeSession(baseline, data.session);
         });
       };
 
