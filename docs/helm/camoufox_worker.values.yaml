@@ -1,0 +1,18 @@
+camoufox_worker:
+  image: ghcr.io/<yourorg>/camoufox-worker
+  tag: dev
+  env:
+    - name: WORKER_MODE
+      value: "native"
+    - name: CAMOUFOX_HEADLESS
+      value: "virtual"
+  securityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi

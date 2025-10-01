@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "camoufox-worker"
+version = "0.1.0"
+description = "Background worker for GhostBrowsers (Camoufox native/orchestrator modes)"
+packages = [{ include = "worker" }]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+pydantic = "^2.8.2"
+anyio = "^4.4.0"
+httpx = "^0.27.2"
+camoufox = "^0.9.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.2"
+ruff = "^0.6.9"
+click = "^8.1.7"
