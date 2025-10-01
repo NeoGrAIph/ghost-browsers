@@ -13,11 +13,16 @@ on:
       - "services/camoufox_worker/Dockerfile"
       - "services/camoufox_worker/smoke.py"
       - "services/camoufox_worker/**.py"
+      - "services/camoufox_worker/bin/**"
+      - "services/camoufox_worker/pyproject.toml"
+      - "services/camoufox_worker/poetry.lock"
       - ".github/workflows/docker-worker.yml"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      IMAGE_REF: ghcr.io/${{ toLower(github.repository_owner) }}/camoufox-worker:${{ inputs.worker_tag || github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -33,6 +38,16 @@ jobs:
           context: .
           file: services/camoufox_worker/Dockerfile
           push: true
-          tags: ghcr.io/${{ toLower(github.repository_owner) }}/camoufox-worker:${{ inputs.worker_tag || github.sha }}
+          tags: ${{ env.IMAGE_REF }}
           build-args: |
             CAMOUFOX_PY_VERSION=${{ inputs.camoufox_py_version }}
+      - name: Smoke test entrypoint
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_REF"
+          docker run --rm "$IMAGE_REF" -- --help
+          docker run --rm \
+            -e WORKER_JOB_URL=https://example.com \
+            -e WORKER_MODE=native \
+            -e WORKER_EXTRA_ARGS="--help" \
+            "$IMAGE_REF"

@@ -5,6 +5,7 @@ Camoufox worker обеспечивает выполнение короткожи
 
 ## Interfaces
 * CLI `python -m worker.main run` для запуска единичной задачи с параметрами URL и таймаутом; выводит JSON с полями результата. Режим выбирается через `--mode` или `WORKER_MODE`, для orchestrator доступны опции/ENV `--gateway-url` (`GATEWAY_URL`), `--gateway-token` (`GATEWAY_TOKEN`), `--poll-timeout`, `--poll-interval`.
+* Контейнерный entrypoint `bin/worker-launch.sh` отображает переменные `WORKER_*` (URL, таймауты, режим, gateway) в CLI и при явной передаче аргументов делегирует управление `python -m worker.main ...`.
 * Планируемые интеграции: очередь задач (Redis/AMQP), HTTP API Gateway/Runner для orchestrator-режима.
 
 ## Data & Models
@@ -19,6 +20,7 @@ Camoufox worker обеспечивает выполнение короткожи
 * CLI основан на Click для дальнейшего расширения команды `run` под дополнительные опции.
 * При ошибках исполнения Camoufox исключения конвертируются в `JobResult` со статусом `failure`, чтобы потребители могли логировать/ретраить без исключений.
 * Orchestrator-helpers используют `httpx.AsyncClient` с Bearer-аутентификацией, экспоненциальным бэкоффом (5xx/сетевые ошибки) и гарантированным `DELETE` в блоке `finally`.
+* Dockerfile устанавливает зависимости через Poetry (`poetry.lock`), копирует `worker/` и `bin/worker-launch.sh` под пользователем `pwuser` и допускает переопределение версии `camoufox` build-аргументом.
 
 ## Constraints & Invariants
 * Выполнение под non-root пользователем, без `pip install`/`camoufox fetch` в рантайме.
@@ -38,6 +40,7 @@ Camoufox worker обеспечивает выполнение короткожи
 * `poetry run ruff check .` — статический анализ.
 * `poetry run pytest -q` — запуск юнит-тестов (покрытие моделей, нативного раннера и orchestrator-хелперов через `httpx.MockTransport`).
 * `poetry run python -m camoufox path` и `poetry run python -m camoufox version` — валидация окружения Camoufox.
+* `docker run --rm ghcr.io/<org>/camoufox-worker:latest -- --help` — smoke-проверка entrypoint `worker-launch.sh`.
 
 ## Changelog (for agents)
 * 2024-08-29 · gpt-5-codex · Создан каркас camoufox_worker, добавлены инструкции, документация и тестовые заглушки.
@@ -47,3 +50,4 @@ Camoufox worker обеспечивает выполнение короткожи
 * 2024-09-06 · gpt-5-codex · Реализована поддержка прокси и таймаутов в native-runner, добавлены метрики навигации и регрессионные тесты (proxy/timeout).
 * 2025-02-15 · gpt-5-codex · Зафиксирована версия camoufox 0.4.11, добавлены `Job.url_source` и гибкие `JobMetrics.extra`, обновлены статусы навигации, тесты и гайд по запуску.
 * 2025-02-17 · gpt-5-codex · Реализованы async-хелперы orchestrator-режима (create/touch/proxy/delete/poll) с ретраями, обновлён CLI (ENV + gateway credentials) и добавлены pytest-моки `httpx.MockTransport` для проверки ретраев/ошибок.
+* 2025-02-20 · gpt-5-codex · Добавлен `poetry.lock`, переработан Dockerfile (Poetry-install под `pwuser`, entrypoint `worker-launch.sh`, build-arg camoufox) и описан контейнерный запуск.

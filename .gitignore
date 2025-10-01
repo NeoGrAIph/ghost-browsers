@@ -9,3 +9,4 @@
 .env
 .env.*
 poetry.lock
+!services/camoufox_worker/poetry.lock
