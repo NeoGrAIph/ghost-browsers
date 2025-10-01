@@ -25,7 +25,10 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.session_registry = SessionRegistry()
     app.state.runner_registry = RunnerRegistry(config.runners)
     app.state.event_bridge = InMemorySessionEventBridge()
-    app.state.vnc_tokens = VncTokenService(ttl_seconds=config.vnc_token_ttl_seconds)
+    app.state.vnc_tokens = VncTokenService(
+        secret=config.vnc_token_secret,
+        ttl_seconds=config.vnc_token_ttl_seconds,
+    )
     app.state.authenticator = KeycloakAuthenticator(config.jwt_jwks_url)
 
     app.include_router(sessions_router)

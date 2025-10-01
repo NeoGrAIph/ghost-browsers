@@ -47,6 +47,7 @@ def gateway_app() -> FastAPI:
         ],
         jwt_jwks_url="http://jwks.local",
         vnc_token_ttl_seconds=120,
+        vnc_token_secret="unit-test-secret",
     )
     app = create_app(settings)
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -16,15 +15,17 @@ class VncTokenService:
     def __init__(
         self,
         *,
-        secret: str | None = None,
+        secret: str,
         ttl_seconds: int = 300,
         issuer: str = "camou-gateway",
     ) -> None:
         """Create a new token service.
 
         Args:
-            secret: Optional HMAC secret used to sign JWT tokens. When omitted a
-                random secret is generated which is suitable for unit tests.
+            secret: HMAC secret used to sign JWT tokens shared with the VNC
+                gateway. The value must be identical to the
+                ``Settings.token_secret`` configuration of the VNC gateway
+                service.
             ttl_seconds: Lifetime of each token; must not exceed 300 seconds.
             issuer: Issuer claim embedded into generated tokens.
 
@@ -34,7 +35,10 @@ class VncTokenService:
 
         if ttl_seconds > 300:
             raise ValueError("VNC token TTL must be <= 300 seconds")
-        self._secret = secret or secrets.token_urlsafe(32)
+        if not secret:
+            msg = "VNC token secret must be a non-empty string"
+            raise ValueError(msg)
+        self._secret = secret
         self._ttl_seconds = ttl_seconds
         self._issuer = issuer
 
@@ -47,6 +51,19 @@ class VncTokenService:
 
         Returns:
             tuple[str, int]: The encoded JWT token and its TTL in seconds.
+
+        Notes:
+            The resulting JWT contains the following claims:
+
+            ``sid``
+                Session identifier the token is scoped to.
+            ``exp``
+                Expiration timestamp (UNIX epoch seconds) calculated from
+                ``ttl_seconds``.
+            ``iss``
+                Issuer identifier (``camou-gateway`` by default).
+            ``sub``
+                Optional subject claim mirroring the authenticated user.
         """
 
         now = datetime.now(tz=UTC)
