@@ -16,6 +16,10 @@ class GatewaySettings:
 
     Attributes:
         discovery_mode: Strategy for runner discovery (``static`` or ``dynamic``).
+        discovery_endpoint: Optional HTTP endpoint returning the runner catalog
+            when ``discovery_mode`` is set to ``http``.
+        discovery_poll_interval_seconds: Interval between successive discovery
+            and health maintenance iterations executed by the background task.
         runners: Initial list of runners that should be registered on startup.
         jwt_jwks_url: HTTP URL pointing to the Keycloak JWKS document.
         vnc_token_ttl_seconds: Lifetime of the issued VNC tokens in seconds.
@@ -34,6 +38,8 @@ class GatewaySettings:
     """
 
     discovery_mode: str = "static"
+    discovery_endpoint: str | None = None
+    discovery_poll_interval_seconds: float = 10.0
     runners: list[Runner] = field(default_factory=list)
     jwt_jwks_url: str = "http://localhost/.well-known/jwks.json"
     vnc_token_ttl_seconds: int = 300
@@ -56,14 +62,24 @@ class GatewaySettings:
 
         env_map = env or os.environ
         discovery_mode = env_map.get("DISCOVERY_MODE", cls.discovery_mode)
+        discovery_endpoint = env_map.get("DISCOVERY_ENDPOINT", cls.discovery_endpoint)
         jwt_jwks_url = env_map.get("JWT_JWKS_URL", cls.jwt_jwks_url)
         ttl_raw = env_map.get("VNC_TOKEN_TTL_SEC", str(cls.vnc_token_ttl_seconds))
         ttl = int(ttl_raw)
         if ttl > 300:
             raise ValueError("VNC_TOKEN_TTL_SEC must be <= 300 seconds")
+        poll_interval_raw = env_map.get(
+            "DISCOVERY_POLL_INTERVAL_SEC",
+            str(cls.discovery_poll_interval_seconds),
+        )
+        poll_interval = float(poll_interval_raw)
+        if poll_interval <= 0:
+            raise ValueError("DISCOVERY_POLL_INTERVAL_SEC must be a positive number")
         runners = list(_parse_runners(env_map.get("RUNNERS")))
         return cls(
             discovery_mode=discovery_mode,
+            discovery_endpoint=discovery_endpoint,
+            discovery_poll_interval_seconds=poll_interval,
             runners=runners,
             jwt_jwks_url=jwt_jwks_url,
             vnc_token_ttl_seconds=ttl,

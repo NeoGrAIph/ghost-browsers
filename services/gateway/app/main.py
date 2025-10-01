@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
+import anyio
 from core import InMemorySessionEventBridge
 from fastapi import FastAPI
 
 from .config import GatewaySettings
 from .routers import events_router, runners_router, sessions_router
 from .security import KeycloakAuthenticator, VncTokenService
+from .services.discovery import (
+    RunnerDiscoveryService,
+    purge_sessions_for_missing_runners,
+)
 from .services.runner_client import RunnerCommandClient
 from .services.runner_health import RunnerHealthClient
 from .services.runner_registry import RunnerRegistry
@@ -36,6 +42,11 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.runner_client = RunnerCommandClient()
     app.state.runner_health_client = RunnerHealthClient()
     app.state.runner_ws_proxy = RunnerWebSocketProxy()
+    app.state.runner_discovery = RunnerDiscoveryService(
+        settings=config,
+        runner_registry=app.state.runner_registry,
+        session_registry=app.state.session_registry,
+    )
 
     app.include_router(sessions_router)
     app.include_router(runners_router)
@@ -45,4 +56,55 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         "Gateway application initialised",
         extra={"discovery_mode": config.discovery_mode},
     )
+    app.router.lifespan_context = _lifespan(app)
     return app
+
+
+def _lifespan(app: FastAPI):
+    """Create the FastAPI lifespan context managing background tasks."""
+
+    @asynccontextmanager
+    async def _context(_: FastAPI):
+        discovery: RunnerDiscoveryService = app.state.runner_discovery
+        registry: RunnerRegistry = app.state.runner_registry
+        session_registry: SessionRegistry = app.state.session_registry
+        initial = await discovery.refresh()
+        await purge_sessions_for_missing_runners(
+            session_registry,
+            registry,
+            initial.removed,
+        )
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(_runner_maintenance_loop, app)
+            try:
+                yield
+            finally:  # pragma: no cover - cancellation path
+                task_group.cancel_scope.cancel()
+
+    return _context
+
+
+async def _runner_maintenance_loop(app: FastAPI) -> None:
+    """Background loop polling runners and cleaning stale sessions."""
+
+    settings: GatewaySettings = app.state.settings
+    registry: RunnerRegistry = app.state.runner_registry
+    session_registry: SessionRegistry = app.state.session_registry
+    health_client: RunnerHealthClient = app.state.runner_health_client
+    discovery: RunnerDiscoveryService = app.state.runner_discovery
+    interval = max(settings.discovery_poll_interval_seconds, 0.1)
+
+    while True:
+        try:
+            result = await discovery.refresh()
+            runners = await registry.list()
+            for runner in runners:
+                await health_client.probe(runner, registry)
+            await purge_sessions_for_missing_runners(
+                session_registry,
+                registry,
+                result.removed,
+            )
+        except Exception:  # pragma: no cover - defensive logging
+            _LOGGER.exception("Runner maintenance iteration failed")
+        await anyio.sleep(interval)
