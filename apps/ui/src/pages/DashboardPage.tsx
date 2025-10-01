@@ -64,7 +64,7 @@ export function DashboardPage(): JSX.Element {
     refetchInterval: 15_000,
   });
 
-  const sessions = data?.sessions ?? EMPTY_SESSIONS;
+  const sessions = data ?? EMPTY_SESSIONS;
 
   const filteredSessions = useMemo(
     () => filterSessions(sessions, search, status, region, proxyId),

@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import anyio
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from jose import jwt
 from starlette.responses import StreamingResponse
@@ -34,6 +34,27 @@ from core import (
     SessionStatus,
     SessionVncDetails,
 )  # noqa: E402
+
+
+@pytest.mark.anyio("asyncio")
+async def test_get_current_user_accepts_query_token() -> None:
+    """Authentication falls back to the ``access_token`` query parameter."""
+
+    scope = {"type": "http", "headers": [], "query_string": b"access_token=token-123"}
+    request = Request(scope)
+
+    class _DummyAuthenticator:
+        async def authenticate(self, token: str) -> AuthenticatedUser:
+            assert token == "token-123"
+            return AuthenticatedUser(subject="tester", email="tester@example.com")
+
+    user = await get_current_user(
+        request=request,
+        credentials=None,
+        authenticator=_DummyAuthenticator(),
+    )
+
+    assert user.subject == "tester"
 
 
 @pytest.fixture()

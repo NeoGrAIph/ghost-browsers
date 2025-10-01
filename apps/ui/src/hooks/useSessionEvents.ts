@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { openSessionEventStream } from '../api/client';
-import { Session } from '../types/session';
+import type { Session, SessionEvent } from '../types/session';
 import { queryKeys } from '../utils/queryKeys';
 
 const MAX_RETRIES = 5;
@@ -22,6 +22,9 @@ const mergeSession = (sessions: Session[], incoming: Session): Session[] => {
   next[index] = { ...next[index], ...incoming };
   return next;
 };
+
+const removeSession = (sessions: Session[], sessionId: string): Session[] =>
+  sessions.filter((session) => session.id !== sessionId);
 
 /**
  * Subscribes to the session SSE stream and keeps the local cache in sync.
@@ -44,25 +47,26 @@ export const useSessionEvents = ({ enabled, token }: UseSessionEventsOptions) =>
       eventSourceRef.current = eventSource;
 
       eventSource.onmessage = (event: MessageEvent<string>) => {
-        const data = parseEvent(event);
-        queryClient.setQueryData<{ sessions: Session[] }>(queryKeys.sessions, (current) => {
+        const data = parseEvent(event) as SessionEvent;
+        queryClient.setQueryData<Session[]>(queryKeys.sessions, (current) => {
           if (!current) {
             return current;
           }
 
-          if (data.type === 'deleted') {
-            return {
-              sessions: current.sessions.filter((session) => session.id !== data.sessionId),
-            };
+          if (!data.session) {
+            return current;
           }
 
-          if (data.session) {
-            return {
-              sessions: mergeSession(current.sessions, data.session as Session),
-            };
+          const sessionId = data.session.id;
+          switch (data.type) {
+            case 'session.ended':
+              return removeSession(current, sessionId);
+            case 'session.created':
+            case 'session.updated':
+              return mergeSession(current, data.session);
+            default:
+              return current;
           }
-
-          return current;
         });
       };
 

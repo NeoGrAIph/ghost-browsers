@@ -17,7 +17,7 @@
 - Streaming:
   - `GET /events` — SSE-канал, ретранслирующий `SessionEvent` (кеш последнего события на подписчика).
   - `WS /events/ws` — WebSocket с тем же потоком событий.
-- Аутентификация: Bearer JWT (Keycloak). Для WebSocket токен передаётся в заголовке `Authorization: Bearer` или параметре `token`.
+- Аутентификация: Bearer JWT (Keycloak). Для WebSocket токен передаётся в заголовке `Authorization: Bearer` или параметре `token`; для SSE (`GET /events`) также поддерживается query `access_token` для нативного `EventSource`.
 
 ## Data & Models
 - Переиспользуются модели из `packages/core`: `Session`, `SessionEvent`, `Runner`, `SessionProxySettings`, `SessionVncDetails` и др.
@@ -57,3 +57,4 @@
 - 2025-10-02 · OpenAI ChatGPT · Добавлены публичные VNC-шаблоны для раннеров и переписывание URL при создании сессий по образцу beta-control-plane.
 - 2025-10-03 · gpt-5-codex · Вынесен VNC JWT секрет в конфигурацию и синхронизирован с VNC Gateway.
 - 2025-10-05 · gpt-5-codex · Уточнена логика выдачи VNC токенов при пустых значениях от Runner и добавлены покрывающие тесты.
+- 2025-10-01 · gpt-5-codex · Добавлен разбор `access_token` в HTTP-зависимости и покрывающий тест для SSE аутентификации.

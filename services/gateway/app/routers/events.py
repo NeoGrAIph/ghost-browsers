@@ -20,7 +20,12 @@ async def stream_events(
     bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> StreamingResponse:
-    """Provide a Server-Sent Events stream for session events."""
+    """Provide a Server-Sent Events stream for session events.
+
+    Clients may authenticate with a bearer token supplied either via the
+    ``Authorization`` header or the ``access_token`` query parameter to mirror
+    WebSocket semantics.
+    """
 
     async def iterator() -> str:
         subscription = await bridge.subscribe(replay_latest=True)

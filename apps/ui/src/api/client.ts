@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import { SessionSchema, SessionEventSchema } from '../types/session';
+import type { SessionEvent } from '../types/session';
 import { createUrl } from '../utils/url';
 
-const sessionCollectionSchema = z.object({
-  sessions: z.array(SessionSchema),
-});
+const sessionCollectionSchema = z.array(SessionSchema);
 
 /**
  * Declares the shape of the API client configuration.
@@ -130,17 +129,22 @@ export const deleteSession = (sessionId: string, headers?: AuthHeaders) =>
 
 /**
  * Opens a typed EventSource connection for session updates.
+ *
+ * The gateway exposes session events via ``/events`` and accepts the bearer
+ * token either through the ``Authorization`` header or the ``access_token``
+ * query parameter.  We rely on the latter to authenticate native
+ * ``EventSource`` instances.
  */
 export const openSessionEventStream = (headers?: AuthHeaders) => {
-  const url = new URL(createUrl(gatewayUrl, '/sessions/stream'));
+  const url = new URL(createUrl(gatewayUrl, '/events'));
   if (headers?.token) {
     url.searchParams.set('access_token', headers.token);
   }
 
-  const eventSource = new EventSource(url);
+  const eventSource = new EventSource(url.toString());
   return {
     eventSource,
-    parseEvent: (event: MessageEvent<string>) => {
+    parseEvent: (event: MessageEvent<string>): SessionEvent => {
       const payload: unknown = JSON.parse(event.data);
       return SessionEventSchema.parse(payload);
     },

@@ -37,9 +37,11 @@ export const SessionSchema = z.object({
  * Session event schema used by the SSE stream.
  */
 export const SessionEventSchema = z.object({
-  type: z.enum(['created', 'updated', 'deleted', 'snapshot']),
-  session: SessionSchema.partial(),
-  sessionId: z.string(),
+  id: z.string().uuid(),
+  type: z.enum(['session.created', 'session.updated', 'session.ended']),
+  occurredAt: z.string(),
+  reason: z.string().nullable().optional(),
+  session: SessionSchema,
 });
 
 /**

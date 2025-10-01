@@ -5,11 +5,11 @@
 
 ## Interfaces
 - **REST**: `/sessions` (GET/POST/DELETE) через `api/client.ts`.
-- **SSE**: `/sessions/stream` — автообновление списка сессий, перезапуск с экспоненциальной задержкой.
+- **SSE**: `/events` — автообновление списка сессий, перезапуск с экспоненциальной задержкой; авторизация через query `access_token` для `EventSource`.
 - **VNC**: встраивание внешнего URL `session.vncUrl` в `iframe`.
 
 ## Data & Models
-- `Session`/`SessionEvent` описаны в `types/session.ts` (Zod схемы).
+- `Session`/`SessionEvent` описаны в `types/session.ts` (Zod схемы, события `session.created|updated|ended`).
 - Состояние фильтров в `store/sessionFilters.ts` (Zustand).
 
 ## Decisions
@@ -37,3 +37,4 @@
 
 ## Changelog (for agents)
 - 2024-09-08 · gpt-5-codex · Начальная реализация консоли: авторизация, список/детали сессий, создание/удаление, SSE, темы, базовые тесты.
+- 2025-10-01 · gpt-5-codex · Переключение SSE на `/events`, поддержка `access_token` в query, реальные типы событий и юнит-тесты перезаподключения.
