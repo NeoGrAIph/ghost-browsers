@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "camou-gateway"
 version = "0.1.0"
-description = "Ghost-browsers Gateway (to be implemented)"
-packages = []
+description = "Ghost-browsers Gateway service"
+packages = [{ include = "app" }]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
@@ -12,6 +12,7 @@ python-jose = "^3.3.0"
 httpx = "^0.27.2"
 pydantic = "^2.8.2"
 anyio = "^4.4.0"
+"camou-core" = { path = "../../packages/core", develop = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
