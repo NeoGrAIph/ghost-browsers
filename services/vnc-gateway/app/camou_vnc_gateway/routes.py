@@ -10,7 +10,7 @@ from starlette import status
 
 from .dependencies import get_connection_registry, get_runner_proxy, get_token_validator
 from .metrics import ConnectionRegistry
-from .proxy import RunnerProxy
+from .proxy import RunnerProxy, TargetPortError
 from .token import TokenValidationError, TokenValidator
 
 LOG = logging.getLogger(__name__)
@@ -56,7 +56,10 @@ async def proxy_session(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
     async with registry.track(session_id=session_id, channel="http"):
-        return await proxy.forward_http(session_id=session_id, request=request)
+        try:
+            return await proxy.forward_http(session_id=session_id, request=request)
+        except TargetPortError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.websocket("/sessions/{session_id}/ws")

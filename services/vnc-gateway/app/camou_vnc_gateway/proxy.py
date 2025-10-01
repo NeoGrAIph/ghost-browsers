@@ -1,20 +1,49 @@
-"""Utilities to proxy HTTP and WebSocket traffic to the Runner service."""
+"""Utilities to proxy HTTP and WebSocket traffic to the Runner service.
+
+The module centralises all logic related to forwarding browser requests to the
+Runner component that exposes the actual VNC assets.  The implementation keeps
+parity with the production-oriented reference available in the upstream
+``beta`` branch by introducing helpers that:
+
+* reuse a shared :class:`httpx.AsyncClient` instance for HTTP forwarding,
+* derive the ``target_port`` parameter from query string, referer header or
+  persisted cookies, and
+* construct upstream URLs using configurable path prefixes so the gateway can
+  operate behind ingress controllers that rewrite paths.
+
+Additionally WebSocket relaying has been tightened to follow the behaviour of
+the reference gateway: both directions of the tunnel are now awaited together
+with ``FIRST_EXCEPTION`` semantics and any failure results in an orderly close
+with policy (1008) or internal error (1011) codes as appropriate.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable, Mapping
 from contextlib import suppress
-from typing import Iterable
+from http.cookies import SimpleCookie
+from typing import Final
+from urllib.parse import ParseResult, parse_qs, urlencode, urlsplit, urlunsplit
 
 import httpx
 import websockets
 from fastapi import Request, WebSocket
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
+from starlette import status
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from .config import Settings
 
 LOG = logging.getLogger(__name__)
+
+TARGET_PORT_COOKIE: Final[str] = "vnc-target-port"
+
+
+class TargetPortError(ValueError):
+    """Raised when ``target_port`` cannot be parsed or validated."""
+
 
 
 class RunnerProxy:
@@ -28,6 +57,17 @@ class RunnerProxy:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._http_base = urlsplit(str(settings.runner_http_base))
+        self._ws_base = urlsplit(str(settings.runner_ws_base))
+        self._client = httpx.AsyncClient(follow_redirects=True)
+        self._http_prefix = (self._http_base.path or "").rstrip("/")
+        self._ws_prefix = (self._ws_base.path or "").rstrip("/")
+        self._cookie_path = _join_paths(self._http_prefix, "/vnc")
+
+    async def aclose(self) -> None:
+        """Release the shared HTTP client resources."""
+
+        await self._client.aclose()
 
     async def forward_http(self, *, session_id: str, request: Request) -> Response:
         """Proxy an HTTP GET request to the Runner.
@@ -43,23 +83,63 @@ class RunnerProxy:
             metadata.
         """
 
-        target_url = f"{self._settings.runner_http_base}/sessions/{session_id}"
-        LOG.debug("Proxying HTTP request", extra={"session_id": session_id, "target": target_url})
+        raw_port, source = _select_target_port(
+            query_value=request.query_params.get("target_port"),
+            referer=request.headers.get("referer"),
+            cookies=request.cookies,
+        )
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            upstream_response = await client.get(
-                target_url,
-                params=request.query_params,
-                headers=self._filter_headers(request.headers.keys(), request.headers),
-            )
+        try:
+            port_override = _parse_port(raw_port)
+        except ValueError as exc:  # pragma: no cover - handled by caller
+            raise TargetPortError(str(exc)) from exc
+
+        query_items = [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key != "target_port"
+        ]
+
+        upstream_url = _build_upstream_url(
+            base=self._http_base,
+            prefix=self._http_prefix,
+            path_suffix=f"/sessions/{session_id}",
+            port_override=port_override,
+            query=query_items,
+        )
+        LOG.debug(
+            "Proxying HTTP request",
+            extra={
+                "session_id": session_id,
+                "target": upstream_url,
+                "port_source": source,
+            },
+        )
+
+        upstream_response = await self._client.request(
+            request.method,
+            upstream_url,
+            headers=self._filter_headers(request.headers.keys(), request.headers),
+            content=(await request.body()) or None,
+        )
 
         filtered_headers = self._filter_response_headers(upstream_response.headers)
-        return StreamingResponse(
-            content=upstream_response.aiter_bytes(),
+        response = Response(
+            content=upstream_response.content,
             status_code=upstream_response.status_code,
             headers=dict(filtered_headers),
             media_type=upstream_response.headers.get("content-type"),
         )
+
+        if source == "query" and port_override is not None:
+            response.set_cookie(
+                TARGET_PORT_COOKIE,
+                str(port_override),
+                path=self._cookie_path,
+                samesite="lax",
+            )
+
+        return response
 
     async def forward_websocket(self, *, session_id: str, websocket: WebSocket) -> None:
         """Proxy a WebSocket connection to the Runner service.
@@ -69,57 +149,115 @@ class RunnerProxy:
         either party disconnects.
         """
 
-        target_url = f"{self._settings.runner_ws_base}/sessions/{session_id}/ws"
-        LOG.debug(
-            "Proxying websocket connection",
-            extra={"session_id": session_id, "target": target_url},
+        raw_port, _ = _select_target_port(
+            query_value=websocket.query_params.get("target_port"),
+            referer=websocket.headers.get("referer"),
+            cookies=_parse_cookie_header(websocket.headers.get("cookie")),
         )
 
-        await websocket.accept()
+        try:
+            port_override = _parse_port(raw_port)
+        except ValueError as exc:
+            LOG.warning("Invalid target_port for websocket", extra={"session_id": session_id})
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc))
+            return
 
-        async with websockets.connect(target_url) as runner_ws:
-            async def client_to_runner() -> None:
-                try:
-                    while True:
-                        message = await websocket.receive()
-                        message_type = message.get("type")
-                        if message_type == "websocket.disconnect":
-                            await runner_ws.close()
-                            break
-                        data = message.get("text")
-                        if data is not None:
-                            await runner_ws.send(data)
-                            continue
-                        binary_data = message.get("bytes")
-                        if binary_data is not None:
-                            await runner_ws.send(binary_data)
-                except Exception:  # pragma: no cover - defensive logging aid
-                    LOG.exception("client_to_runner failed", extra={"session_id": session_id})
-                    raise
+        query_items = [
+            (key, value)
+            for key, value in websocket.query_params.multi_items()
+            if key != "target_port"
+        ]
 
-            async def runner_to_client() -> None:
-                try:
-                    async for payload in runner_ws:
-                        if isinstance(payload, str):
-                            await websocket.send_text(payload)
-                        else:
-                            await websocket.send_bytes(payload)
-                except Exception:  # pragma: no cover - defensive logging aid
-                    LOG.exception("runner_to_client failed", extra={"session_id": session_id})
-                    raise
+        upstream_url = _build_upstream_url(
+            base=self._ws_base,
+            prefix=self._ws_prefix,
+            path_suffix=f"/sessions/{session_id}/ws",
+            port_override=port_override,
+            query=query_items,
+        )
+        LOG.debug(
+            "Proxying websocket connection",
+            extra={"session_id": session_id, "target": upstream_url},
+        )
 
-            tasks = {
-                asyncio.create_task(client_to_runner()),
-                asyncio.create_task(runner_to_client()),
-            }
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            for task in done:
-                with suppress(asyncio.CancelledError):
-                    await task
+        subprotocol_header = websocket.headers.get("sec-websocket-protocol")
+        subprotocols = [
+            item.strip()
+            for item in (subprotocol_header.split(",") if subprotocol_header else [])
+            if item.strip()
+        ]
+
+        extra_headers = _select_upstream_headers(websocket.headers.items())
+        connect_kwargs: dict[str, object] = {"ping_interval": None}
+        if subprotocols:
+            connect_kwargs["subprotocols"] = subprotocols
+        if extra_headers:
+            connect_kwargs["extra_headers"] = extra_headers
+
+        try:
+            async with websockets.connect(upstream_url, **connect_kwargs) as runner_ws:
+                await websocket.accept(subprotocol=runner_ws.subprotocol)
+
+                async def client_to_runner() -> None:
+                    try:
+                        while True:
+                            message = await websocket.receive()
+                            message_type = message.get("type")
+                            if message_type == "websocket.disconnect":
+                                await runner_ws.close()
+                                break
+                            text_data = message.get("text")
+                            if text_data is not None:
+                                await runner_ws.send(text_data)
+                                continue
+                            binary_data = message.get("bytes")
+                            if binary_data is not None:
+                                await runner_ws.send(binary_data)
+                    except Exception:  # pragma: no cover - defensive logging aid
+                        LOG.exception(
+                            "client_to_runner failed",
+                            extra={"session_id": session_id},
+                        )
+                        raise
+
+                async def runner_to_client() -> None:
+                    try:
+                        async for payload in runner_ws:
+                            if isinstance(payload, str):
+                                await websocket.send_text(payload)
+                            else:
+                                await websocket.send_bytes(payload)
+                    except Exception:  # pragma: no cover - defensive logging aid
+                        LOG.exception(
+                            "runner_to_client failed",
+                            extra={"session_id": session_id},
+                        )
+                        raise
+
+                tasks = {
+                    asyncio.create_task(client_to_runner()),
+                    asyncio.create_task(runner_to_client()),
+                }
+                done, pending = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_EXCEPTION,
+                )
+                for task in pending:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                for task in done:
+                    with suppress(asyncio.CancelledError):
+                        exc = task.exception()
+                        if exc:
+                            raise exc
+        except (ConnectionClosedError, ConnectionClosedOK):
+            with suppress(RuntimeError):
+                await websocket.close()
+        except Exception as exc:  # pragma: no cover - defensive logging aid
+            LOG.warning("WebSocket proxy failure", exc_info=exc)
+            with suppress(RuntimeError):
+                await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 
     @staticmethod
     def _filter_headers(keys: Iterable[str], headers: httpx.Headers) -> dict[str, str]:
@@ -150,8 +288,154 @@ class RunnerProxy:
             "trailers",
             "transfer-encoding",
             "upgrade",
-        }
+        } 
         return {k: v for k, v in headers.items() if k.lower() not in hop_by_hop}
 
 
-__all__ = ["RunnerProxy"]
+def _build_upstream_url(
+    *,
+    base: ParseResult,
+    prefix: str,
+    path_suffix: str,
+    port_override: int | None,
+    query: Iterable[tuple[str, str]],
+) -> str:
+    """Construct the full upstream URL for Runner requests.
+
+    Parameters
+    ----------
+    base:
+        Parsed URL object describing the configured Runner base endpoint.
+    prefix:
+        Normalised path prefix extracted from the base URL.
+    path_suffix:
+        Path segment that should be appended for the specific request.
+    port_override:
+        Optional integer port selected via ``target_port``.  When ``None`` the
+        port embedded in ``base`` is used.
+    query:
+        Iterable of query parameter key/value pairs that must be forwarded.
+
+    Returns
+    -------
+    str
+        Fully qualified URL that targets the Runner instance.
+    """
+
+    combined_path = _join_paths(prefix, path_suffix)
+    query_string = urlencode(list(query))
+    port = port_override if port_override is not None else base.port
+
+    host = base.hostname or base.netloc
+    if not host:
+        raise RuntimeError("Runner base URL is missing hostname")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = host
+    if port:
+        netloc = f"{host}:{port}"
+
+    return urlunsplit((base.scheme, netloc, combined_path, query_string, ""))
+
+
+def _join_paths(prefix: str, suffix: str) -> str:
+    """Join two URL path fragments while handling edge cases."""
+
+    prefix = (prefix or "").rstrip("/")
+    suffix = (suffix or "").lstrip("/")
+
+    if prefix and suffix:
+        return f"{prefix}/{suffix}" if prefix.startswith("/") else f"/{prefix}/{suffix}"
+    if prefix:
+        return prefix if prefix.startswith("/") else f"/{prefix}"
+    if suffix:
+        return f"/{suffix}"
+    return "/"
+
+
+def _parse_port(raw_port: str | None) -> int | None:
+    """Validate and normalise the ``target_port`` value.
+
+    Returns ``None`` when no port override is requested.  Invalid inputs raise a
+    :class:`ValueError` with a human-readable message so callers can translate it
+    to HTTP/WebSocket errors.
+    """
+
+    if raw_port is None:
+        return None
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("target_port must be an integer") from exc
+    if port <= 0 or port > 65535:
+        raise ValueError("target_port must be between 1 and 65535")
+    return port
+
+
+def _select_target_port(
+    *,
+    query_value: str | None,
+    referer: str | None,
+    cookies: Mapping[str, str] | None,
+) -> tuple[str | None, str | None]:
+    """Select the most appropriate source for ``target_port``.
+
+    Preference order: explicit query parameter, referer query string then cookie
+    fallback.  ``(None, None)`` is returned when no information is available.
+    """
+
+    if query_value:
+        return query_value, "query"
+
+    referer_port = _extract_port_from_referer(referer)
+    if referer_port:
+        return referer_port, "referer"
+
+    if cookies:
+        cookie_port = cookies.get(TARGET_PORT_COOKIE)
+        if cookie_port:
+            return cookie_port, "cookie"
+
+    return None, None
+
+
+def _extract_port_from_referer(referer: str | None) -> str | None:
+    """Parse ``target_port`` from an HTTP referer header if present."""
+
+    if not referer:
+        return None
+
+    parsed = urlsplit(referer)
+    values = parse_qs(parsed.query).get("target_port")
+    if values:
+        return values[0]
+    return None
+
+
+def _parse_cookie_header(header_value: str | None) -> dict[str, str]:
+    """Convert a raw ``Cookie`` header into a dictionary mapping."""
+
+    if not header_value:
+        return {}
+
+    jar = SimpleCookie()
+    try:
+        jar.load(header_value)
+    except Exception:  # pragma: no cover - defensive against malformed headers
+        return {}
+
+    return {key: morsel.value for key, morsel in jar.items()}
+
+
+def _select_upstream_headers(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Choose headers that should be forwarded to the upstream websocket."""
+
+    allowed = {"origin", "user-agent", "cookie", "sec-websocket-extensions"}
+    return [(key, value) for key, value in headers if key.lower() in allowed]
+
+
+__all__ = [
+    "RunnerProxy",
+    "TARGET_PORT_COOKIE",
+    "TargetPortError",
+]
