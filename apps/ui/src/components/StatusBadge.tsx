@@ -1,21 +1,21 @@
-import { Session } from '../types/session';
+import type { SessionStatus } from '../types/session';
 
-const statusColors: Record<Session['status'], string> = {
-  pending: '#facc15',
-  active: '#34d399',
-  failed: '#f87171',
-  completed: '#60a5fa',
+const statusColors: Record<SessionStatus, string> = {
+  INIT: '#facc15',
+  READY: '#34d399',
+  TERMINATING: '#fb923c',
+  DEAD: '#9ca3af',
 };
 
-const statusLabels: Record<Session['status'], string> = {
-  pending: 'Ожидание',
-  active: 'Активна',
-  failed: 'Ошибка',
-  completed: 'Завершена',
+const statusLabels: Record<SessionStatus, string> = {
+  INIT: 'Инициализация',
+  READY: 'Готова',
+  TERMINATING: 'Завершается',
+  DEAD: 'Завершена',
 };
 
 interface StatusBadgeProps {
-  readonly status: Session['status'];
+  readonly status: SessionStatus;
 }
 
 /**

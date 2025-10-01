@@ -1,10 +1,13 @@
 import { z } from 'zod';
-import { SessionSchema, SessionEventSchema } from '../types/session';
+import {
+  SessionSchema,
+  SessionEventSchema,
+  adaptSession,
+  adaptSessionEvent,
+  type Session,
+  type SessionEvent,
+} from '../types/session';
 import { createUrl } from '../utils/url';
-
-const sessionCollectionSchema = z.object({
-  sessions: z.array(SessionSchema),
-});
 
 /**
  * Declares the shape of the API client configuration.
@@ -108,10 +111,12 @@ const gatewayUrl = import.meta.env.VITE_GATEWAY_URL ?? 'http://localhost:8000';
 export const apiClient = new ApiClient({ baseUrl: gatewayUrl });
 
 /**
- * Fetches the session collection.
+ * Fetches the session collection and normalises the payload for the UI.
  */
-export const fetchSessions = async (headers?: AuthHeaders) =>
-  apiClient.get('/sessions', sessionCollectionSchema, headers);
+export const fetchSessions = async (headers?: AuthHeaders): Promise<Session[]> => {
+  const payload = await apiClient.get('/sessions', z.array(SessionSchema), headers);
+  return payload.map(adaptSession);
+};
 
 /**
  * Creates a new session.
@@ -119,8 +124,7 @@ export const fetchSessions = async (headers?: AuthHeaders) =>
 export const createSession = async (
   payload: Record<string, unknown>,
   headers?: AuthHeaders,
-) =>
-  apiClient.post('/sessions', SessionSchema, payload, headers);
+): Promise<Session> => apiClient.post('/sessions', SessionSchema, payload, headers).then(adaptSession);
 
 /**
  * Deletes an existing session.
@@ -140,9 +144,10 @@ export const openSessionEventStream = (headers?: AuthHeaders) => {
   const eventSource = new EventSource(url);
   return {
     eventSource,
-    parseEvent: (event: MessageEvent<string>) => {
+    parseEvent: (event: MessageEvent<string>): SessionEvent => {
       const payload: unknown = JSON.parse(event.data);
-      return SessionEventSchema.parse(payload);
+      const parsed = SessionEventSchema.parse(payload);
+      return adaptSessionEvent(parsed);
     },
   };
 };

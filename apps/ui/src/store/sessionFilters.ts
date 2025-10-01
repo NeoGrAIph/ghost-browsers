@@ -1,6 +1,7 @@
 import { create } from 'zustand';
+import type { SessionStatus } from '../types/session';
 
-export type SessionStatusFilter = 'all' | 'pending' | 'active' | 'failed' | 'completed';
+export type SessionStatusFilter = 'all' | SessionStatus;
 
 interface SessionFiltersState {
   readonly search: string;

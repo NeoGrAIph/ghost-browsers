@@ -12,6 +12,10 @@ interface SessionListItemProps {
  * Individual card in the session grid.
  */
 export function SessionListItem({ session, isActive, onSelect }: SessionListItemProps): JSX.Element {
+  const regionLabel = session.region ?? '—';
+  const proxyLabel =
+    session.proxyLabel ?? session.proxy?.http ?? session.proxy?.https ?? session.proxy?.socks ?? '—';
+
   return (
     <li>
       <button
@@ -22,8 +26,8 @@ export function SessionListItem({ session, isActive, onSelect }: SessionListItem
       >
         <div className="session-card__header">
           <div>
-            <h3>{session.browser.name}</h3>
-            <span className="session-card__subtitle">{session.browser.version}</span>
+            <h3>{session.browser}</h3>
+            <span className="session-card__subtitle">{session.runnerId}</span>
           </div>
           <StatusBadge status={session.status} />
         </div>
@@ -35,15 +39,15 @@ export function SessionListItem({ session, isActive, onSelect }: SessionListItem
             </div>
             <div>
               <dt>Регион</dt>
-              <dd>{session.region}</dd>
+              <dd>{regionLabel}</dd>
             </div>
             <div>
               <dt>Прокси</dt>
-              <dd>{session.proxy?.label ?? '—'}</dd>
+              <dd>{proxyLabel}</dd>
             </div>
             <div>
               <dt>Обновлено</dt>
-              <dd>{formatTimestamp(session.updatedAt)}</dd>
+              <dd>{formatTimestamp(session.lastSeenAt)}</dd>
             </div>
           </dl>
         </div>
