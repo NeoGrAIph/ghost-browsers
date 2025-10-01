@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from core.models import Session
@@ -24,13 +24,51 @@ SessionManagerDep = Annotated[SessionManager, Depends(get_session_manager)]
 
 
 @app.get("/health", summary="Runner health probe")
-async def health(settings: RunnerSettingsDep) -> dict[str, str]:
-    """Return a minimal health payload consumed by gateways and tests."""
+async def health(
+    settings: RunnerSettingsDep, manager: SessionManagerDep
+) -> dict[str, Any]:
+    """Return a structured health payload consumed by gateways and tests."""
 
+    metrics = await manager.get_metrics()
+    active_slots = metrics.active_sessions
+    total_slots = settings.slot_limit
+    available_slots = max(total_slots - active_slots, 0)
     return {
         "status": "ok",
         "runner_id": settings.runner_id,
         "camoufox_path": str(settings.camoufox_path),
+        "slots": {
+            "total": total_slots,
+            "active": active_slots,
+            "available": available_slots,
+        },
+        "vnc": {
+            "http_base_url": str(settings.vnc_http_base_url),
+            "ws_base_url": str(settings.vnc_ws_base_url),
+            "enabled": settings.vnc_enabled,
+        },
+        "proxy": {
+            "enabled": settings.proxy_enabled,
+            "http_base_url": (
+                str(settings.proxy_http_base_url)
+                if settings.proxy_http_base_url is not None
+                else None
+            ),
+            "https_base_url": (
+                str(settings.proxy_https_base_url)
+                if settings.proxy_https_base_url is not None
+                else None
+            ),
+            "socks_base_url": (
+                str(settings.proxy_socks_base_url)
+                if settings.proxy_socks_base_url is not None
+                else None
+            ),
+        },
+        "prewarm": {
+            "failures": metrics.prewarm_failure_count,
+            "last_error": metrics.last_prewarm_error,
+        },
     }
 
 

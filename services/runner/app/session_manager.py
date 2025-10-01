@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -74,6 +75,36 @@ class SessionNotFoundError(KeyError):
     """Raised when attempting to operate on an unknown session identifier."""
 
 
+class SessionManagerMetrics(BaseModel):
+    """Snapshot of operational counters maintained by :class:`SessionManager`.
+
+    Attributes:
+        active_sessions: Number of sessions that are not in the ``DEAD`` state.
+        prewarm_failures: Ordered list of recorded prewarm failure messages.
+        last_prewarm_error: Most recent prewarm failure message, if any.
+
+    Example:
+        >>> SessionManagerMetrics(
+        ...     active_sessions=1,
+        ...     prewarm_failures=["boom"],
+        ...     last_prewarm_error="boom",
+        ... )
+        SessionManagerMetrics(active_sessions=1, prewarm_failures=['boom'], last_prewarm_error='boom')
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    active_sessions: int = Field(default=0, ge=0)
+    prewarm_failures: list[str] = Field(default_factory=list)
+    last_prewarm_error: str | None = Field(default=None)
+
+    @property
+    def prewarm_failure_count(self) -> int:
+        """Return the number of recorded prewarm failures."""
+
+        return len(self.prewarm_failures)
+
+
 class SessionManager:
     """Manage session lifecycle and publish events for downstream consumers."""
 
@@ -88,6 +119,11 @@ class SessionManager:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sessions: dict[UUID, Session] = {}
         self._lock = anyio.Lock()
+        self._active_sessions = 0
+        self._prewarm_failures: deque[str] = deque(
+            maxlen=settings.prewarm_failure_history_size
+        )
+        self._last_prewarm_error: str | None = None
 
     async def create_session(self, payload: SessionCreatePayload) -> Session:
         """Create, persist, and broadcast a new session object."""
@@ -120,6 +156,8 @@ class SessionManager:
                 metadata=payload.metadata,
             )
             self._sessions[session_id] = session
+            if session.status is not SessionStatus.DEAD:
+                self._active_sessions += 1
             await self._publish(session, SessionEventType.CREATED, reason=None)
             return session
 
@@ -147,6 +185,7 @@ class SessionManager:
                 update_data["metadata"] = {**existing.metadata, **merged_metadata}
             session = existing.model_copy(update=update_data, deep=True)
             self._sessions[session_id] = session
+            self._recalculate_active_sessions(existing.status, session.status)
             event_type = (
                 SessionEventType.ENDED
                 if session.status is SessionStatus.DEAD
@@ -187,6 +226,33 @@ class SessionManager:
         async with self._lock:
             return list(self._sessions.values())
 
+    async def record_prewarm_failure(self, message: str) -> None:
+        """Append ``message`` to the rolling prewarm failure history."""
+
+        async with self._lock:
+            self._prewarm_failures.append(message)
+            self._last_prewarm_error = message
+
+    async def reset_prewarm_failures(self) -> None:
+        """Clear recorded prewarm failures, typically after a successful run."""
+
+        async with self._lock:
+            self._prewarm_failures.clear()
+            self._last_prewarm_error = None
+
+    async def get_metrics(self) -> SessionManagerMetrics:
+        """Return a metrics snapshot safe to expose via diagnostics endpoints."""
+
+        async with self._lock:
+            active_sessions = self._active_sessions
+            failures = list(self._prewarm_failures)
+            last_error = self._last_prewarm_error
+        return SessionManagerMetrics(
+            active_sessions=active_sessions,
+            prewarm_failures=failures,
+            last_prewarm_error=last_error,
+        )
+
     def _resolve_vnc(
         self,
         payload: SessionCreatePayload,
@@ -194,7 +260,7 @@ class SessionManager:
     ) -> SessionVncDetails | None:
         """Return VNC details honouring payload overrides and settings defaults."""
 
-        if payload.headless:
+        if payload.headless or not self._settings.vnc_enabled:
             return None
         if payload.vnc is not None:
             return payload.vnc
@@ -205,6 +271,18 @@ class SessionManager:
             token=token,
             token_ttl_seconds=self._settings.vnc_token_ttl_seconds,
         )
+
+    def _recalculate_active_sessions(
+        self, previous_status: SessionStatus, current_status: SessionStatus
+    ) -> None:
+        """Update the active session counter based on a status transition."""
+
+        was_active = previous_status is not SessionStatus.DEAD
+        is_active = current_status is not SessionStatus.DEAD
+        if was_active and not is_active:
+            self._active_sessions = max(0, self._active_sessions - 1)
+        elif not was_active and is_active:
+            self._active_sessions += 1
 
     async def _publish(
         self,
@@ -228,5 +306,6 @@ __all__ = [
     "SessionCreatePayload",
     "SessionManager",
     "SessionNotFoundError",
+    "SessionManagerMetrics",
     "SessionUpdatePayload",
 ]
