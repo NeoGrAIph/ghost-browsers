@@ -8,7 +8,12 @@ import pytest
 from app.config import RunnerSettings
 from app.events import InMemorySessionEventPublisher
 from app.session_manager import SessionCreatePayload, SessionManager, SessionUpdatePayload
-from core.models import SessionEventType, SessionProxySettings, SessionStatus
+from core.models import (
+    SessionEventType,
+    SessionProxySettings,
+    SessionStatus,
+    SessionVncDetails,
+)
 
 
 @pytest.fixture
@@ -45,6 +50,8 @@ async def test_create_session_emits_event_and_vnc_stub() -> None:
     assert session.runner_id == "runner-test"
     assert session.proxy is not None
     assert session.vnc is not None
+    assert session.vnc.token is None
+    assert session.vnc.token_ttl_seconds is None
     assert str(session.vnc.http_url).endswith(str(session.id))
     events = await publisher.drain()
     assert len(events) == 1
@@ -81,6 +88,68 @@ async def test_update_session_merges_labels_and_publishes_update() -> None:
     assert [event.type for event in events] == [SessionEventType.CREATED, SessionEventType.UPDATED]
     assert events[-1].session.status is SessionStatus.READY
     assert events[-1].occurred_at == clock_now
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_strips_user_vnc_token() -> None:
+    """User-supplied VNC tokens must be removed before persisting sessions."""
+
+    clock_now = datetime(2024, 4, 4, 12, 0, 0, tzinfo=UTC)
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(
+            runner_id="runner-token", camoufox_path="/usr/bin/camoufox"
+        ),
+        publisher,
+        clock=lambda: clock_now,
+    )
+    payload = SessionCreatePayload(
+        headless=False,
+        vnc=SessionVncDetails(
+            http_url="http://127.0.0.1:6901/view",
+            token="forged",
+            token_ttl_seconds=120,
+        ),
+    )
+
+    session = await manager.create_session(payload)
+
+    assert session.vnc is not None
+    assert session.vnc.token is None
+    assert session.vnc.token_ttl_seconds is None
+
+
+@pytest.mark.anyio("asyncio")
+async def test_update_session_strips_user_vnc_token() -> None:
+    """Updates attempting to inject VNC tokens are sanitised."""
+
+    clock_now = datetime(2024, 5, 5, 12, 0, 0, tzinfo=UTC)
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(
+            runner_id="runner-update", camoufox_path="/usr/bin/camoufox"
+        ),
+        publisher,
+        clock=lambda: clock_now,
+    )
+    session = await manager.create_session(
+        SessionCreatePayload(headless=False)
+    )
+
+    updated = await manager.update_session(
+        session.id,
+        SessionUpdatePayload(
+            vnc=SessionVncDetails(
+                http_url="http://127.0.0.1:6901/view",
+                token="override",
+                token_ttl_seconds=200,
+            )
+        ),
+    )
+
+    assert updated.vnc is not None
+    assert updated.vnc.token is None
+    assert updated.vnc.token_ttl_seconds is None
 
 
 @pytest.mark.anyio("asyncio")
