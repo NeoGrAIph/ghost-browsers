@@ -32,6 +32,7 @@ import websockets
 from fastapi import Request, WebSocket
 from fastapi.responses import Response
 from starlette import status
+from starlette.websockets import WebSocketState
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from .config import Settings
@@ -40,10 +41,23 @@ LOG = logging.getLogger(__name__)
 
 TARGET_PORT_COOKIE: Final[str] = "vnc-target-port"
 
+# Default operational parameters for WebSocket relaying.  The values mirror the
+# upstream gateway deployment where the public connection is considered idle
+# after 30 seconds of inactivity and the upstream ``websockets`` client keeps a
+# bounded frame buffer to exert backpressure on the Runner.
+_DEFAULT_WS_OPEN_TIMEOUT: Final[float] = 10.0
+_DEFAULT_WS_IDLE_TIMEOUT: Final[float] = 30.0
+_DEFAULT_WS_SEND_TIMEOUT: Final[float] = 15.0
+_DEFAULT_WS_MAX_QUEUE: Final[int] = 16
+
 
 class TargetPortError(ValueError):
     """Raised when ``target_port`` cannot be parsed or validated."""
 
+
+
+class RelayTimeoutError(RuntimeError):
+    """Raised when the WebSocket relay exceeds an operational timeout."""
 
 
 class RunnerProxy:
@@ -52,7 +66,9 @@ class RunnerProxy:
     The implementation relies on :mod:`httpx` for HTTP traffic and the
     :mod:`websockets` package for bidirectional WebSocket streaming.  Only the
     minimal functionality required by the assignment is implemented; the class
-    focuses on the two routes exposed by this service.
+    focuses on the two routes exposed by this service while providing explicit
+    timeout handling and bounded internal buffers to honour backpressure on both
+    sides of the tunnel.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -63,6 +79,10 @@ class RunnerProxy:
         self._http_prefix = (self._http_base.path or "").rstrip("/")
         self._ws_prefix = (self._ws_base.path or "").rstrip("/")
         self._cookie_path = _join_paths(self._http_prefix, "/vnc")
+        self._ws_open_timeout = _DEFAULT_WS_OPEN_TIMEOUT
+        self._ws_idle_timeout = _DEFAULT_WS_IDLE_TIMEOUT
+        self._ws_send_timeout = _DEFAULT_WS_SEND_TIMEOUT
+        self._ws_max_queue = _DEFAULT_WS_MAX_QUEUE
 
     async def aclose(self) -> None:
         """Release the shared HTTP client resources."""
@@ -194,6 +214,10 @@ class RunnerProxy:
         if extra_headers:
             connect_kwargs["extra_headers"] = extra_headers
 
+        connect_kwargs.setdefault("open_timeout", self._ws_open_timeout)
+        connect_kwargs.setdefault("close_timeout", self._ws_send_timeout)
+        connect_kwargs.setdefault("max_queue", self._ws_max_queue)
+
         try:
             async with websockets.connect(upstream_url, **connect_kwargs) as runner_ws:
                 await websocket.accept(subprotocol=runner_ws.subprotocol)
@@ -201,18 +225,35 @@ class RunnerProxy:
                 async def client_to_runner() -> None:
                     try:
                         while True:
-                            message = await websocket.receive()
+                            try:
+                                message = await asyncio.wait_for(
+                                    websocket.receive(),
+                                    timeout=self._ws_idle_timeout,
+                                )
+                            except asyncio.TimeoutError as exc:
+                                raise RelayTimeoutError("Client inactivity timeout") from exc
+
                             message_type = message.get("type")
                             if message_type == "websocket.disconnect":
                                 await runner_ws.close()
                                 break
+
                             text_data = message.get("text")
                             if text_data is not None:
-                                await runner_ws.send(text_data)
+                                await asyncio.wait_for(
+                                    runner_ws.send(text_data),
+                                    timeout=self._ws_send_timeout,
+                                )
                                 continue
+
                             binary_data = message.get("bytes")
                             if binary_data is not None:
-                                await runner_ws.send(binary_data)
+                                await asyncio.wait_for(
+                                    runner_ws.send(binary_data),
+                                    timeout=self._ws_send_timeout,
+                                )
+                    except RelayTimeoutError:
+                        raise
                     except Exception:  # pragma: no cover - defensive logging aid
                         LOG.exception(
                             "client_to_runner failed",
@@ -222,11 +263,32 @@ class RunnerProxy:
 
                 async def runner_to_client() -> None:
                     try:
-                        async for payload in runner_ws:
-                            if isinstance(payload, str):
-                                await websocket.send_text(payload)
-                            else:
-                                await websocket.send_bytes(payload)
+                        while True:
+                            try:
+                                payload = await asyncio.wait_for(
+                                    runner_ws.recv(),
+                                    timeout=self._ws_idle_timeout,
+                                )
+                            except asyncio.TimeoutError as exc:
+                                raise RelayTimeoutError("Upstream inactivity timeout") from exc
+                            except (ConnectionClosedError, ConnectionClosedOK):
+                                break
+
+                            if websocket.application_state is WebSocketState.DISCONNECTED:
+                                break
+
+                            sender = websocket.send_text if isinstance(payload, str) else websocket.send_bytes
+                            try:
+                                await asyncio.wait_for(
+                                    sender(payload),
+                                    timeout=self._ws_send_timeout,
+                                )
+                            except asyncio.TimeoutError as exc:
+                                raise RelayTimeoutError("Client send timeout") from exc
+                            except RuntimeError:
+                                break
+                    except RelayTimeoutError:
+                        raise
                     except Exception:  # pragma: no cover - defensive logging aid
                         LOG.exception(
                             "runner_to_client failed",
@@ -242,15 +304,26 @@ class RunnerProxy:
                     tasks,
                     return_when=asyncio.FIRST_EXCEPTION,
                 )
-                for task in pending:
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
+                error: Exception | None = None
                 for task in done:
                     with suppress(asyncio.CancelledError):
                         exc = task.exception()
                         if exc:
-                            raise exc
+                            error = exc
+                for task in pending:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                if error:
+                    raise error
+        except RelayTimeoutError as exc:
+            LOG.warning(
+                "WebSocket relay timeout",
+                extra={"session_id": session_id},
+                exc_info=exc,
+            )
+            with suppress(RuntimeError):
+                await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason=str(exc))
         except (ConnectionClosedError, ConnectionClosedOK):
             with suppress(RuntimeError):
                 await websocket.close()
