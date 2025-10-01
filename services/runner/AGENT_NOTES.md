@@ -31,6 +31,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
   показывать последние сбои без риска утечки памяти.
+- **Gateway proxy compatibility**: `SessionCreatePayload` остаётся публичным контрактом, но теперь вызывается через Gateway, потому важна обратная совместимость и строгая валидация.
 
 ## Constraints & Invariants
 - `RunnerSettings.vnc_token_ttl_seconds` capped at 300 seconds to align with `SessionVncDetails` validation.
