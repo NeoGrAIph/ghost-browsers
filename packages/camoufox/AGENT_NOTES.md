@@ -22,6 +22,9 @@ configuration validation.
   succeed offline and commands like `python -m camoufox path` remain
   functional for smoke tests; the module lives at the repo root while
   Poetry consumes it via a path dependency.
+  Путь зависимости фиксируется на корне репозитория (`from = "../.."`),
+  чтобы editable-сборки корректно подключали модуль из каталога
+  `camoufox/`.
 
 ## Constraints & Invariants
 - The reported path is `/usr/bin/camoufox` to match existing fixtures and
@@ -42,3 +45,6 @@ configuration validation.
 ## Changelog (for agents)
 - 2025-10-09 · gpt-5-codex · Создан локальный stub-пакет Camoufox для
   успешного прохождения unit-тестов без доступа к приватному артефакту.
+- 2025-10-12 · gpt-5-codex · Исправлена конфигурация Poetry, чтобы
+  editable-установка подтягивала модуль `camoufox` из корня репозитория
+  и не падала на `poetry install --no-root` в сервисах.

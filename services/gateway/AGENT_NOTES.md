@@ -41,6 +41,7 @@
   инициированных самим Gateway.
 - Авторизация завершается до открытия WebSocket, при ошибках соединение закрывается кодом `1008`.
 - Командные эндпоинты используют `RunnerCommandClient` (httpx + MockTransport в тестах) и на стороне Gateway трансформируют упрощённый DTO (`browser_name`, `region`, `proxy_id`) в Runner API. При отсутствии `runner_id` выбирается первый доступный раннер из регистра.
+- Для предотвращения рассинхронизации контрактов с Runner добавлены unit-тесты, которые валидируют DTO команд Gateway через `SessionCreatePayload`/`SessionUpdatePayload` из Runner и проверяют поддержку алиаса `updated_at` в `core.Session`.
 - Health-чек раннеров выполняется через `RunnerHealthClient` (httpx) и сохраняет результат в `RunnerRegistry`. Селектор `select_next` использует круговой обход и фильтрует по признаку здоровья и поддержке VNC, чтобы избежать ручного выбора в роутерах.
 
 ## Constraints & Invariants
@@ -64,6 +65,7 @@
   - `poetry run pytest -q`
 - При необходимости линтинг: `poetry run ruff check .`
 - Тест `test_vnc_overrides_apply_runner_templates` проверяет, что VNC-адреса переписываются на публичные шаблоны по аналогии с beta.
+- Тесты `test_contract_synchronization.py` гарантируют, что HTTP-команды Gateway совместимы с моделями Runner и `core.Session`.
 
 ## Changelog (for agents)
 - 2025-10-01 · OpenAI ChatGPT · Реализован FastAPI gateway (REST/SSE/WS), Keycloak JWT, VNC-токены и покрывающие unit-тесты.
@@ -75,3 +77,4 @@
 - 2025-10-08 · gpt-5-codex · Реализован HTTP-приёмник `POST /events`, генерация событий на мутациях сессий и тесты доставки в SSE/WS.
 - 2025-10-09 · gpt-5-codex · Добавлен HTTP-клиент для health-чеков раннеров, круговой селектор с фильтрами VNC и расширенный `/runners` с данными диагностики.
 - 2025-10-10 · gpt-5-codex · Обновление ответов `/sessions` через свежие данные раннеров для пересборки публичных VNC URL и выпуск новых токенов при необходимости; добавлен тест изменения шаблонов.
+- 2025-10-11 · gpt-5-codex · Добавлены перекрёстные тесты синхронизации контрактов Gateway↔Runner↔core, чтобы отслеживать регрессии в DTO команд.

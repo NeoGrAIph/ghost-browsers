@@ -2,7 +2,7 @@
 name = "camoufox"
 version = "0.0.0"
 description = "Stub Camoufox bindings for local development and tests"
-packages = [{include = "camoufox", from = ".."}]
+packages = [{include = "camoufox", from = "../.."}]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
