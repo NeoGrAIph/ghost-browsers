@@ -134,14 +134,20 @@ export const deleteSession = (sessionId: string, headers?: AuthHeaders) =>
 
 /**
  * Opens a typed EventSource connection for session updates.
+ *
+ * The backend accepts bearer credentials in the `Authorization` header as well
+ * as the `access_token` query parameter. Because the native EventSource API
+ * does not allow custom headers, the token is appended to the stream URL when
+ * present so both the default browser implementation and polyfills with header
+ * support function correctly.
  */
 export const openSessionEventStream = (headers?: AuthHeaders) => {
-  const url = new URL(createUrl(gatewayUrl, '/sessions/stream'));
+  const url = new URL(createUrl(gatewayUrl, '/events'));
   if (headers?.token) {
     url.searchParams.set('access_token', headers.token);
   }
 
-  const eventSource = new EventSource(url);
+  const eventSource = new EventSource(url.toString());
   return {
     eventSource,
     parseEvent: (event: MessageEvent<string>): SessionEvent => {

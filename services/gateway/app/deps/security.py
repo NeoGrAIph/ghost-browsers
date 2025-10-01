@@ -19,6 +19,7 @@ def get_authenticator(request: Request) -> KeycloakAuthenticator:
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)
     ],
@@ -26,12 +27,26 @@ async def get_current_user(
         KeycloakAuthenticator, Depends(get_authenticator)
     ],
 ) -> AuthenticatedUser:
-    """Validate the incoming bearer token and return the authenticated user."""
+    """Validate the incoming bearer token and return the authenticated user.
 
-    if credentials is None:
+    The SSE endpoint relies on the browser-native ``EventSource`` implementation
+    which does not allow specifying custom headers. To keep that endpoint
+    functional we also honour the ``access_token`` (or ``token`` for parity with
+    the WebSocket endpoint) query parameter whenever the ``Authorization``
+    header is absent.
+    """
+
+    token: str | None
+    if credentials is not None:
+        token = credentials.credentials
+    else:
+        # ``token`` mirrors the WebSocket query parameter for consistency.
+        token = request.query_params.get("access_token") or request.query_params.get("token")
+
+    if token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing credentials")
     try:
-        return await authenticator.authenticate(credentials.credentials)
+        return await authenticator.authenticate(token)
     except AuthenticationError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
