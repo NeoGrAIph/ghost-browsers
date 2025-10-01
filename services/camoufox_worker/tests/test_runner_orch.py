@@ -1,12 +1,13 @@
-"""Tests for the orchestrated runner HTTP helpers."""
+"""Async regression tests for the orchestrator HTTP integration helpers."""
 
 from __future__ import annotations
 
 import json
 from typing import List, Tuple
 
-import httpx
 import pytest
+
+import httpx
 
 from worker.jobs import Job, JobStatus
 from worker.runner_orch import create_gateway_client, run_orchestrated_job

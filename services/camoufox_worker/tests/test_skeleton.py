@@ -18,9 +18,3 @@ def test_task_files_exist() -> None:
         "worker/main.py",
     ]:
         assert (ROOT / name).exists(), f"Missing expected file: {name}"
-
-
-def test_placeholder() -> None:
-    """Placeholder assertion that always succeeds until real tests arrive."""
-
-    assert True
