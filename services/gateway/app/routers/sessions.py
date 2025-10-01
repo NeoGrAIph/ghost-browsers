@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from core import Runner, Session, SessionProxySettings
+from core import (
+    AbstractSessionEventBridge,
+    Runner,
+    Session,
+    SessionEvent,
+    SessionEventType,
+    SessionProxySettings,
+    SessionStatus,
+)
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
 from ..deps import (
+    get_event_bridge,
     get_runner_command_client,
     get_runner_registry,
     get_session_registry,
@@ -42,6 +51,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 async def execute_create_command(
     payload: SessionCreateCommand,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
     runner_client: Annotated[RunnerCommandClient, Depends(get_runner_command_client)],
     token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
@@ -78,6 +88,7 @@ async def execute_create_command(
 
     enriched = _enrich_session(session, runner, token_service, user)
     await registry.upsert(enriched)
+    await _publish_session_event(bridge, enriched, SessionEventType.CREATED)
     return enriched
 
 
@@ -86,6 +97,7 @@ async def execute_update_command(
     session_id: UUID,
     payload: SessionUpdateCommand,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
     runner_client: Annotated[RunnerCommandClient, Depends(get_runner_command_client)],
     token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
@@ -118,6 +130,12 @@ async def execute_update_command(
 
     enriched = _enrich_session(session, runner, token_service, user)
     await registry.upsert(enriched)
+    event_type = (
+        SessionEventType.ENDED
+        if enriched.status is SessionStatus.DEAD
+        else SessionEventType.UPDATED
+    )
+    await _publish_session_event(bridge, enriched, event_type)
     return enriched
 
 
@@ -125,6 +143,7 @@ async def execute_update_command(
 async def execute_delete_command(
     session_id: UUID,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
     runner_client: Annotated[RunnerCommandClient, Depends(get_runner_command_client)],
     token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
@@ -157,6 +176,12 @@ async def execute_delete_command(
 
     enriched = _enrich_session(session, runner, token_service, user)
     await registry.delete(session_id)
+    event_type = (
+        SessionEventType.ENDED
+        if enriched.status is SessionStatus.DEAD
+        else SessionEventType.UPDATED
+    )
+    await _publish_session_event(bridge, enriched, event_type)
     return enriched
 
 
@@ -174,6 +199,7 @@ async def list_sessions(
 async def create_session(
     session: Session,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
     token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
@@ -183,9 +209,11 @@ async def create_session(
     runner = await runners.get(session.runner_id)
     enriched = _enrich_session(session, runner, token_service, user)
     try:
-        return await registry.add(enriched)
+        stored = await registry.add(enriched)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    await _publish_session_event(bridge, stored, SessionEventType.CREATED)
+    return stored
 
 
 @router.get("/{session_id}", response_model=Session)
@@ -209,17 +237,30 @@ async def get_session(
 async def delete_session(
     session_id: UUID,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Response:
     """Delete a session from the registry."""
 
     try:
+        session = await registry.get(session_id)
         await registry.delete(session_id)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         ) from exc
+    event_session = (
+        session
+        if session.status is SessionStatus.DEAD
+        else session.model_copy(
+            update={
+                "status": SessionStatus.DEAD,
+                "ended_at": datetime.now(tz=UTC),
+            }
+        )
+    )
+    await _publish_session_event(bridge, event_session, SessionEventType.ENDED)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -228,17 +269,20 @@ async def update_proxy(
     session_id: UUID,
     payload: SessionProxySettings,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Session:
     """Update proxy configuration for a session."""
 
     try:
-        return await registry.update_proxy(session_id, payload)
+        session = await registry.update_proxy(session_id, payload)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         ) from exc
+    await _publish_session_event(bridge, session, SessionEventType.UPDATED)
+    return session
 
 
 @router.post("/{session_id}/touch", response_model=Session)
@@ -246,17 +290,48 @@ async def touch_session(
     session_id: UUID,
     payload: TouchPayload,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Session:
     """Update the ``last_seen_at`` timestamp for a session."""
 
     try:
-        return await registry.touch(session_id, timestamp=payload.timestamp)
+        session = await registry.touch(session_id, timestamp=payload.timestamp)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         ) from exc
+    await _publish_session_event(bridge, session, SessionEventType.UPDATED)
+    return session
+
+
+async def _publish_session_event(
+    bridge: AbstractSessionEventBridge,
+    session: Session,
+    event_type: SessionEventType,
+) -> None:
+    """Helper that constructs and emits a :class:`SessionEvent` to the bridge.
+
+    Args:
+        bridge: Event broadcaster shared by SSE and WebSocket transports.
+        session: Session snapshot to include in the event payload.
+        event_type: Semantic classification of the change being announced.
+
+    Returns:
+        None. The coroutine publishes the event and completes once subscribers
+        have been notified.
+
+    Example:
+        >>> await _publish_session_event(bridge, session, SessionEventType.UPDATED)  # doctest: +SKIP
+    """
+
+    event = SessionEvent(
+        session=session,
+        occurred_at=datetime.now(tz=UTC),
+        type=event_type,
+    )
+    await bridge.publish(event)
 
 
 def _enrich_session(

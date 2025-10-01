@@ -11,8 +11,10 @@ uvicorn = {extras = ["standard"], version = "^0.30.6"}
 pydantic = "^2.8.2"
 httpx = "^0.27.2"
 anyio = "^4.4.0"
-camoufox = "^0.9.3"
+camoufox = {path = "../../packages/camoufox", develop = true}
+"camou-core" = {path = "../../packages/core", develop = true}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
 ruff = "^0.6.9"
+trio = "^0.26.2"

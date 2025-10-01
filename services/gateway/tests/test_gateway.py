@@ -369,7 +369,7 @@ async def test_sse_accepts_access_token_query_parameter(gateway_app: FastAPI) ->
 async def test_sse_event_forwarding(gateway_app: FastAPI) -> None:
     """Events published into the bridge appear on the SSE endpoint."""
 
-    from app.routers.events import stream_events
+    from app.routers.events import publish_session_event, stream_events
 
     bridge = gateway_app.state.event_bridge
     now = datetime.now(tz=UTC)
@@ -397,7 +397,8 @@ async def test_sse_event_forwarding(gateway_app: FastAPI) -> None:
     iterator = response.body_iterator
     consumer = asyncio.create_task(iterator.__anext__())
     await asyncio.sleep(0)
-    await bridge.publish(event)
+    result = await publish_session_event(event=event, bridge=bridge)
+    assert result.status_code == 202
     chunk = await asyncio.wait_for(consumer, timeout=1)
     text = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
     payload = json.loads(text.removeprefix("data:").strip())
@@ -405,10 +406,53 @@ async def test_sse_event_forwarding(gateway_app: FastAPI) -> None:
     await iterator.aclose()
 
 
+@pytest.mark.anyio("asyncio")
+async def test_mutation_endpoints_emit_session_events(gateway_app: FastAPI) -> None:
+    """Gateway-managed mutations should notify subscribers via the bridge."""
+
+    bridge = gateway_app.state.event_bridge
+    subscription = await bridge.subscribe()
+    now = datetime.now(tz=UTC)
+    session_id = str(uuid4())
+    session_body = {
+        "id": session_id,
+        "runner_id": "runner-1",
+        "status": SessionStatus.INIT.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+    }
+    transport = httpx.ASGITransport(app=gateway_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/sessions", json=session_body)
+        assert response.status_code == 201
+        created_event = await asyncio.wait_for(subscription.__anext__(), timeout=1)
+        assert created_event.type is SessionEventType.CREATED
+
+        proxy_payload = {"http": "http://proxy", "https": None, "socks": None}
+        response = await client.post(f"/sessions/{session_id}/proxy", json=proxy_payload)
+        assert response.status_code == 200
+        proxy_event = await asyncio.wait_for(subscription.__anext__(), timeout=1)
+        assert proxy_event.type is SessionEventType.UPDATED
+
+        heartbeat_payload = {"timestamp": (now + timedelta(seconds=30)).isoformat()}
+        response = await client.post(f"/sessions/{session_id}/touch", json=heartbeat_payload)
+        assert response.status_code == 200
+        touch_event = await asyncio.wait_for(subscription.__anext__(), timeout=1)
+        assert touch_event.type is SessionEventType.UPDATED
+
+        response = await client.delete(f"/sessions/{session_id}")
+        assert response.status_code == 204
+        delete_event = await asyncio.wait_for(subscription.__anext__(), timeout=1)
+        assert delete_event.type is SessionEventType.ENDED
+
+    await subscription.aclose()
+
+
 def test_websocket_event_forwarding(gateway_client: TestClient) -> None:
     """Events are also forwarded to WebSocket subscribers."""
 
-    bridge = gateway_client.app.state.event_bridge
     now = datetime.now(tz=UTC)
     session = Session(
         id=uuid4(),
@@ -424,8 +468,12 @@ def test_websocket_event_forwarding(gateway_client: TestClient) -> None:
         occurred_at=now,
         type=SessionEventType.UPDATED,
     )
-    anyio.run(bridge.publish, event)
     with gateway_client.websocket_connect("/events/ws?token=stub") as websocket:
+        response = gateway_client.post(
+            "/events",
+            json=event.model_dump(mode="json", by_alias=True),
+        )
+        assert response.status_code == 202
         message = websocket.receive_json()
         assert message["session"]["id"] == str(session.id)
 
