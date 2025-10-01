@@ -5,7 +5,7 @@
 
 ## Компоненты
 - **Session Runner** — хранит сессии в памяти, управляет Playwright/Firefox, пушит события в Gateway.
-- **Session Gateway** — REST/SSE/WebSocket API, проверка Keycloak JWT, карта `session_id → runner`.
+- **Session Gateway** — REST/SSE/WebSocket API, проверка Keycloak JWT, карта `session_id → runner`, WebSocket прокси `/sessions/{id}/ws`.
 - **VNC Gateway** — прокси для VNC/WebSocket; валидирует короткоживущие токены.
 - **UI** — React+Vite SPA: Keycloak auth, список сессий, состояние runner’ов, VNC просмотр.
 

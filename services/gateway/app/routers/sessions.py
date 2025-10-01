@@ -16,18 +16,27 @@ from core import (
     SessionProxySettings,
     SessionStatus,
 )
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, WebSocket, status
 from pydantic import BaseModel
+from starlette.websockets import WebSocketState
 
 from ..deps import (
     get_event_bridge,
     get_runner_command_client,
     get_runner_registry,
+    get_runner_registry_ws,
+    get_runner_ws_proxy_ws,
     get_session_registry,
+    get_session_registry_ws,
     get_vnc_token_service,
 )
-from ..deps.security import get_current_user
-from ..security import AuthenticatedUser, VncTokenService
+from ..deps.security import authenticate_websocket, get_authenticator, get_current_user
+from ..security import (
+    AuthenticatedUser,
+    AuthenticationError,
+    KeycloakAuthenticator,
+    VncTokenService,
+)
 from ..services.runner_client import (
     RunnerCommandClient,
     RunnerCommandError,
@@ -35,6 +44,7 @@ from ..services.runner_client import (
     SessionUpdateCommand,
 )
 from ..services.runner_registry import RunnerRegistry
+from ..services.runner_ws_proxy import RunnerWebSocketProxy, RunnerWebSocketProxyError
 from ..services.session_registry import SessionRegistry
 from ..services.vnc_overrides import apply_vnc_overrides
 
@@ -86,7 +96,13 @@ async def execute_create_command(
             detail=str(exc),
         ) from exc
 
-    enriched = _enrich_session(session, runner, token_service, user)
+    public_ws = await _assign_public_ws_endpoint(session, runners)
+    sanitized = (
+        session
+        if public_ws is None
+        else session.model_copy(update={"ws_endpoint": public_ws})
+    )
+    enriched = _enrich_session(sanitized, runner, token_service, user)
     await registry.upsert(enriched)
     await _publish_session_event(bridge, enriched, SessionEventType.CREATED)
     return enriched
@@ -128,7 +144,13 @@ async def execute_update_command(
             detail=str(exc),
         ) from exc
 
-    enriched = _enrich_session(session, runner, token_service, user)
+    public_ws = await _assign_public_ws_endpoint(session, runners)
+    sanitized = (
+        session
+        if public_ws is None
+        else session.model_copy(update={"ws_endpoint": public_ws})
+    )
+    enriched = _enrich_session(sanitized, runner, token_service, user)
     await registry.upsert(enriched)
     event_type = (
         SessionEventType.ENDED
@@ -174,7 +196,13 @@ async def execute_delete_command(
             detail=str(exc),
         ) from exc
 
-    enriched = _enrich_session(session, runner, token_service, user)
+    public_ws = await _assign_public_ws_endpoint(session, runners)
+    sanitized = (
+        session
+        if public_ws is None
+        else session.model_copy(update={"ws_endpoint": public_ws})
+    )
+    enriched = _enrich_session(sanitized, runner, token_service, user)
     await registry.delete(session_id)
     event_type = (
         SessionEventType.ENDED
@@ -209,8 +237,10 @@ async def create_session(
 ) -> Session:
     """Register a new session emitted by a runner."""
 
+    public_ws = await _assign_public_ws_endpoint(session, runners)
+    sanitized = session if public_ws is None else session.model_copy(update={"ws_endpoint": public_ws})
     runner = await runners.get(session.runner_id)
-    enriched = _enrich_session(session, runner, token_service, user)
+    enriched = _enrich_session(sanitized, runner, token_service, user)
     try:
         stored = await registry.add(enriched)
     except ValueError as exc:
@@ -246,6 +276,7 @@ async def delete_session(
     session_id: UUID,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
     bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Response:
     """Delete a session from the registry."""
@@ -253,6 +284,7 @@ async def delete_session(
     try:
         session = await registry.get(session_id)
         await registry.delete(session_id)
+        await runners.drop_session_ws_endpoint(session_id)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -322,6 +354,69 @@ async def touch_session(
     return result
 
 
+@router.websocket("/{session_id}/ws")
+async def proxy_session_websocket(
+    websocket: WebSocket,
+    session_id: UUID,
+    sessions: Annotated[SessionRegistry, Depends(get_session_registry_ws)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry_ws)],
+    proxy: Annotated[RunnerWebSocketProxy, Depends(get_runner_ws_proxy_ws)],
+    authenticator: Annotated[KeycloakAuthenticator, Depends(get_authenticator)],
+) -> None:
+    """Authenticate the client and relay control traffic to the runner.
+
+    Args:
+        websocket: Incoming FastAPI WebSocket awaiting acceptance.
+        session_id: Identifier of the session whose control channel should be
+            proxied.
+        sessions: Registry used to verify that the session is still tracked by
+            the gateway.
+        runners: Registry providing the runner-facing WebSocket target.
+        proxy: Transport component responsible for establishing the upstream
+            tunnel.
+        authenticator: Authenticator validating bearer tokens on the upgrade
+            request.
+
+    Example:
+        >>> await proxy_session_websocket(  # doctest: +SKIP
+        ...     websocket,
+        ...     UUID("00000000-0000-0000-0000-000000000001"),
+        ...     sessions,
+        ...     runners,
+        ...     proxy,
+        ...     authenticator,
+        ... )
+    """
+
+    try:
+        await authenticate_websocket(websocket, authenticator)
+    except AuthenticationError:
+        return
+
+    try:
+        await sessions.get(session_id)
+    except KeyError:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Session not found")
+        return
+
+    target = await runners.resolve_session_ws_target(session_id)
+    if target is None:
+        await websocket.close(
+            code=status.WS_1011_INTERNAL_ERROR,
+            reason="Session is missing an upstream endpoint",
+        )
+        return
+
+    try:
+        await proxy.proxy(client=websocket, target=target)
+    except RunnerWebSocketProxyError:
+        if websocket.application_state is not WebSocketState.DISCONNECTED:
+            await websocket.close(
+                code=status.WS_1011_INTERNAL_ERROR,
+                reason="WebSocket relay failure",
+            )
+
+
 async def _enrich_registry_sessions(
     sessions: Iterable[Session],
     runners: RunnerRegistry,
@@ -337,7 +432,8 @@ async def _enrich_registry_sessions(
         user: Authenticated subject receiving the session payload.
 
     Returns:
-        list[Session]: Sessions updated with the most recent VNC URLs and
+        list[Session]: Sessions updated with the most recent VNC URLs,
+        WebSocket endpoints derived from the runner registry, and
         gateway-minted access tokens when necessary.
 
     Example:
@@ -359,8 +455,43 @@ async def _enrich_registry_sessions(
             else:
                 runner = await runners.get(runner_id)
                 runner_cache[runner_id] = runner
-        enriched.append(_enrich_session(snapshot, runner, token_service, user))
+        public_ws = await runners.resolve_session_ws_public(snapshot.id)
+        hydrated = (
+            snapshot
+            if public_ws is None or snapshot.ws_endpoint == public_ws
+            else snapshot.model_copy(update={"ws_endpoint": public_ws})
+        )
+        enriched.append(_enrich_session(hydrated, runner, token_service, user))
     return enriched
+
+
+async def _assign_public_ws_endpoint(
+    session: Session,
+    runners: RunnerRegistry,
+) -> str | None:
+    """Register the runner endpoint and return the public WebSocket URL.
+
+    Args:
+        session: Session snapshot returned by a runner.
+        runners: Registry responsible for storing runner metadata and session
+            endpoint bindings.
+
+    Returns:
+        str | None: Public WebSocket URL exposed through the gateway or ``None``
+        when the session does not provide a control endpoint.
+
+    Example:
+        >>> await _assign_public_ws_endpoint(  # doctest: +SKIP
+        ...     Session.model_validate({"id": "00000000-0000-0000-0000-000000000001"}),
+        ...     runners,
+        ... )
+    """
+
+    return await runners.register_session_ws_endpoint(
+        session.id,
+        runner_id=session.runner_id,
+        target=session.ws_endpoint,
+    )
 
 
 async def _publish_session_event(

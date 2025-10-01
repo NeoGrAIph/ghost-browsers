@@ -116,10 +116,12 @@ def test_session_crud(gateway_client: TestClient) -> None:
         "last_seen_at": now.isoformat(),
         "headless": False,
         "idle_ttl_seconds": 300,
+        "ws_endpoint": "ws://runner-1/playwright/1",
     }
     response = gateway_client.post("/sessions", json=session_body)
     assert response.status_code == 201
     session_id = response.json()["id"]
+    assert response.json()["ws_endpoint"] == f"/sessions/{session_id}/ws"
 
     response = gateway_client.get("/sessions")
     assert response.status_code == 200
@@ -155,6 +157,7 @@ def test_vnc_token_generation(gateway_client: TestClient) -> None:
         "headless": False,
         "idle_ttl_seconds": 300,
         "vnc": {"http_url": "https://vnc.example/view"},
+        "ws_endpoint": "ws://runner-1/playwright/2",
     }
     response = gateway_client.post("/sessions", json=session_body)
     assert response.status_code == 201
@@ -181,6 +184,7 @@ def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> Non
             "http_url": "http://127.0.0.1:6901/view",  # runner-local endpoint
             "websocket_url": "ws://127.0.0.1:6901/ws",
         },
+        "ws_endpoint": "ws://runner-1/playwright/3",
     }
 
     response = gateway_client.post("/sessions", json=session_body)
@@ -211,6 +215,7 @@ def test_session_reads_reflect_runner_override_updates(
             "http_url": "http://127.0.0.1:6901/view",
             "websocket_url": "ws://127.0.0.1:6901/ws",
         },
+        "ws_endpoint": "ws://runner-1/playwright/4",
     }
 
     response = gateway_client.post("/sessions", json=session_body)
@@ -531,6 +536,7 @@ async def test_mutation_endpoints_emit_session_events(gateway_app: FastAPI) -> N
         "last_seen_at": now.isoformat(),
         "headless": False,
         "idle_ttl_seconds": 300,
+        "ws_endpoint": "ws://runner-1/playwright/5",
     }
     transport = httpx.ASGITransport(app=gateway_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
