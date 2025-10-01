@@ -33,3 +33,4 @@ Camoufox worker обеспечивает выполнение короткожи
 
 ## Changelog (for agents)
 * 2024-08-29 · gpt-5-codex · Создан каркас camoufox_worker, добавлены инструкции, документация и тестовые заглушки.
+* 2024-08-30 · gpt-5-codex · Обновлён CI workflow: для push-сборок используется fallback-тег с SHA коммита, чтобы избежать пустых Docker tag.
