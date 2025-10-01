@@ -239,6 +239,55 @@ def test_create_command_proxies_to_runner(
     assert any(item["id"] == str(session_id) for item in sessions)
 
 
+def test_runners_endpoint_exposes_health_snapshot(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """The runners endpoint should surface health metadata from the registry."""
+
+    now = datetime.now(tz=UTC)
+    registry = gateway_app.state.runner_registry
+    asyncio.run(registry.record_health("runner-1", healthy=False, heartbeat_at=now))
+
+    response = gateway_client.get("/runners")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload and payload[0]["healthy"] is False
+    assert payload[0]["last_heartbeat_at"].startswith(now.isoformat()[:19])
+
+
+def test_create_command_returns_503_when_no_vnc_runner_available(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """Selecting a runner should fail when no healthy VNC-capable runner exists."""
+
+    registry = gateway_app.state.runner_registry
+    asyncio.run(
+        registry.upsert(
+            Runner(
+                id="runner-2",
+                base_url="http://runner-2",
+                total_slots=1,
+                supports_vnc=False,
+            )
+        )
+    )
+    asyncio.run(
+        registry.record_health(
+            "runner-1", healthy=False, heartbeat_at=datetime.now(tz=UTC)
+        )
+    )
+
+    response = gateway_client.post(
+        "/sessions/commands",
+        json={
+            "browser_name": "Chrome",
+            "region": "eu-central",
+        },
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "No healthy runners available"
+
+
 def test_update_command_mirrors_runner_changes(
     gateway_app: FastAPI, gateway_client: TestClient
 ) -> None:

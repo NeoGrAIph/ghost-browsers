@@ -7,6 +7,7 @@ from fastapi import Request
 
 from ..security import VncTokenService
 from ..services.runner_client import RunnerCommandClient
+from ..services.runner_health import RunnerHealthClient
 from ..services.runner_registry import RunnerRegistry
 from ..services.session_registry import SessionRegistry
 
@@ -39,3 +40,9 @@ def get_runner_command_client(request: Request) -> RunnerCommandClient:
     """Return the Runner command client shared by the application."""
 
     return request.app.state.runner_client  # type: ignore[attr-defined]
+
+
+def get_runner_health_client(request: Request) -> RunnerHealthClient:
+    """Return the Runner health client configured on the application."""
+
+    return request.app.state.runner_health_client  # type: ignore[attr-defined]

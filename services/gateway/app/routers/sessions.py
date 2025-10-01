@@ -68,13 +68,12 @@ async def execute_create_command(
                 detail="Runner not found",
             )
     else:
-        available = await runners.list()
-        if not available:
+        runner = await runners.select_next(requires_vnc=not payload.headless)
+        if runner is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No runners available",
+                detail="No healthy runners available",
             )
-        runner = available[0]
 
     assert runner is not None  # Narrow type after selection.
 
