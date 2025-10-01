@@ -4,7 +4,9 @@
 Реализовать публичный фронт (REST/SSE/WebSocket): управление сессиями, выдача VNC-токенов, приём событий от Runner.
 
 ## Требования
-- Аутентификация через Keycloak (валидация JWT по JWKS). Логировать sub/email в audit trail.
+- Аутентификация через Keycloak (валидация JWT по JWKS) для публичного периметра. Логировать sub/email в audit trail.
+- Поддержать режим «доверенной сети»: для внутренних клиентов (CIDR/заголовок из конфигурации)
+  отдавать API без обязательного JWT, маркируя такие запросы в логах и метриках.
 - Стейтлес; карта `session_id→runner` восстанавливается при старте через опрос Runner.
 - REST: POST/GET/GET by id/DELETE `/sessions`, POST `/sessions/{id}/proxy`, POST `/sessions/{id}/touch`, GET `/runners`.
 - События: ретрансляция в UI через SSE `/events` и WS `/events/ws`.

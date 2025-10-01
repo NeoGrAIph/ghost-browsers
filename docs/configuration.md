@@ -8,6 +8,10 @@
 - `RUNNERS` — список `host:port` при static
 - `JWT_JWKS_URL` — публичный JWKS Keycloak
 - `VNC_TOKEN_TTL_SEC` (<= 300)
+- `GATEWAY_TRUSTED_CIDRS` — через запятую; список подсетей (IPv4/IPv6), из которых
+  запросы считаются «внутренними» и не требуют аутентификации. Пример: `10.0.0.0/8,fd00::/64`.
+- `GATEWAY_TRUSTED_HEADER` — (опционально) имя заголовка, который может выставлять
+  ingress/sidecar для пометки доверенных вызовов. Значение проверяется на `true/1`.
 
 ## Runner
 - `HTTP_PROXY`, `HTTPS_PROXY`, `SOCKS_PROXY` — индивидуальные прокси

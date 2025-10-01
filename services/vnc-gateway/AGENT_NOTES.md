@@ -23,6 +23,8 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 - Tokens must include the matching session identifier; mismatches immediately rejected.
 - Only `ws`/`wss` schemes accepted for Runner WS base; HTTP base limited to `http/https`.
 - `ConnectionRegistry` is process-local and not durable; acceptable for current scope.
+- Сервис остаётся частью публичного периметра: проверка VNC-токена обязательна даже для запросов,
+  поступающих из кластера. Беспарольный режим распространяется только на REST/SSE/WS Gateway.
 
 ## Known Gaps / TODO
 - [ ] Replace manual websocket proxy with production-ready solution once Runner API stabilises (e.g. uvicorn websockets integration).
