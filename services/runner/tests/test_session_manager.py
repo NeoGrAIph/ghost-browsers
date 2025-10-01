@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.config import RunnerSettings
@@ -236,6 +236,106 @@ async def test_metrics_track_active_sessions_and_prewarm_failures(
     assert metrics.prewarm_failures == ["warmup-1", "warmup-2"]
 
 
+@pytest.mark.anyio("asyncio")
+async def test_touch_session_updates_last_seen_and_publishes_update(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
+    """``touch_session`` should extend TTL and emit a heartbeat update."""
+
+    clock = _StubClock(datetime(2024, 6, 6, 12, 0, 0, tzinfo=UTC))
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-touch", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        clock=clock,
+    )
+    session = await manager.create_session(
+        SessionCreatePayload(idle_ttl_seconds=60)
+    )
+
+    clock.advance(15)
+    touched = await manager.touch_session(session.id)
+
+    assert touched.last_seen_at == clock()
+    events = await publisher.drain()
+    assert [event.type for event in events] == [
+        SessionEventType.CREATED,
+        SessionEventType.UPDATED,
+    ]
+    assert events[-1].session.id == session.id
+
+
+@pytest.mark.anyio("asyncio")
+async def test_reap_expired_sessions_marks_session_dead_and_records_metrics(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
+    """Idle sessions should transition to DEAD with an ``idle-timeout`` reason."""
+
+    clock = _StubClock(datetime(2024, 7, 7, 12, 0, 0, tzinfo=UTC))
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-reap", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        clock=clock,
+    )
+    session = await manager.create_session(
+        SessionCreatePayload(idle_ttl_seconds=30)
+    )
+
+    clock.advance(31)
+    expired = await manager.reap_expired_sessions()
+
+    assert expired == 1
+    ended = await manager.get_session(session.id)
+    assert ended.status is SessionStatus.DEAD
+    events = await publisher.drain()
+    assert [event.type for event in events] == [
+        SessionEventType.CREATED,
+        SessionEventType.ENDED,
+    ]
+    assert events[-1].reason == "idle-timeout"
+    metrics = await manager.get_metrics()
+    assert metrics.reaper_expired_sessions == 1
+    assert metrics.reaper_total_runs == 1
+    assert metrics.next_idle_expiry_at is None
+
+
+@pytest.mark.anyio("asyncio")
+async def test_reap_skips_recently_touched_session(
+    stub_launch_browser: list["_StubBrowserHandle"],
+) -> None:
+    """Touching a session should postpone its idle deadline for reaper runs."""
+
+    clock = _StubClock(datetime(2024, 8, 8, 12, 0, 0, tzinfo=UTC))
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-skip", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        clock=clock,
+    )
+    session = await manager.create_session(
+        SessionCreatePayload(idle_ttl_seconds=40)
+    )
+
+    clock.advance(20)
+    assert await manager.reap_expired_sessions() == 0
+    metrics = await manager.get_metrics()
+    expected_expiry = session.last_seen_at + timedelta(seconds=40)
+    assert metrics.next_idle_expiry_at == expected_expiry
+
+    clock.advance(5)
+    touched = await manager.touch_session(session.id)
+    clock.advance(10)
+    assert await manager.reap_expired_sessions() == 0
+    metrics_after_touch = await manager.get_metrics()
+    assert metrics_after_touch.reaper_total_runs == 2
+    assert metrics_after_touch.reaper_expired_sessions == 0
+    assert (
+        metrics_after_touch.next_idle_expiry_at
+        == touched.last_seen_at + timedelta(seconds=40)
+    )
+
+
 class _StubBrowserHandle:
     """Test double mimicking :class:`BrowserSessionHandle`."""
 
@@ -248,6 +348,23 @@ class _StubBrowserHandle:
         """Record shutdown invocations for assertions."""
 
         self.shutdown_calls.append({"force": force, "timeout": timeout})
+
+
+class _StubClock:
+    """Mutable clock fixture to deterministically advance time in tests."""
+
+    def __init__(self, start: datetime) -> None:
+        self._now = start
+
+    def advance(self, seconds: float) -> None:
+        """Advance the current time by ``seconds`` in place."""
+
+        self._now += timedelta(seconds=seconds)
+
+    def __call__(self) -> datetime:
+        """Return the current timestamp."""
+
+        return self._now
 
 
 @pytest.mark.anyio("asyncio")

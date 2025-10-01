@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import anyio
+from anyio.abc import TaskGroup
 from core.models import (
     Session,
     SessionEvent,
@@ -83,14 +84,22 @@ class SessionManagerMetrics(BaseModel):
         active_sessions: Number of sessions that are not in the ``DEAD`` state.
         prewarm_failures: Ordered list of recorded prewarm failure messages.
         last_prewarm_error: Most recent prewarm failure message, if any.
+        next_idle_expiry_at: Timestamp for the soonest idle timeout, if any.
+        reaper_total_runs: Number of times the idle reaper executed.
+        reaper_expired_sessions: Cumulative count of sessions ended by the
+            idle reaper.
+        reaper_last_run_at: Timestamp of the most recent reaper execution.
 
     Example:
         >>> SessionManagerMetrics(
         ...     active_sessions=1,
         ...     prewarm_failures=["boom"],
         ...     last_prewarm_error="boom",
+        ...     next_idle_expiry_at=datetime.now(datetime.UTC),
+        ...     reaper_total_runs=2,
+        ...     reaper_expired_sessions=1,
         ... )
-        SessionManagerMetrics(active_sessions=1, prewarm_failures=['boom'], last_prewarm_error='boom')
+        SessionManagerMetrics(active_sessions=1, prewarm_failures=['boom'], last_prewarm_error='boom', ...)
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -98,6 +107,10 @@ class SessionManagerMetrics(BaseModel):
     active_sessions: int = Field(default=0, ge=0)
     prewarm_failures: list[str] = Field(default_factory=list)
     last_prewarm_error: str | None = Field(default=None)
+    next_idle_expiry_at: datetime | None = Field(default=None)
+    reaper_total_runs: int = Field(default=0, ge=0)
+    reaper_expired_sessions: int = Field(default=0, ge=0)
+    reaper_last_run_at: datetime | None = Field(default=None)
 
     @property
     def prewarm_failure_count(self) -> int:
@@ -107,13 +120,20 @@ class SessionManagerMetrics(BaseModel):
 
 
 class SessionManager:
-    """Manage session lifecycle and publish events for downstream consumers."""
+    """Manage session lifecycle and publish events for downstream consumers.
+
+    The manager tracks sessions in-memory, publishes lifecycle events, and
+    optionally runs a background reaper that enforces idle timeouts. The reaper
+    interval is configurable via ``reaper_interval_seconds`` to ease testing.
+    """
 
     def __init__(
         self,
         settings: RunnerSettings,
         event_publisher: SessionEventPublisher,
         clock: Callable[[], datetime] | None = None,
+        *,
+        reaper_interval_seconds: float = 1.0,
     ) -> None:
         self._settings = settings
         self._publisher = event_publisher
@@ -126,6 +146,12 @@ class SessionManager:
         )
         self._last_prewarm_error: str | None = None
         self._browser_handles: dict[UUID, BrowserSessionHandle] = {}
+        self._next_idle_expiry_at: datetime | None = None
+        self._reaper_total_runs = 0
+        self._reaper_expired_sessions = 0
+        self._reaper_last_run_at: datetime | None = None
+        self._reaper_interval = max(0.1, float(reaper_interval_seconds))
+        self._reaper_task_group: TaskGroup | None = None
 
     async def create_session(self, payload: SessionCreatePayload) -> Session:
         """Create, persist, and broadcast a new session object."""
@@ -180,6 +206,7 @@ class SessionManager:
                 raise
             self._sessions[session_id] = session
             self._browser_handles[session_id] = browser_handle
+            self._recalculate_next_idle_expiry_locked()
             if session.status is not SessionStatus.DEAD:
                 self._active_sessions += 1
             await self._publish(session, SessionEventType.CREATED, reason=None)
@@ -217,6 +244,7 @@ class SessionManager:
             session = existing.model_copy(update=update_data, deep=True)
             self._sessions[session_id] = session
             self._recalculate_active_sessions(existing.status, session.status)
+            self._recalculate_next_idle_expiry_locked()
             if self._should_cleanup_browser(existing, session):
                 await self._shutdown_browser(
                     session_id, force=session.status is SessionStatus.DEAD
@@ -283,11 +311,108 @@ class SessionManager:
             active_sessions = self._active_sessions
             failures = list(self._prewarm_failures)
             last_error = self._last_prewarm_error
+            next_idle_expiry = self._next_idle_expiry_at
+            reaper_total_runs = self._reaper_total_runs
+            reaper_expired_sessions = self._reaper_expired_sessions
+            reaper_last_run = self._reaper_last_run_at
         return SessionManagerMetrics(
             active_sessions=active_sessions,
             prewarm_failures=failures,
             last_prewarm_error=last_error,
+            next_idle_expiry_at=next_idle_expiry,
+            reaper_total_runs=reaper_total_runs,
+            reaper_expired_sessions=reaper_expired_sessions,
+            reaper_last_run_at=reaper_last_run,
         )
+
+    async def touch_session(self, session_id: UUID) -> Session:
+        """Refresh the ``last_seen_at`` timestamp to keep the session alive.
+
+        Args:
+            session_id: Identifier of the session to update.
+
+        Returns:
+            Session: Updated session snapshot reflecting the new heartbeat.
+
+        Example:
+            >>> await manager.touch_session(session_id)  # doctest: +SKIP
+        """
+
+        return await self.update_session(
+            session_id, SessionUpdatePayload(last_seen_at=self._clock())
+        )
+
+    async def reap_expired_sessions(self) -> int:
+        """End sessions that exceeded their idle TTL and return the count.
+
+        Returns:
+            int: Number of sessions transitioned to ``DEAD`` during the sweep.
+
+        Example:
+            >>> await manager.reap_expired_sessions()  # doctest: +SKIP
+        """
+
+        now = self._clock()
+        async with self._lock:
+            expired_ids: list[UUID] = []
+            next_expiry: datetime | None = None
+            for session in self._sessions.values():
+                if session.status is SessionStatus.DEAD:
+                    continue
+                candidate = session.last_seen_at + timedelta(
+                    seconds=session.idle_ttl_seconds
+                )
+                if candidate <= now:
+                    expired_ids.append(session.id)
+                    continue
+                if next_expiry is None or candidate < next_expiry:
+                    next_expiry = candidate
+            self._next_idle_expiry_at = next_expiry
+            self._reaper_total_runs += 1
+            self._reaper_last_run_at = now
+        expired = 0
+        for session_id in expired_ids:
+            try:
+                await self.end_session(
+                    session_id,
+                    reason="idle-timeout",
+                    ended_at=now,
+                )
+            except SessionNotFoundError:  # pragma: no cover - defensive guard
+                continue
+            expired += 1
+        if expired:
+            async with self._lock:
+                self._reaper_expired_sessions += expired
+        return expired
+
+    async def start(self) -> None:
+        """Start the background idle reaper task if not already running.
+
+        Example:
+            >>> await manager.start()  # doctest: +SKIP
+        """
+
+        async with self._lock:
+            if self._reaper_task_group is not None:
+                return
+            task_group = anyio.create_task_group()
+            await task_group.__aenter__()
+            task_group.start_soon(self._reaper_loop)
+            self._reaper_task_group = task_group
+
+    async def stop(self) -> None:
+        """Stop the background idle reaper task if it is running.
+
+        Example:
+            >>> await manager.stop()  # doctest: +SKIP
+        """
+
+        async with self._lock:
+            task_group = self._reaper_task_group
+            self._reaper_task_group = None
+        if task_group is not None:
+            await task_group.__aexit__(None, None, None)
 
     def _resolve_vnc(
         self,
@@ -346,6 +471,24 @@ class SessionManager:
             self._active_sessions = max(0, self._active_sessions - 1)
         elif not was_active and is_active:
             self._active_sessions += 1
+
+    def _recalculate_next_idle_expiry_locked(self) -> None:
+        """Recompute the nearest idle expiry using the current session map.
+
+        Example:
+            >>> manager._recalculate_next_idle_expiry_locked()  # doctest: +SKIP
+        """
+
+        next_expiry: datetime | None = None
+        for session in self._sessions.values():
+            if session.status is SessionStatus.DEAD:
+                continue
+            candidate = session.last_seen_at + timedelta(
+                seconds=session.idle_ttl_seconds
+            )
+            if next_expiry is None or candidate < next_expiry:
+                next_expiry = candidate
+        self._next_idle_expiry_at = next_expiry
 
     async def _publish(
         self,
@@ -409,6 +552,21 @@ class SessionManager:
         if handle is None:
             return
         await handle.shutdown(force=force)
+
+
+    async def _reaper_loop(self) -> None:
+        """Background coroutine periodically reaping idle sessions.
+
+        Example:
+            >>> await manager._reaper_loop()  # doctest: +SKIP
+        """
+
+        try:
+            while True:
+                await anyio.sleep(self._reaper_interval)
+                await self.reap_expired_sessions()
+        except BaseException:  # pragma: no cover - cancellation/propagation
+            raise
 
 
 __all__ = [

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -53,6 +54,25 @@ RunnerSettingsDep = Annotated[RunnerSettings, Depends(get_runner_settings)]
 SessionManagerDep = Annotated[SessionManager, Depends(get_session_manager)]
 
 
+def _isoformat_or_none(value: datetime | None) -> str | None:
+    """Return an ISO formatted timestamp or ``None`` when absent.
+
+    Args:
+        value: Timestamp sourced from metrics.
+
+    Returns:
+        str | None: ISO-8601 representation or ``None``.
+
+    Example:
+        >>> _isoformat_or_none(datetime(2024, 1, 1))
+        '2024-01-01T00:00:00'
+    """
+
+    if value is None:
+        return None
+    return value.isoformat()
+
+
 @app.get("/health", summary="Runner health probe")
 async def health(
     settings: RunnerSettingsDep, manager: SessionManagerDep
@@ -86,6 +106,14 @@ async def health(
         "prewarm": {
             "failures": metrics.prewarm_failure_count,
             "last_error": metrics.last_prewarm_error,
+        },
+        "ttl": {
+            "next_expiry_at": _isoformat_or_none(metrics.next_idle_expiry_at),
+            "reaper": {
+                "total_runs": metrics.reaper_total_runs,
+                "expired_sessions": metrics.reaper_expired_sessions,
+                "last_run_at": _isoformat_or_none(metrics.reaper_last_run_at),
+            },
         },
     }
 
@@ -122,6 +150,23 @@ async def update_session(
         ) from exc
 
 
+@app.post(
+    "/sessions/{session_id}/touch",
+    response_model=Session,
+    summary="Touch a session",
+)
+async def touch_session(session_id: UUID, manager: SessionManagerDep) -> Session:
+    """Refresh the heartbeat for ``session_id`` to extend its idle TTL."""
+
+    try:
+        return await manager.touch_session(session_id)
+    except SessionNotFoundError as exc:  # pragma: no cover - defensive branch
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="session not found",
+        ) from exc
+
+
 @app.delete("/sessions/{session_id}", response_model=Session, summary="Terminate a session")
 async def delete_session(
     session_id: UUID,
@@ -136,6 +181,20 @@ async def delete_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="session not found",
         ) from exc
+
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    """Initialise background services such as the idle reaper."""
+
+    await get_session_manager().start()
+
+
+@app.on_event("shutdown")
+async def _on_shutdown() -> None:
+    """Tear down background tasks before process exit."""
+
+    await get_session_manager().stop()
 
 
 __all__ = ["app"]
