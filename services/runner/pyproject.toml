@@ -2,7 +2,7 @@
 name = "camou-runner"
 version = "0.1.0"
 description = "Ghost-browsers Session Runner (to be implemented)"
-packages = []
+packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
