@@ -9,10 +9,10 @@ interface SessionToolbarProps {
 
 const statusOptions: { readonly value: SessionStatusFilter; readonly label: string }[] = [
   { value: 'all', label: 'Все' },
-  { value: 'pending', label: 'Ожидают' },
-  { value: 'active', label: 'Активные' },
-  { value: 'failed', label: 'Ошибка' },
-  { value: 'completed', label: 'Готовые' },
+  { value: 'INIT', label: 'Инициализация' },
+  { value: 'READY', label: 'Готовы' },
+  { value: 'TERMINATING', label: 'Завершаются' },
+  { value: 'DEAD', label: 'Завершены' },
 ];
 
 /**
@@ -24,15 +24,19 @@ export function SessionToolbar({ sessions, onCreate }: SessionToolbarProps): JSX
 
   const regionOptions = useMemo(() => {
     const unique = new Set<string>();
-    sessions.forEach((session) => unique.add(session.region));
+    sessions.forEach((session) => {
+      if (session.region) {
+        unique.add(session.region);
+      }
+    });
     return Array.from(unique.values());
   }, [sessions]);
 
   const proxyOptions = useMemo(() => {
     const unique = new Map<string, string>();
     sessions.forEach((session) => {
-      if (session.proxy) {
-        unique.set(session.proxy.id, session.proxy.label);
+      if (session.proxyId) {
+        unique.set(session.proxyId, session.proxyLabel ?? session.proxyId);
       }
     });
     return Array.from(unique.entries());

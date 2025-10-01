@@ -16,7 +16,7 @@ describe('useSessionFilters', () => {
 
   it('resets to initial values', () => {
     const { setStatus, setRegion, setProxyId, reset } = getState();
-    setStatus('active');
+    setStatus('READY');
     setRegion('eu');
     setProxyId('proxy-1');
     reset();

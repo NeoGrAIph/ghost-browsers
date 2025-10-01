@@ -9,7 +9,9 @@
 - **VNC**: встраивание внешнего URL `session.vncUrl` в `iframe`.
 
 ## Data & Models
-- `Session`/`SessionEvent` описаны в `types/session.ts` (Zod схемы).
+- `Session`/`SessionEvent` описаны в `types/session.ts` (Zod схемы) и адаптеры `adaptSession*`
+  нормализуют snake_case FastAPI payload в camelCase модель UI (добавляют `region`,
+  `proxyId`, `proxyLabel`, `snapshotUrl`).
 - Состояние фильтров в `store/sessionFilters.ts` (Zustand).
 
 ## Decisions
@@ -37,3 +39,6 @@
 
 ## Changelog (for agents)
 - 2024-09-08 · gpt-5-codex · Начальная реализация консоли: авторизация, список/детали сессий, создание/удаление, SSE, темы, базовые тесты.
+- 2024-09-09 · gpt-5-codex · Перешли на модели core.Session/core.SessionEvent: адаптеры в
+  `types/session.ts`, хранение списка сессий напрямую в React Query, обновлены фильтры,
+  компоненты и тесты под статусы `INIT/READY/TERMINATING/DEAD`.
