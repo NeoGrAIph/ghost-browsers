@@ -10,6 +10,8 @@ Keycloak-protected endpoints.
 | Variable            | Description                                                        |
 | ------------------- | ------------------------------------------------------------------ |
 | `DISCOVERY_MODE`    | Runner discovery strategy (`static` by default).                   |
+| `DISCOVERY_ENDPOINT` | HTTP endpoint returning the runner catalog when using `http` discovery. |
+| `DISCOVERY_POLL_INTERVAL_SEC` | Interval between discovery and health maintenance iterations (default `10`). |
 | `RUNNERS`           | JSON-массив с объектами `Runner` (см. `packages/core`).            |
 | `JWT_JWKS_URL`      | URL JWKS-документа Keycloak.                                       |
 | `VNC_TOKEN_TTL_SEC` | Время жизни VNC JWT (≤300 секунд).                                 |

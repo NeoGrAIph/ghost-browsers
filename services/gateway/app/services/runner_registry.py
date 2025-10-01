@@ -227,6 +227,45 @@ class RunnerRegistry:
         async with self._lock:
             self._session_ws_bindings.pop(session_id, None)
 
+    async def remove(self, runner_id: str) -> Runner | None:
+        """Delete a runner entry and clear associated WebSocket bindings.
+
+        Args:
+            runner_id: Identifier of the runner that should be removed from the
+                registry.
+
+        Returns:
+            Optional[Runner]: Snapshot of the removed runner or ``None`` when
+            the identifier is unknown.
+
+        Example:
+            >>> registry = RunnerRegistry()  # doctest: +SKIP
+            >>> await registry.remove("runner-1")  # doctest: +SKIP
+        """
+
+        async with self._lock:
+            runner = self._runners.pop(runner_id, None)
+            if runner is None:
+                return None
+
+            try:
+                self._order.remove(runner_id)
+            except ValueError:  # pragma: no cover - defensive guard
+                pass
+
+            total = len(self._order)
+            self._cursor = self._cursor % max(total, 1)
+
+            stale_session_ids = [
+                session_id
+                for session_id, binding in self._session_ws_bindings.items()
+                if binding.runner_id == runner_id
+            ]
+            for session_id in stale_session_ids:
+                self._session_ws_bindings.pop(session_id, None)
+
+            return runner
+
     async def select_next(
         self,
         *,
