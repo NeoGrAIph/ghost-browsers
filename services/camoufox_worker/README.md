@@ -37,6 +37,7 @@ python -m worker.main run --mode=native --url=https://example.com
 | `WORKER_GATEWAY_URL` | Алиас `GATEWAY_URL` для orchestrator | — |
 | `WORKER_GATEWAY_TOKEN` | Алиас `GATEWAY_TOKEN` для orchestrator | — |
 | `WORKER_EXTRA_ARGS` | Дополнительные флаги CLI (строка) | — |
+| `WORKER_PROFILE_TOGGLES` | Тумблеры профиля Camoufox (`key=value,key2=value2`) | — |
 
 Примеры запуска:
 
@@ -58,3 +59,59 @@ docker run --rm \
   -e WORKER_GATEWAY_TOKEN=secret-token \
   ghcr.io/<org>/camoufox-worker:latest
 ```
+
+## Queue Consumer & Metrics
+
+Модуль `worker.queue` реализует асинхронный консьюмер задач, совместимый с
+Redis Streams, AMQP (RabbitMQ) и встроенным in-memory backend для тестов. Он
+получает сообщения, описанные моделью `JobQueueMessage`, и делегирует их
+исполнителям нативного и orchestrator-режима. Дополнительно включены:
+
+- **Ретраи и идемпотентность.** Сообщение содержит `max_attempts` и
+  `idempotency_key`; при успехе повторные доставки с тем же ключом
+  игнорируются.
+- **Prometheus-метрики.** Экспортируются счётчики/гистограммы
+  (`camoufox_worker_job_*`, `camoufox_worker_queue_depth`).
+- **Структурированные логи.** События (`job_received`, `job_retry` и др.)
+  сериализуются в JSON.
+
+### Пример конфигурации Redis Streams
+
+```python
+import asyncio
+from worker.queue import (
+    JobQueueConsumer,
+    JobQueueMessage,
+    create_redis_backend,
+    default_native_executor,
+    default_orchestrator_executor,
+    load_default_profile_toggles,
+)
+
+
+async def main() -> None:
+    backend = await create_redis_backend(
+        redis_dsn="redis://localhost:6379/0",
+        stream_name="camoufox-jobs",
+        group="workers",
+        consumer_name="worker-1",
+    )
+    consumer = JobQueueConsumer(
+        backend,
+        native_executor=default_native_executor,
+        orchestrator_executor=default_orchestrator_executor,
+        default_profile_toggles=load_default_profile_toggles(),
+    )
+    await consumer.run()
+
+
+asyncio.run(main())
+```
+
+### Профильные тумблеры
+
+Тумблеры можно задавать глобально через `WORKER_PROFILE_TOGGLES` (например,
+`headless=virtual,trace=0`) и/или в сообщении очереди (`profile_toggles`). При
+выполнении задачи они прокидываются в окружение под именами
+`CAMOUFOX_TUMBLER_<KEY>`, что позволяет тонко настраивать поведение браузера
+без изменения кода.
