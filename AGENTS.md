@@ -101,4 +101,14 @@ make check
 * Агент **дополняет** и **не переписывает историю**; для закрытых TODO ставим галочку и ссылку на PR/коммит.
 * Каждая нестандартная конструкция в коде должна быть отражена в `AGENT_NOTES.md` (раздел *Decisions* или *Constraints*).
 
+## Camoufox — проверка и правила
+
+* Перед PR и в CI дополнительно выполняй:
+
+```bash
+python -m camoufox path
+python -m camoufox version
 ```
+
+* В рантайме контейнера **запрещено** вызывать `python -m camoufox fetch`.
+* Headless по умолчанию: `CAMOUFOX_HEADLESS=virtual`.

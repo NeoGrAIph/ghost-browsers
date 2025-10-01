@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "camou-gateway"
 version = "0.1.0"
-description = "ghost-browsers Gateway (to be implemented)"
+description = "Ghost-browsers Gateway (to be implemented)"
 packages = []
 
 [tool.poetry.dependencies]

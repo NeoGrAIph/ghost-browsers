@@ -13,9 +13,11 @@
 - `HTTP_PROXY`, `HTTPS_PROXY`, `SOCKS_PROXY` — индивидуальные прокси
 - `START_URL`, `START_URL_WAIT_MS`, `WARMUP`
 - `BROWSER_PREFS_PATH` — путь к «тумблерам» (ConfigMap/Secret)
+- `CAMOUFOX_HEADLESS=virtual` (по умолчанию)
+- (Опционально) `XDG_CACHE_HOME` — общий кэш, если потребуется
 
 ## VNC Gateway
 - `GATEWAY_URL` — базовый URL для валидации токенов
 - `CONNECT_TIMEOUT_MS`
 
-> Секреты не хранятся в VCS. Используйте `.env` локально и Secret/ExternalSecret в k8s.
+> Секреты не хранятся в VCS. Используйте `.env` локально и Secret в k3s.

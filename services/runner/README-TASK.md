@@ -1,12 +1,12 @@
-# Задание: Runner (FastAPI + Playwright/Firefox)
+# Задание: Runner (FastAPI + Camoufox/Playwright)
 
 ## Цель
 Управлять жизненным циклом браузерных сессий; публиковать события жизненного цикла в Gateway.
 
 ## Требования
-- Памятный менеджер сессий; health-эндпоинт (слот, VNC, прокси, ошибки prewarm).
+- Памятный менеджер сессий; health (слот, VNC, прокси, ошибки prewarm, `camoufox_path`).
 - Поддержка HTTP/SOCKS прокси на сессию; `start_url`, `start_url_wait`, warmup.
-- noVNC/websockify интеграция; приём «тумблеров» браузера из смонтированного каталога.
+- noVNC/websockify интеграция; «тумблеры» браузера из смонтированного каталога.
 - События: `session.created|updated|ended` в сторону Gateway (WS/SSE/HTTP заглушка).
 
 ## Качество
