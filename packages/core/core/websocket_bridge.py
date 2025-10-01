@@ -1,9 +1,17 @@
-"""Asynchronous utilities for propagating session events via WebSockets.
+"""Bridging asynchronous session events between runners and UI clients.
 
-The real gateway will bridge events from runners to UI subscribers using
-Redis streams or another broker. This module defines the abstract API
-and provides an in-memory implementation that is suitable for unit tests
-and local development.
+The production gateway persists events published by runners to a durable
+transport (Redis or Kafka) and fans them out to UI subscribers.  The
+abstractions in this module capture that contract while keeping the core
+package independent from infrastructure choices.  An in-memory
+implementation is shipped for unit tests and local development.
+
+Example:
+    >>> bridge = InMemorySessionEventBridge()
+    >>> async def consumer() -> None:
+    ...     async for event in await bridge.subscribe(replay_latest=True):
+    ...         print(event.session.id)
+    >>> # Producers publish events that are delivered to all subscribers.
 """
 
 from __future__ import annotations

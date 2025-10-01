@@ -56,6 +56,9 @@
 - Тесты: `poetry run pytest -q`
 
 ## Changelog (for agents)
+- 2025-02-15 · ChatGPT — Добавлен README пакета, исправлен модульный docstring
+  моста событий, расширены тестовые docstring'и и обновлено описание в
+  `pyproject.toml`.
 - 2025-02-14 · ChatGPT — Уточнены docstring’и валидаторов, добавлен модульный
   docstring для тестов; функциональное поведение не изменено.
 - 2025-10-02 · ChatGPT — Согласованы поля с beta-веткой: статусы `INIT→DEAD`, `StartUrlWait`,

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "camou-core"
 version = "0.1.0"
-description = "Shared models and utilities (to be implemented)"
+description = "Shared Camoufox contract models and developer utilities"
 packages = [{ include = "core" }]
 
 [tool.poetry.dependencies]

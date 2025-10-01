@@ -3,7 +3,9 @@
 The suite validates structural invariants, serialisation behaviour and
 the in-memory WebSocket bridge used for local development. Each test
 focuses on a specific contract to surface regressions quickly for
-services that depend on the core package.
+services that depend on the core package. The docstrings describe
+expected semantics so that failing tests act as executable documentation
+for downstream services.
 """
 
 from __future__ import annotations
@@ -29,7 +31,20 @@ from pydantic import ValidationError
 
 
 def build_session(**overrides) -> Session:
-    """Helper to build a session with sensible defaults for tests."""
+    """Construct a :class:`Session` instance with predictable defaults.
+
+    Args:
+        **overrides: Optional field overrides to apply to the default
+            payload.  Most tests supply timestamps or lifecycle states.
+
+    Returns:
+        Session: Fully-populated session object ready for assertions.
+
+    Example:
+        >>> session = build_session(status=SessionStatus.READY)
+        >>> session.status is SessionStatus.READY
+        True
+    """
 
     defaults = dict(overrides)
     now = datetime.now(tz=timezone.utc)
