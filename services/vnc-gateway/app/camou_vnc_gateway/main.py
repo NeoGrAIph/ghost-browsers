@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .config import Settings, get_settings
+from .dependencies import get_runner_proxy
 from .routes import router
 
 
@@ -17,6 +18,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.dependency_overrides[get_settings] = lambda: settings
 
     app.include_router(router)
+
+    @app.on_event("shutdown")
+    async def _shutdown_runner_proxy() -> None:  # pragma: no cover - FastAPI lifecycle hook
+        proxy = getattr(get_runner_proxy, "_instance", None)
+        if proxy is not None:
+            await proxy.aclose()
+
     return app
 
 

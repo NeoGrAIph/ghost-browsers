@@ -23,7 +23,9 @@ def get_token_validator(settings: SettingsDependency) -> TokenValidator:
 def get_runner_proxy(settings: SettingsDependency) -> RunnerProxy:
     """Instantiate a :class:`RunnerProxy` for forwarding traffic to Runner."""
 
-    return RunnerProxy(settings=settings)
+    if not hasattr(get_runner_proxy, "_instance"):
+        get_runner_proxy._instance = RunnerProxy(settings=settings)  # type: ignore[attr-defined]
+    return get_runner_proxy._instance  # type: ignore[attr-defined]
 
 
 def get_connection_registry() -> ConnectionRegistry:

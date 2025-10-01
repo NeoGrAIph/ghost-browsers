@@ -17,14 +17,14 @@ for path in (REPO_ROOT, GATEWAY_APP_ROOT, CORE_PACKAGE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from camou_vnc_gateway.config import Settings
-from camou_vnc_gateway.dependencies import get_runner_proxy, get_token_validator
-from camou_vnc_gateway.main import create_app
-from camou_vnc_gateway.token import TokenValidationError, TokenValidator
-from fastapi import Request
-from fastapi.testclient import TestClient
-from jose import jwt
-from security.vnc import VncTokenService
+from camou_vnc_gateway.config import Settings  # noqa: E402
+from camou_vnc_gateway.dependencies import get_runner_proxy, get_token_validator  # noqa: E402
+from camou_vnc_gateway.main import create_app  # noqa: E402
+from camou_vnc_gateway.token import TokenValidationError, TokenValidator  # noqa: E402
+from fastapi import Request  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from jose import jwt  # noqa: E402
+from security.vnc import VncTokenService  # noqa: E402
 
 
 class DummyRunnerProxy:
@@ -86,7 +86,9 @@ def test_token_validator_success(validator: TokenValidator, token_service: VncTo
     validator.validate(session_id, token)
 
 
-def test_token_validator_rejects_invalid_signature(validator: TokenValidator, token_service: VncTokenService) -> None:
+def test_token_validator_rejects_invalid_signature(
+    validator: TokenValidator, token_service: VncTokenService
+) -> None:
     """Validation fails when the signature portion is invalid."""
 
     session_id = "abc"
@@ -96,7 +98,9 @@ def test_token_validator_rejects_invalid_signature(validator: TokenValidator, to
         validator.validate(session_id, token)
 
 
-def test_token_validator_rejects_wrong_session(validator: TokenValidator, token_service: VncTokenService) -> None:
+def test_token_validator_rejects_wrong_session(
+    validator: TokenValidator, token_service: VncTokenService
+) -> None:
     """Tokens scoped to another session are rejected."""
 
     token, _ = token_service.issue("session-a")
@@ -104,7 +108,9 @@ def test_token_validator_rejects_wrong_session(validator: TokenValidator, token_
         validator.validate("session-b", token)
 
 
-def test_token_validator_rejects_expired_token(validator: TokenValidator, settings: Settings) -> None:
+def test_token_validator_rejects_expired_token(
+    validator: TokenValidator, settings: Settings
+) -> None:
     """Expired JWT tokens are rejected."""
 
     expired_at = datetime.now(tz=UTC) - timedelta(seconds=5)

@@ -14,9 +14,10 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 ## Decisions
 - Токены — стандартные HS256 JWT; валидация выполняется через `python-jose` с проверкой `iss`, `exp` и `sid`.
 - Connection metrics backed by in-memory `ConnectionRegistry` with async context manager; logs `connection.started/finished` events.
-- WebSocket proxy implemented via `websockets` library using two relay tasks; HTTP proxy uses `httpx.AsyncClient` streaming API.
+- WebSocket proxy implemented via `websockets` library using two relay tasks; HTTP proxy leverages a shared `httpx.AsyncClient` for outbound requests.
 - Dependency wiring relies on `typing.Annotated` wrappers to avoid Ruff `B008` violations while keeping FastAPI semantics.
 - Tests inject stubbed `RunnerProxy` via dependency overrides; `tests/conftest.py` adjusts `sys.path` instead of installing the package.
+- Runner proxy keeps a singleton `httpx.AsyncClient` and resolves `target_port` from query/referer/cookie (persisting it via `vnc-target-port` cookie) to build Runner URLs with configurable prefixes, mirroring the upstream beta implementation. WebSocket relaying now mirrors the production gateway behaviour with `FIRST_EXCEPTION` waiting semantics and graceful close codes (1008/1011).
 
 ## Constraints & Invariants
 - Tokens must include the matching session identifier; mismatches immediately rejected.
@@ -39,3 +40,4 @@ poetry run pytest -q
 ## Changelog (for agents)
 - 2025-02-14 · gpt-5-codex · Initial FastAPI service implementation with token validator, proxy wiring, and unit tests.
 - 2025-10-03 · gpt-5-codex · Переведён валидатор на HS256 JWT и синхронизирован с Gateway `VncTokenService`.
+- 2025-10-06 · gpt-5-codex · Синхронизирован HTTP/WS-прокси с beta-референсом: общий `httpx.AsyncClient`, выбор `target_port` из query/referer/cookie с cookie-фолбэком, обновлённая двунаправленная WebSocket-переадресация и unit-тесты на таргет-порт хелперы.
