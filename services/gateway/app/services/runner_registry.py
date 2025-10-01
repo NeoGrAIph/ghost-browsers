@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
+from uuid import UUID
 
 from core import Runner
 
@@ -17,8 +19,19 @@ class RunnerRegistry:
     operations it maintains a rotation cursor that enables callers to iterate
     over runners in a round-robin fashion while applying health or capability
     filters. This keeps the gateway scheduling logic straightforward without
-    leaking concurrency primitives to the routing layer.
+    leaking concurrency primitives to the routing layer. The registry also
+    tracks the relationship between sessions and their runner-facing WebSocket
+    endpoints so routers can expose stable public URLs while keeping the
+    internal Playwright endpoints private.
     """
+
+    @dataclass(slots=True)
+    class _SessionWebSocketBinding:
+        """Mapping of a session identifier to its WebSocket endpoints."""
+
+        runner_id: str
+        target: str
+        public: str
 
     def __init__(self, runners: Iterable[Runner] | None = None) -> None:
         """Populate the registry with optional initial runners.
@@ -37,6 +50,8 @@ class RunnerRegistry:
                 self._runners[runner.id] = runner
                 self._order.append(runner.id)
         self._lock = asyncio.Lock()
+        self._session_ws_template = "/sessions/{id}/ws"
+        self._session_ws_bindings: dict[UUID, RunnerRegistry._SessionWebSocketBinding] = {}
 
     async def list(self) -> list[Runner]:
         """Return a snapshot of all known runners."""
@@ -67,6 +82,150 @@ class RunnerRegistry:
 
         async with self._lock:
             return self._runners.get(runner_id)
+
+    async def set_session_ws_template(self, template: str) -> None:
+        """Define the public template used to expose session WebSocket paths.
+
+        Args:
+            template: Template string interpolated with ``id`` representing the
+                session identifier. The value must contain the ``{id}``
+                placeholder so callers can derive unique public endpoints.
+
+        Example:
+            >>> registry = RunnerRegistry()
+            >>> await registry.set_session_ws_template("/custom/{id}/ws")
+        """
+
+        if "{id}" not in template:
+            raise ValueError("template must include {id} placeholder")
+        async with self._lock:
+            self._session_ws_template = template
+
+    async def register_session_ws_endpoint(
+        self,
+        session_id: UUID,
+        *,
+        runner_id: str,
+        target: str | None,
+    ) -> str | None:
+        """Persist the upstream WebSocket endpoint for ``session_id``.
+
+        Args:
+            session_id: Identifier of the session whose endpoint is being
+                recorded.
+            runner_id: Runner responsible for hosting the session. Stored for
+                diagnostic purposes to ease future lookups.
+            target: Absolute WebSocket URL exposed by the runner. ``None``
+                removes any existing binding and signals that the session no
+                longer exposes a control endpoint.
+
+        Returns:
+            str | None: Public URL rendered from the configured template or
+            ``None`` when the target endpoint is missing.
+
+        Example:
+            >>> registry = RunnerRegistry()
+            >>> session_public = await registry.register_session_ws_endpoint(  # doctest: +SKIP
+            ...     UUID("00000000-0000-0000-0000-000000000001"),
+            ...     runner_id="runner-1",
+            ...     target="ws://runner-1/playwright/1",
+            ... )
+            >>> session_public
+            '/sessions/00000000-0000-0000-0000-000000000001/ws'
+        """
+
+        async with self._lock:
+            if not target:
+                self._session_ws_bindings.pop(session_id, None)
+                return None
+
+            public = self._session_ws_template.format(id=session_id)
+            self._session_ws_bindings[session_id] = self._SessionWebSocketBinding(
+                runner_id=runner_id,
+                target=target,
+                public=public,
+            )
+            return public
+
+    async def resolve_session_ws_target(self, session_id: UUID) -> str | None:
+        """Return the runner-facing WebSocket endpoint for ``session_id``.
+
+        Args:
+            session_id: Identifier used to look up the stored binding.
+
+        Returns:
+            str | None: Absolute WebSocket URL exposed by the runner or
+            ``None`` when the binding is unknown.
+
+        Example:
+            >>> registry = RunnerRegistry()
+            >>> await registry.register_session_ws_endpoint(  # doctest: +SKIP
+            ...     UUID("00000000-0000-0000-0000-000000000001"),
+            ...     runner_id="runner-1",
+            ...     target="ws://runner-1/playwright/1",
+            ... )
+            >>> await registry.resolve_session_ws_target(  # doctest: +SKIP
+            ...     UUID("00000000-0000-0000-0000-000000000001")
+            ... )
+            'ws://runner-1/playwright/1'
+        """
+
+        async with self._lock:
+            binding = self._session_ws_bindings.get(session_id)
+            if binding is None:
+                return None
+            return binding.target
+
+    async def resolve_session_ws_public(self, session_id: UUID) -> str | None:
+        """Return the public WebSocket URL assigned to ``session_id``.
+
+        Args:
+            session_id: Session identifier used to look up the cached public
+                endpoint.
+
+        Returns:
+            str | None: Public-facing WebSocket URL exposed by the gateway or
+            ``None`` when no mapping exists.
+
+        Example:
+            >>> registry = RunnerRegistry()
+            >>> await registry.register_session_ws_endpoint(  # doctest: +SKIP
+            ...     UUID("00000000-0000-0000-0000-000000000001"),
+            ...     runner_id="runner-1",
+            ...     target="ws://runner-1/playwright/1",
+            ... )
+            >>> await registry.resolve_session_ws_public(  # doctest: +SKIP
+            ...     UUID("00000000-0000-0000-0000-000000000001")
+            ... )
+            '/sessions/00000000-0000-0000-0000-000000000001/ws'
+        """
+
+        async with self._lock:
+            binding = self._session_ws_bindings.get(session_id)
+            if binding is None:
+                return None
+            return binding.public
+
+    async def drop_session_ws_endpoint(self, session_id: UUID) -> None:
+        """Remove stored WebSocket metadata for ``session_id``.
+
+        Args:
+            session_id: Identifier for which the binding should be removed.
+
+        Example:
+            >>> registry = RunnerRegistry()
+            >>> await registry.register_session_ws_endpoint(  # doctest: +SKIP
+            ...     UUID("00000000-0000-0000-0000-000000000001"),
+            ...     runner_id="runner-1",
+            ...     target="ws://runner-1/playwright/1",
+            ... )
+            >>> await registry.drop_session_ws_endpoint(  # doctest: +SKIP
+            ...     UUID("00000000-0000-0000-0000-000000000001")
+            ... )
+        """
+
+        async with self._lock:
+            self._session_ws_bindings.pop(session_id, None)
 
     async def select_next(
         self,

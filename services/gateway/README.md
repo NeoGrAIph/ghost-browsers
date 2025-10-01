@@ -22,6 +22,7 @@ Keycloak-protected endpoints.
 - `POST /sessions/{id}/proxy` — update proxy configuration (`SessionProxySettings`).
 - `POST /sessions/{id}/touch` — refresh `last_seen_at` heartbeat timestamp.
 - `DELETE /sessions/{id}` — remove a session from the registry.
+- `WS /sessions/{id}/ws` — authenticated WebSocket tunnel proxied to the runner's Playwright endpoint.
 - `GET /runners` — list known runners.
 - `GET /events` — Server-Sent Events stream of `SessionEvent` objects.
 - `WS /events/ws` — WebSocket stream with the same event payloads.

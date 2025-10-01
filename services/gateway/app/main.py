@@ -13,6 +13,7 @@ from .security import KeycloakAuthenticator, VncTokenService
 from .services.runner_client import RunnerCommandClient
 from .services.runner_health import RunnerHealthClient
 from .services.runner_registry import RunnerRegistry
+from .services.runner_ws_proxy import RunnerWebSocketProxy
 from .services.session_registry import SessionRegistry
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.authenticator = KeycloakAuthenticator(config.jwt_jwks_url)
     app.state.runner_client = RunnerCommandClient()
     app.state.runner_health_client = RunnerHealthClient()
+    app.state.runner_ws_proxy = RunnerWebSocketProxy()
 
     app.include_router(sessions_router)
     app.include_router(runners_router)

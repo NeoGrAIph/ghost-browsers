@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
+
 from core import Runner
 
 from app.services.runner_registry import RunnerRegistry
@@ -107,3 +109,35 @@ async def test_record_health_updates_snapshot() -> None:
     assert updated.total_slots == 4
     assert updated.available_slots == 3
     assert updated.supports_vnc is True
+
+
+@pytest.mark.anyio("asyncio")
+async def test_session_ws_binding_registration() -> None:
+    """RunnerRegistry stores runner and public endpoints for sessions."""
+
+    registry = RunnerRegistry(
+        [Runner(id="runner-1", base_url="http://runner-1", total_slots=1)]
+    )
+    session_id = UUID("00000000-0000-0000-0000-000000000001")
+
+    public = await registry.register_session_ws_endpoint(
+        session_id,
+        runner_id="runner-1",
+        target="ws://runner-1/playwright/1",
+    )
+    assert public == "/sessions/00000000-0000-0000-0000-000000000001/ws"
+    assert (
+        await registry.resolve_session_ws_target(session_id)
+        == "ws://runner-1/playwright/1"
+    )
+    assert (
+        await registry.resolve_session_ws_public(session_id)
+        == public
+    )
+
+    await registry.register_session_ws_endpoint(
+        session_id,
+        runner_id="runner-1",
+        target=None,
+    )
+    assert await registry.resolve_session_ws_target(session_id) is None

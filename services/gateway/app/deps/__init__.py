@@ -1,14 +1,16 @@
-"""Dependency providers for the FastAPI routers."""
+"""Dependency providers for gateway routers."""
 
 from __future__ import annotations
 
+from fastapi import Request, WebSocket
+
 from core import AbstractSessionEventBridge
-from fastapi import Request
 
 from ..security import VncTokenService
 from ..services.runner_client import RunnerCommandClient
 from ..services.runner_health import RunnerHealthClient
 from ..services.runner_registry import RunnerRegistry
+from ..services.runner_ws_proxy import RunnerWebSocketProxy
 from ..services.session_registry import SessionRegistry
 
 
@@ -46,3 +48,41 @@ def get_runner_health_client(request: Request) -> RunnerHealthClient:
     """Return the Runner health client configured on the application."""
 
     return request.app.state.runner_health_client  # type: ignore[attr-defined]
+
+
+def get_runner_ws_proxy(request: Request) -> RunnerWebSocketProxy:
+    """Return the WebSocket proxy responsible for runner control tunnels."""
+
+    return request.app.state.runner_ws_proxy  # type: ignore[attr-defined]
+
+
+def get_session_registry_ws(websocket: WebSocket) -> SessionRegistry:
+    """Return the session registry for WebSocket dependency injection."""
+
+    return websocket.app.state.session_registry  # type: ignore[attr-defined]
+
+
+def get_runner_registry_ws(websocket: WebSocket) -> RunnerRegistry:
+    """Return the runner registry for WebSocket dependency injection."""
+
+    return websocket.app.state.runner_registry  # type: ignore[attr-defined]
+
+
+def get_runner_ws_proxy_ws(websocket: WebSocket) -> RunnerWebSocketProxy:
+    """Return the WebSocket proxy when resolving dependencies on WS routes."""
+
+    return websocket.app.state.runner_ws_proxy  # type: ignore[attr-defined]
+
+
+__all__ = [
+    "get_session_registry",
+    "get_runner_registry",
+    "get_event_bridge",
+    "get_vnc_token_service",
+    "get_runner_command_client",
+    "get_runner_health_client",
+    "get_runner_ws_proxy",
+    "get_session_registry_ws",
+    "get_runner_registry_ws",
+    "get_runner_ws_proxy_ws",
+]
