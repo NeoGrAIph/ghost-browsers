@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { createUrl } from '../utils/url';
 
-describe('smoke', () => {
-  it('passes', () => {
-    expect(true).toBe(true);
+describe('url helpers', () => {
+  it('joins paths without duplicate slashes', () => {
+    expect(createUrl('http://localhost:8000/', '/sessions')).toBe('http://localhost:8000/sessions');
   });
 });
