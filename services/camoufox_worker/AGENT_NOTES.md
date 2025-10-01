@@ -1,28 +1,31 @@
 # AGENT_NOTES — camoufox_worker
 
 ## Overview
-Camoufox worker обеспечивает выполнение короткоживущих браузерных задач в двух режимах: нативный запуск Camoufox внутри контейнера и оркестрация удалённых сессий через Gateway/Runner. Текущий коммит добавляет каркас сервиса, документацию и базовые заглушки для дальнейшей реализации.
+Camoufox worker обеспечивает выполнение короткоживущих браузерных задач в двух режимах: нативный запуск Camoufox внутри контейнера и оркестрация удалённых сессий через Gateway/Runner. Реализованы асинхронные HTTP-хелперы для orchestrator-режима с ретраями, единый CLI и юнит-тесты, покрывающие оба сценария.
 
 ## Interfaces
-* CLI `python -m worker.main run` для запуска единичной задачи с параметрами URL и таймаутом; выводит JSON с полями результата.
+* CLI `python -m worker.main run` для запуска единичной задачи с параметрами URL и таймаутом; выводит JSON с полями результата. Режим выбирается через `--mode` или `WORKER_MODE`, для orchestrator доступны опции/ENV `--gateway-url` (`GATEWAY_URL`), `--gateway-token` (`GATEWAY_TOKEN`), `--poll-timeout`, `--poll-interval`.
 * Планируемые интеграции: очередь задач (Redis/AMQP), HTTP API Gateway/Runner для orchestrator-режима.
 
 ## Data & Models
 * `worker.jobs.Job` — Pydantic-модель, описывающая параметры задачи (URL, прокси, таймаут). Помимо нормализованного `HttpUrl` хранит исходную строку `url_source`, чтобы браузер открывал URL без навязанного завершающего слэша.
 * `worker.jobs.JobStatus`/`JobResult` — структура результата с флагом `ok`, статусом (`success|failure|aborted`), таймстемпами начала/окончания, метриками (`JobMetrics.duration_ms`) и описанием ошибки (`JobError`). Поле `JobMetrics.extra` допускает числовые и строковые значения (например, статусы навигации, тип исключения, длительности).
 * `worker.runner_native.run_job` возвращает `JobResult` вместо словаря, применяет per-job proxy и наполняет `JobMetrics.extra` полями `navigation_status`, `navigation_duration_ms`, `timeout_ms`, `exception_type`.
+* `worker.runner_orch.run_orchestrated_job` использует те же модели `Job`/`JobResult`, создаёт сессию через Gateway, обновляет прокси/heartbeat, собирает метаданные (`session_id`, `poll_attempts`, `session_status`, `touched_at`) и конвертирует ошибки/таймауты в `JobError`.
 
 ## Decisions
 * Выбраны отдельные модули для native и orchestrator режимов, чтобы облегчить параллельную разработку и тестирование.
 * В образе подразумевается предварительный `camoufox fetch`; в рантайме операции загрузки запрещены (см. AGENTS.md).
 * CLI основан на Click для дальнейшего расширения команды `run` под дополнительные опции.
 * При ошибках исполнения Camoufox исключения конвертируются в `JobResult` со статусом `failure`, чтобы потребители могли логировать/ретраить без исключений.
+* Orchestrator-helpers используют `httpx.AsyncClient` с Bearer-аутентификацией, экспоненциальным бэкоффом (5xx/сетевые ошибки) и гарантированным `DELETE` в блоке `finally`.
 
 ## Constraints & Invariants
 * Выполнение под non-root пользователем, без `pip install`/`camoufox fetch` в рантайме.
 * Значение `CAMOUFOX_HEADLESS` по умолчанию — `virtual`; ожидается наличие Xvfb в базовом образе Playwright.
 * Каждый запуск создаёт изолированный Camoufox context с приоритетом прокси SOCKS > HTTPS > HTTP и закрывает страницу/контекст даже при исключениях. Если Camoufox падает до навигации, `navigation_status` принудительно переводится в `context_failed`.
 * Навигация выполняется с таймаутом `job.timeout_sec` (преобразованным в миллисекунды для Camoufox API) и использует исходную строку URL из `Job.url_source`.
+* Для orchestrator-режима обязательны `GATEWAY_URL` и `GATEWAY_TOKEN`; при удалении сессии 404 считается идемпотентным успехом.
 * Код должен содержать docstring у каждого публичного объекта (соответствие корневым инструкциям).
 
 ## Known Gaps / TODO
@@ -33,7 +36,7 @@ Camoufox worker обеспечивает выполнение короткожи
 ## How to Test
 * `poetry install` — установка зависимостей и публикация пакета `worker`.
 * `poetry run ruff check .` — статический анализ.
-* `poetry run pytest -q` — запуск юнит-тестов (покрытие моделей и нативного раннера через моки).
+* `poetry run pytest -q` — запуск юнит-тестов (покрытие моделей, нативного раннера и orchestrator-хелперов через `httpx.MockTransport`).
 * `poetry run python -m camoufox path` и `poetry run python -m camoufox version` — валидация окружения Camoufox.
 
 ## Changelog (for agents)
@@ -43,3 +46,4 @@ Camoufox worker обеспечивает выполнение короткожи
 * 2024-09-03 · gpt-5-codex · Добавлены структурированные модели результата (`JobResult`, `JobMetrics`, `JobError`), обновлены CLI/runner и покрыты юнит-тестами.
 * 2024-09-06 · gpt-5-codex · Реализована поддержка прокси и таймаутов в native-runner, добавлены метрики навигации и регрессионные тесты (proxy/timeout).
 * 2025-02-15 · gpt-5-codex · Зафиксирована версия camoufox 0.4.11, добавлены `Job.url_source` и гибкие `JobMetrics.extra`, обновлены статусы навигации, тесты и гайд по запуску.
+* 2025-02-17 · gpt-5-codex · Реализованы async-хелперы orchestrator-режима (create/touch/proxy/delete/poll) с ретраями, обновлён CLI (ENV + gateway credentials) и добавлены pytest-моки `httpx.MockTransport` для проверки ретраев/ошибок.
