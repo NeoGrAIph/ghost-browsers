@@ -7,6 +7,12 @@ import { queryKeys } from '../utils/queryKeys';
 const MAX_RETRIES = 5;
 const INITIAL_DELAY = 2_000;
 
+/**
+ * Configuration object accepted by {@link useSessionEvents}.
+ *
+ * @property enabled - Toggles subscription side effects. When ``false`` the hook disconnects.
+ * @property token - Optional bearer token forwarded to the SSE endpoint.
+ */
 export interface UseSessionEventsOptions {
   readonly enabled: boolean;
   readonly token?: string;
@@ -28,6 +34,12 @@ const removeSession = (sessions: Session[], sessionId: string): Session[] =>
 
 /**
  * Subscribes to the session SSE stream and keeps the local cache in sync.
+ *
+ * @param options - Hook options controlling connectivity and authentication.
+ * @example
+ * ```tsx
+ * useSessionEvents({ enabled: isAuthenticated, token: keycloakToken });
+ * ```
  */
 export const useSessionEvents = ({ enabled, token }: UseSessionEventsOptions) => {
   const queryClient = useQueryClient();
