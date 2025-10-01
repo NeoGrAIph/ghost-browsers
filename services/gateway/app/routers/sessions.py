@@ -6,14 +6,16 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from core import Session, SessionProxySettings
+from core import Runner, Session, SessionProxySettings
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
-from ..deps import get_session_registry, get_vnc_token_service
+from ..deps import get_runner_registry, get_session_registry, get_vnc_token_service
 from ..deps.security import get_current_user
 from ..security import AuthenticatedUser, VncTokenService
+from ..services.runner_registry import RunnerRegistry
 from ..services.session_registry import SessionRegistry
+from ..services.vnc_overrides import apply_vnc_overrides
 
 
 class TouchPayload(BaseModel):
@@ -39,22 +41,14 @@ async def list_sessions(
 async def create_session(
     session: Session,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
     token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Session:
     """Register a new session emitted by a runner."""
 
-    enriched = session
-    if session.vnc is not None and session.vnc.token is None:
-        enriched = session.model_copy(
-            update={
-                "vnc": token_service.enrich_vnc_details(
-                    session.vnc,
-                    session_id=str(session.id),
-                    subject=user.subject,
-                )
-            }
-        )
+    runner = await runners.get(session.runner_id)
+    enriched = _enrich_session(session, runner, token_service, user)
     try:
         return await registry.add(enriched)
     except ValueError as exc:
@@ -130,3 +124,37 @@ async def touch_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         ) from exc
+
+
+def _enrich_session(
+    session: Session,
+    runner: Runner | None,
+    token_service: VncTokenService,
+    user: AuthenticatedUser,
+) -> Session:
+    """Attach VNC overrides and short-lived tokens to a session payload.
+
+    The beta gateway rewrites runner-reported VNC URLs so that all previews are
+    served via a shared ingress controller instead of exposing per-session
+    ports.  This helper mirrors that behaviour by applying runner-scoped
+    override templates and adding gateway-issued access tokens when absent.
+    """
+
+    details = session.vnc
+    if runner is not None:
+        details = apply_vnc_overrides(runner, details, session_id=str(session.id))
+
+    if details is None:
+        return session
+
+    if details.token is None:
+        details = token_service.enrich_vnc_details(
+            details,
+            session_id=str(session.id),
+            subject=user.subject,
+        )
+
+    if details is session.vnc:
+        return session
+
+    return session.model_copy(update={"vnc": details})
