@@ -2,7 +2,7 @@
 name = "camou-vnc-gateway"
 version = "0.1.0"
 description = "Ghost-browsers VNC Gateway (to be implemented)"
-packages = []
+packages = [{ include = "camou_vnc_gateway", from = "app" }]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
@@ -10,6 +10,7 @@ fastapi = "^0.115.0"
 uvicorn = {extras = ["standard"], version = "^0.30.6"}
 websockets = "^12.0"
 httpx = "^0.27.2"
+pydantic-settings = "^2.6.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
