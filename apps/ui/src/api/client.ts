@@ -1,9 +1,17 @@
 import { z } from 'zod';
-import { SessionSchema, SessionEventSchema } from '../types/session';
+import {
+  CoreSessionSchema,
+  CoreSessionEventSchema,
+  mapCoreEventToView,
+  mapCoreSessionToView,
+} from './sessionMapper';
+import type { Session } from '../types/session';
+import type { SessionEvent } from '../types/session';
+import type { SessionCreateRequest } from './sessionCreation';
 import { createUrl } from '../utils/url';
 
 const sessionCollectionSchema = z.object({
-  sessions: z.array(SessionSchema),
+  sessions: z.array(CoreSessionSchema),
 });
 
 /**
@@ -68,7 +76,27 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`POST ${path} failed with ${response.status}`);
+      let message = `POST ${path} failed with ${response.status}`;
+      const contentType = response.headers.get('content-type') ?? '';
+      try {
+        if (contentType.includes('application/json')) {
+          const payload: unknown = await response.json();
+          if (payload && typeof payload === 'object' && 'detail' in payload) {
+            const detail = (payload as { detail?: unknown }).detail;
+            if (typeof detail === 'string' && detail.trim()) {
+              message = detail.trim();
+            }
+          }
+        } else {
+          const text = (await response.text()).trim();
+          if (text) {
+            message = text;
+          }
+        }
+      } catch {
+        // Ignore JSON parsing failures and fall back to the generic message.
+      }
+      throw new Error(message);
     }
 
     const payload: unknown = await response.json();
@@ -103,24 +131,30 @@ export class ApiClient {
 const gatewayUrl = import.meta.env.VITE_GATEWAY_URL ?? 'http://localhost:8000';
 
 /**
- * Shared API client instance used by React Query hooks.
+ * Shared API client instance used by React Query hooks for gateway requests.
  */
 export const apiClient = new ApiClient({ baseUrl: gatewayUrl });
 
 /**
  * Fetches the session collection.
  */
-export const fetchSessions = async (headers?: AuthHeaders) =>
-  apiClient.get('/sessions', sessionCollectionSchema, headers);
+export const fetchSessions = async (headers?: AuthHeaders): Promise<{ sessions: Session[] }> => {
+  const payload = await apiClient.get('/sessions', sessionCollectionSchema, headers);
+  return {
+    sessions: payload.sessions.map(mapCoreSessionToView),
+  };
+};
 
 /**
- * Creates a new session.
+ * Creates a new session via the gateway.
  */
 export const createSession = async (
-  payload: Record<string, unknown>,
+  payload: SessionCreateRequest,
   headers?: AuthHeaders,
-) =>
-  apiClient.post('/sessions', SessionSchema, payload, headers);
+): Promise<Session> => {
+  const response = await apiClient.post('/sessions', CoreSessionSchema, payload, headers);
+  return mapCoreSessionToView(response);
+};
 
 /**
  * Deletes an existing session.
@@ -140,9 +174,10 @@ export const openSessionEventStream = (headers?: AuthHeaders) => {
   const eventSource = new EventSource(url);
   return {
     eventSource,
-    parseEvent: (event: MessageEvent<string>) => {
+    parseEvent: (event: MessageEvent<string>): SessionEvent => {
       const payload: unknown = JSON.parse(event.data);
-      return SessionEventSchema.parse(payload);
+      const coreEvent = CoreSessionEventSchema.parse(payload);
+      return mapCoreEventToView(coreEvent);
     },
   };
 };

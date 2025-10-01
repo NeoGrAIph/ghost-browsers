@@ -4,6 +4,13 @@ export interface SessionComposerValues {
   readonly browserName: string;
   readonly region: string;
   readonly proxyId: string | null;
+  readonly headless: boolean;
+  readonly idleTtlSeconds: number;
+  readonly startUrl: string;
+  readonly startUrlWait: 'load' | 'domcontentloaded' | 'none';
+  readonly proxyHttp: string;
+  readonly proxyHttps: string;
+  readonly proxySocks: string;
 }
 
 interface SessionComposerProps {
@@ -15,6 +22,13 @@ const defaultValues: SessionComposerValues = {
   browserName: 'Chrome',
   region: 'eu-central',
   proxyId: null,
+  headless: false,
+  idleTtlSeconds: 300,
+  startUrl: '',
+  startUrlWait: 'load',
+  proxyHttp: '',
+  proxyHttps: '',
+  proxySocks: '',
 };
 
 /**
@@ -69,17 +83,105 @@ export function SessionComposer({ onSubmit, onCancel }: SessionComposerProps): J
             <option value="ap-south">ap-south</option>
           </select>
         </label>
-        <label>
-          Прокси (необязательно)
+        <label className="composer__checkbox">
           <input
-            type="text"
-            placeholder="proxy-id"
-            value={values.proxyId ?? ''}
+            type="checkbox"
+            checked={values.headless}
             onChange={(event) =>
-              setValues((current) => ({ ...current, proxyId: event.target.value || null }))
+              setValues((current) => ({ ...current, headless: event.target.checked }))
+            }
+          />
+          Запуск без VNC (headless)
+        </label>
+        <label>
+          Idle TTL (сек)
+          <input
+            type="number"
+            min={30}
+            max={3600}
+            value={values.idleTtlSeconds}
+            onChange={(event) =>
+              setValues((current) => ({
+                ...current,
+                idleTtlSeconds: Number.isNaN(Number.parseInt(event.target.value, 10))
+                  ? current.idleTtlSeconds
+                  : Number.parseInt(event.target.value, 10),
+              }))
             }
           />
         </label>
+        <label>
+          Начальный URL (опционально)
+          <input
+            type="url"
+            placeholder="https://example.org"
+            value={values.startUrl}
+            onChange={(event) => setValues((current) => ({ ...current, startUrl: event.target.value }))}
+          />
+        </label>
+        <label>
+          Ожидание загрузки стартовой страницы
+          <select
+            value={values.startUrlWait}
+            onChange={(event) =>
+              setValues((current) => ({
+                ...current,
+                startUrlWait: event.target.value as SessionComposerValues['startUrlWait'],
+              }))
+            }
+          >
+            <option value="load">Полная загрузка</option>
+            <option value="domcontentloaded">DOMContentLoaded</option>
+            <option value="none">Без ожидания</option>
+          </select>
+        </label>
+        <fieldset className="composer__fieldset">
+          <legend>Прокси (опционально)</legend>
+          <label>
+            Идентификатор прокси
+            <input
+              type="text"
+              placeholder="proxy-id"
+              value={values.proxyId ?? ''}
+              onChange={(event) =>
+                setValues((current) => ({ ...current, proxyId: event.target.value || null }))
+              }
+            />
+          </label>
+          <label>
+            HTTP
+            <input
+              type="url"
+              placeholder="http://proxy.local:3128"
+              value={values.proxyHttp}
+              onChange={(event) =>
+                setValues((current) => ({ ...current, proxyHttp: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            HTTPS
+            <input
+              type="url"
+              placeholder="http://proxy.local:3129"
+              value={values.proxyHttps}
+              onChange={(event) =>
+                setValues((current) => ({ ...current, proxyHttps: event.target.value }))
+              }
+            />
+          </label>
+          <label>
+            SOCKS
+            <input
+              type="url"
+              placeholder="socks5://proxy.local:1080"
+              value={values.proxySocks}
+              onChange={(event) =>
+                setValues((current) => ({ ...current, proxySocks: event.target.value }))
+              }
+            />
+          </label>
+        </fieldset>
         {error && <p className="composer__error">{error}</p>}
         <div className="composer__actions">
           <button type="button" className="ghost" onClick={onCancel}>

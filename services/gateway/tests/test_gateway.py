@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import anyio
 import pytest
+from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jose import jwt
@@ -23,7 +24,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 from app import create_app  # noqa: E402
 from app.config import GatewaySettings  # noqa: E402
-from app.deps import get_vnc_token_service  # noqa: E402
+from app.deps import get_runner_client, get_vnc_token_service  # noqa: E402
 from app.deps.security import get_authenticator, get_current_user  # noqa: E402
 from app.security import AuthenticatedUser, KeycloakAuthenticator, VncTokenService  # noqa: E402
 from core import (
@@ -114,7 +115,7 @@ def test_session_crud(gateway_client: TestClient) -> None:
         "headless": False,
         "idle_ttl_seconds": 300,
     }
-    response = gateway_client.post("/sessions", json=session_body)
+    response = gateway_client.post("/sessions/register", json=session_body)
     assert response.status_code == 201
     session_id = response.json()["id"]
 
@@ -139,6 +140,49 @@ def test_session_crud(gateway_client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_launch_session_proxies_to_runner(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """``POST /sessions`` must delegate creation to an available runner."""
+
+    now = datetime.now(tz=UTC)
+    created = Session(
+        id=uuid4(),
+        runner_id="runner-1",
+        status=SessionStatus.INIT,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+        browser="camoufox",
+        labels={"region": "eu-central"},
+        metadata={"region": "eu-central"},
+    )
+
+    class _DummyRunnerClient:
+        async def create_session(self, runner: Runner, payload: Any) -> Session:
+            assert runner.id == "runner-1"
+            assert payload.labels["region"] == "eu-central"
+            return created
+
+    gateway_app.dependency_overrides[get_runner_client] = lambda: _DummyRunnerClient()
+
+    try:
+        response = gateway_client.post(
+            "/sessions",
+            json={"labels": {"region": "eu-central"}, "metadata": {"region": "eu-central"}},
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["id"] == str(created.id)
+
+        listing = gateway_client.get("/sessions")
+        assert listing.status_code == 200
+        assert any(item["id"] == str(created.id) for item in listing.json())
+    finally:
+        gateway_app.dependency_overrides.pop(get_runner_client, None)
+
+
 def test_vnc_token_generation(gateway_client: TestClient) -> None:
     """Sessions containing VNC details receive signed short-lived tokens."""
 
@@ -153,7 +197,7 @@ def test_vnc_token_generation(gateway_client: TestClient) -> None:
         "idle_ttl_seconds": 300,
         "vnc": {"http_url": "https://vnc.example/view"},
     }
-    response = gateway_client.post("/sessions", json=session_body)
+    response = gateway_client.post("/sessions/register", json=session_body)
     assert response.status_code == 201
     payload = response.json()["vnc"]
     assert payload["token_ttl_seconds"] == 120
@@ -180,7 +224,7 @@ def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> Non
         },
     }
 
-    response = gateway_client.post("/sessions", json=session_body)
+    response = gateway_client.post("/sessions/register", json=session_body)
     assert response.status_code == 201
     payload = response.json()["vnc"]
     assert payload["http_url"] == f"https://vnc.example/view/{session_id}"

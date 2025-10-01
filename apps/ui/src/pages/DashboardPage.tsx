@@ -8,6 +8,7 @@ import { SessionActions } from '../components/SessionActions';
 import { SessionComposer, SessionComposerValues } from '../components/SessionComposer';
 import { useAuth } from '../hooks/useAuth';
 import { fetchSessions, createSession } from '../api/client';
+import { buildSessionCreatePayload } from '../api/sessionCreation';
 import { queryKeys } from '../utils/queryKeys';
 import { useSessionFilters, type SessionStatusFilter } from '../store/sessionFilters';
 import { Session } from '../types/session';
@@ -75,13 +76,7 @@ export function DashboardPage(): JSX.Element {
 
   const createMutation = useMutation({
     mutationFn: async (values: SessionComposerValues) => {
-      const payload = {
-        browser: {
-          name: values.browserName,
-        },
-        region: values.region,
-        proxyId: values.proxyId,
-      };
+      const payload = buildSessionCreatePayload(values);
       await createSession(payload, { token: token ?? undefined });
     },
     onSuccess: () => {

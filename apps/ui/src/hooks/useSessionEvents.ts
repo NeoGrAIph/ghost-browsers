@@ -58,7 +58,7 @@ export const useSessionEvents = ({ enabled, token }: UseSessionEventsOptions) =>
 
           if (data.session) {
             return {
-              sessions: mergeSession(current.sessions, data.session as Session),
+              sessions: mergeSession(current.sessions, data.session),
             };
           }
 

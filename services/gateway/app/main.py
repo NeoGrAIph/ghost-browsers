@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from .config import GatewaySettings
 from .routers import events_router, runners_router, sessions_router
 from .security import KeycloakAuthenticator, VncTokenService
+from .services.runner_client import RunnerControlClient
 from .services.runner_registry import RunnerRegistry
 from .services.session_registry import SessionRegistry
 
@@ -25,6 +26,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.session_registry = SessionRegistry()
     app.state.runner_registry = RunnerRegistry(config.runners)
     app.state.event_bridge = InMemorySessionEventBridge()
+    app.state.runner_client = RunnerControlClient()
     app.state.vnc_tokens = VncTokenService(
         secret=config.vnc_token_secret,
         ttl_seconds=config.vnc_token_ttl_seconds,

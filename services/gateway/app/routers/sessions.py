@@ -10,9 +10,16 @@ from core import Runner, Session, SessionProxySettings
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
-from ..deps import get_runner_registry, get_session_registry, get_vnc_token_service
+from ..deps import (
+    get_runner_client,
+    get_runner_registry,
+    get_session_registry,
+    get_vnc_token_service,
+)
 from ..deps.security import get_current_user
 from ..security import AuthenticatedUser, VncTokenService
+from ..models.session_launch import SessionLaunchPayload
+from ..services.runner_client import RunnerClientError, RunnerControlClient
 from ..services.runner_registry import RunnerRegistry
 from ..services.session_registry import SessionRegistry
 from ..services.vnc_overrides import apply_vnc_overrides
@@ -37,8 +44,8 @@ async def list_sessions(
     return await registry.list()
 
 
-@router.post("", response_model=Session, status_code=status.HTTP_201_CREATED)
-async def create_session(
+@router.post("/register", response_model=Session, status_code=status.HTTP_201_CREATED)
+async def register_session(
     session: Session,
     registry: Annotated[SessionRegistry, Depends(get_session_registry)],
     runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
@@ -48,6 +55,30 @@ async def create_session(
     """Register a new session emitted by a runner."""
 
     runner = await runners.get(session.runner_id)
+    enriched = _enrich_session(session, runner, token_service, user)
+    try:
+        return await registry.add(enriched)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("", response_model=Session, status_code=status.HTTP_201_CREATED)
+async def launch_session(
+    payload: SessionLaunchPayload,
+    registry: Annotated[SessionRegistry, Depends(get_session_registry)],
+    runners: Annotated[RunnerRegistry, Depends(get_runner_registry)],
+    runner_client: Annotated[RunnerControlClient, Depends(get_runner_client)],
+    token_service: Annotated[VncTokenService, Depends(get_vnc_token_service)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> Session:
+    """Create a session on a runner and persist it in the registry."""
+
+    runner = await _select_runner(runners)
+    try:
+        session = await runner_client.create_session(runner, payload)
+    except RunnerClientError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
     enriched = _enrich_session(session, runner, token_service, user)
     try:
         return await registry.add(enriched)
@@ -158,3 +189,26 @@ def _enrich_session(
         return session
 
     return session.model_copy(update={"vnc": details})
+
+
+async def _select_runner(registry: RunnerRegistry) -> Runner:
+    """Pick a runner that can accept a new session request.
+
+    The selector prefers runners that advertise free slots via
+    ``available_slots``. When all runners appear saturated we fall back to the
+    first entry, allowing the runner to decide whether it can queue the
+    request.
+    """
+
+    runners = await registry.list()
+    if not runners:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No runners are registered",
+        )
+
+    for runner in runners:
+        if runner.available_slots is None or runner.available_slots > 0:
+            return runner
+
+    return runners[0]

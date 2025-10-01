@@ -16,6 +16,9 @@
 - `CAMOUFOX_HEADLESS=virtual` (по умолчанию)
 - (Опционально) `XDG_CACHE_HOME` — общий кэш, если потребуется
 
+## UI
+- `VITE_GATEWAY_URL` — базовый URL Gateway для REST/SSE (включая `POST /sessions`)
+
 ## VNC Gateway
 - `GATEWAY_URL` — базовый URL для валидации токенов
 - `CONNECT_TIMEOUT_MS`
