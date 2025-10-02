@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+"""Event publisher abstractions for session and workstation lifecycles."""
+
 from typing import Protocol
 
 import anyio
 import httpx
-from core.models import SessionEvent
+from core.models import SessionEvent, WorkstationEvent
 
 
 class SessionEventPublisher(Protocol):
@@ -39,6 +41,35 @@ class InMemorySessionEventPublisher:
 
     async def drain(self) -> list[SessionEvent]:
         """Return and clear the buffered events in FIFO order."""
+
+        async with self._lock:
+            drained = list(self._events)
+            self._events.clear()
+            return drained
+
+
+class WorkstationEventPublisher(Protocol):
+    """Protocol describing transports for workstation lifecycle events."""
+
+    async def publish(self, event: WorkstationEvent) -> None:
+        """Forward ``event`` to downstream consumers."""
+
+
+class InMemoryWorkstationEventPublisher:
+    """Collect workstation events in FIFO order for deterministic tests."""
+
+    def __init__(self) -> None:
+        self._events: list[WorkstationEvent] = []
+        self._lock = anyio.Lock()
+
+    async def publish(self, event: WorkstationEvent) -> None:
+        """Append ``event`` to the buffer in a concurrency-safe manner."""
+
+        async with self._lock:
+            self._events.append(event)
+
+    async def drain(self) -> list[WorkstationEvent]:
+        """Return and clear buffered events atomically."""
 
         async with self._lock:
             drained = list(self._events)
@@ -131,5 +162,7 @@ __all__ = [
     "CallbackSessionEventPublisher",
     "HttpSessionEventPublisher",
     "InMemorySessionEventPublisher",
+    "InMemoryWorkstationEventPublisher",
     "SessionEventPublisher",
+    "WorkstationEventPublisher",
 ]

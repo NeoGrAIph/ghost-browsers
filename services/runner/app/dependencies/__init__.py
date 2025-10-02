@@ -5,6 +5,8 @@ from .session_manager import (
     get_runner_settings,
     get_session_manager,
     get_vnc_controller,
+    get_warm_pool_manager,
+    get_workstation_event_publisher,
 )
 
 __all__ = [
@@ -12,4 +14,6 @@ __all__ = [
     "get_runner_settings",
     "get_session_manager",
     "get_vnc_controller",
+    "get_warm_pool_manager",
+    "get_workstation_event_publisher",
 ]

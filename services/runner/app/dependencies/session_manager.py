@@ -9,7 +9,9 @@ from ..config import RunnerSettings
 from ..events import (
     HttpSessionEventPublisher,
     InMemorySessionEventPublisher,
+    InMemoryWorkstationEventPublisher,
     SessionEventPublisher,
+    WorkstationEventPublisher,
 )
 from ..session_manager import SessionManager
 from ..warm_pool import WarmPoolManager
@@ -33,6 +35,13 @@ def get_event_publisher() -> SessionEventPublisher:
     if settings.event_endpoint is not None:
         return HttpSessionEventPublisher(str(settings.event_endpoint))
     return InMemorySessionEventPublisher()
+
+
+@lru_cache
+def get_workstation_event_publisher() -> WorkstationEventPublisher:
+    """Return an in-memory publisher for workstation lifecycle events."""
+
+    return InMemoryWorkstationEventPublisher()
 
 
 @lru_cache
@@ -71,6 +80,7 @@ def get_warm_pool_manager() -> WarmPoolManager:
 __all__ = [
     "get_event_publisher",
     "get_runner_settings",
+    "get_workstation_event_publisher",
     "get_warm_pool_manager",
     "get_session_manager",
     "get_vnc_controller",
