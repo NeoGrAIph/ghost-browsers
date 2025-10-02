@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from collections import deque
+from dataclasses import dataclass
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
@@ -23,8 +24,8 @@ from core.models import (
 )
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 
-from .browser import BrowserSessionHandle
-from .config import RunnerSettings
+from .browser import BrowserLaunchError, BrowserSessionHandle, launch_browser
+from .config import RunnerSettings, WarmPoolMode
 from .events import SessionEventPublisher
 from .metrics import (
     ACTIVE_SESSIONS_GAUGE,
@@ -143,6 +144,23 @@ class SessionManagerMetrics(BaseModel):
         return len(self.prewarm_failures)
 
 
+@dataclass(frozen=True)
+class BrowserAcquisition:
+    """Aggregate details for a browser handle obtained during session setup.
+
+    Attributes:
+        handle: Browser session handle ready to be persisted.
+        metadata: Metadata dictionary enriched with origin descriptors that
+            explain how the browser was sourced.
+        reservation: Warm pool reservation when the browser originated from a
+            pre-warmed workstation, otherwise ``None`` for cold launches.
+    """
+
+    handle: BrowserSessionHandle
+    metadata: dict[str, Any]
+    reservation: WarmPoolReservation | None
+
+
 class SessionManager:
     """Manage session lifecycle and publish events for downstream consumers.
 
@@ -205,14 +223,21 @@ class SessionManager:
                     sanitized_vnc=sanitized_vnc,
                 )
                 try:
-                    reservation = await self._reserve_warm_slot(payload.metadata)
+                    acquisition = await self._acquire_browser_handle(
+                        payload,
+                        metadata=dict(payload.metadata),
+                        vnc_handle=vnc_handle,
+                    )
                 except Exception:
                     await self._discard_vnc_handle(session_id, vnc_handle)
                     raise
-                workstation_id = reservation.snapshot.workstation_id
-                browser_handle = reservation.handle
-                metadata = self._merge_warm_pool_metadata(
-                    dict(payload.metadata), reservation
+                browser_handle = acquisition.handle
+                metadata = acquisition.metadata
+                warm_reservation = acquisition.reservation
+                workstation_id = (
+                    warm_reservation.snapshot.workstation_id
+                    if warm_reservation is not None
+                    else None
                 )
                 if browser_handle.pid is not None:
                     metadata.setdefault("runner_browser_pid", browser_handle.pid)
@@ -241,18 +266,26 @@ class SessionManager:
                         metadata=metadata,
                     )
                 except Exception:
-                    await self._cancel_warm_reservation(workstation_id)
+                    if workstation_id is not None:
+                        await self._cancel_warm_reservation(workstation_id)
+                    else:
+                        await self._safe_shutdown_cold_browser(browser_handle)
                     await self._discard_vnc_handle(session_id, vnc_handle)
                     raise
                 try:
-                    await self._mark_warm_slot_busy(workstation_id)
+                    if workstation_id is not None:
+                        await self._mark_warm_slot_busy(workstation_id)
                 except SessionCapacityError:
-                    await self._cancel_warm_reservation(workstation_id)
+                    if workstation_id is not None:
+                        await self._cancel_warm_reservation(workstation_id)
+                    else:
+                        await self._safe_shutdown_cold_browser(browser_handle)
                     await self._discard_vnc_handle(session_id, vnc_handle)
                     raise
                 self._sessions[session_id] = session
                 self._browser_handles[session_id] = browser_handle
-                self._warm_sessions[session_id] = workstation_id
+                if workstation_id is not None:
+                    self._warm_sessions[session_id] = workstation_id
                 if vnc_handle is not None:
                     self._vnc_handles[session_id] = vnc_handle
                 VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
@@ -535,6 +568,186 @@ class SessionManager:
         if details.token is None and details.token_ttl_seconds is None:
             return details
         return details.model_copy(update={"token": None, "token_ttl_seconds": None})
+
+    async def _acquire_browser_handle(
+        self,
+        payload: SessionCreatePayload,
+        *,
+        metadata: dict[str, Any],
+        vnc_handle: VncSessionHandle | None,
+    ) -> BrowserAcquisition:
+        """Return a browser handle using the configured warm pool strategy.
+
+        Args:
+            payload: Request describing the desired session properties such as
+                browser family and headless mode.
+            metadata: Mutable copy of the session metadata derived from the
+                create payload. The method augments it with origin descriptors
+                before returning.
+            vnc_handle: Optional VNC allocation whose environment variables are
+                required when a cold browser launch occurs for visual sessions.
+
+        Returns:
+            BrowserAcquisition: Dataclass bundling the browser handle, enriched
+            metadata, and a warm pool reservation when a pre-warmed workstation
+            was selected.
+
+        Raises:
+            SessionCapacityError: Raised when the configuration demands a warm
+                pool but it is unavailable, or when spawning a cold browser
+                fails.
+
+        Example:
+            >>> acquisition = await manager._acquire_browser_handle(  # doctest: +SKIP
+            ...     payload,
+            ...     metadata={},
+            ...     vnc_handle=None,
+            ... )
+            >>> acquisition.handle.ws_endpoint  # doctest: +SKIP
+            'ws://camoufox/...'
+        """
+
+        mode = self._settings.warm_pool_mode
+        if mode is WarmPoolMode.COLD_ONLY:
+            metadata.pop("warm_pool", None)
+            handle = await self._launch_cold_browser(
+                payload,
+                vnc_handle=vnc_handle,
+            )
+            metadata = self._inject_browser_origin(
+                metadata,
+                kind="cold_launch",
+                details={"reason": "mode-cold-only"},
+            )
+            return BrowserAcquisition(handle=handle, metadata=metadata, reservation=None)
+
+        warm_pool = self._warm_pool
+        if warm_pool is not None:
+            try:
+                reservation = await self._reserve_warm_slot(metadata)
+            except SessionCapacityError:
+                if mode is WarmPoolMode.WARM_ONLY:
+                    raise
+            else:
+                details = {
+                    "workstation_id": reservation.snapshot.workstation_id,
+                }
+                if reservation.snapshot.fingerprint_id is not None:
+                    details["fingerprint_id"] = reservation.snapshot.fingerprint_id
+                metadata = self._merge_warm_pool_metadata(metadata, reservation)
+                metadata = self._inject_browser_origin(
+                    metadata,
+                    kind="warm_pool",
+                    details=details,
+                )
+                return BrowserAcquisition(
+                    handle=reservation.handle,
+                    metadata=metadata,
+                    reservation=reservation,
+                )
+        elif mode is WarmPoolMode.WARM_ONLY:
+            raise SessionCapacityError("warm pool is not configured")
+
+        metadata.pop("warm_pool", None)
+        reason = "warm-pool-disabled" if warm_pool is None else "warm-pool-unavailable"
+        handle = await self._launch_cold_browser(payload, vnc_handle=vnc_handle)
+        metadata = self._inject_browser_origin(
+            metadata,
+            kind="cold_launch",
+            details={"reason": reason},
+        )
+        return BrowserAcquisition(handle=handle, metadata=metadata, reservation=None)
+
+    async def _launch_cold_browser(
+        self,
+        payload: SessionCreatePayload,
+        *,
+        vnc_handle: VncSessionHandle | None,
+    ) -> BrowserSessionHandle:
+        """Launch a fresh Playwright browser outside of the warm pool.
+
+        Args:
+            payload: Session creation request containing browser preferences.
+            vnc_handle: Optional handle providing environment variables (e.g.
+                ``DISPLAY``) required for non-headless sessions.
+
+        Returns:
+            BrowserSessionHandle: Handle referencing the running Playwright
+            process.
+
+        Raises:
+            SessionCapacityError: If Playwright cannot be launched successfully.
+
+        Example:
+            >>> handle = await manager._launch_cold_browser(  # doctest: +SKIP
+            ...     payload,
+            ...     vnc_handle=None,
+            ... )
+            >>> handle.ws_endpoint  # doctest: +SKIP
+            'ws://camoufox/...'
+        """
+
+        env: dict[str, str] = {}
+        if vnc_handle is not None:
+            env.update(vnc_handle.browser_environment())
+        try:
+            return await launch_browser(
+                self._settings,
+                browser=payload.browser,
+                headless=payload.headless,
+                env=env or None,
+            )
+        except BrowserLaunchError as exc:
+            raise SessionCapacityError("failed to launch browser process") from exc
+
+    def _inject_browser_origin(
+        self,
+        metadata: dict[str, Any],
+        *,
+        kind: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Attach metadata describing how the browser was provisioned.
+
+        Args:
+            metadata: Session metadata dictionary to update in-place.
+            kind: Human-readable label identifying the browser origin.
+            details: Optional mapping providing additional context such as
+                fallback reasons or workstation identifiers.
+
+        Returns:
+            dict[str, Any]: The mutated metadata dictionary for chaining.
+
+        Example:
+            >>> manager._inject_browser_origin({}, kind="cold_launch")  # doctest: +SKIP
+            {'browser_origin': {'kind': 'cold_launch', 'mode': 'hybrid'}}
+        """
+
+        descriptor: dict[str, Any] = {
+            "kind": kind,
+            "mode": self._settings.warm_pool_mode.value,
+        }
+        if details:
+            descriptor.update(details)
+        existing = metadata.get("browser_origin")
+        if isinstance(existing, dict):
+            metadata["browser_origin"] = {**existing, **descriptor}
+        else:
+            metadata["browser_origin"] = descriptor
+        return metadata
+
+    async def _safe_shutdown_cold_browser(self, handle: BrowserSessionHandle) -> None:
+        """Terminate a cold-launched browser that was not persisted.
+
+        Args:
+            handle: Browser handle obtained from :func:`launch_browser`.
+
+        Example:
+            >>> await manager._safe_shutdown_cold_browser(handle)  # doctest: +SKIP
+        """
+
+        with contextlib.suppress(Exception):
+            await handle.shutdown(force=True)
 
     async def _reserve_warm_slot(
         self, metadata: dict[str, Any]

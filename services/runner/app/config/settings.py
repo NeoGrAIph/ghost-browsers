@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,14 @@ from pydantic import (
     PositiveInt,
     model_validator,
 )
+
+
+class WarmPoolMode(str, Enum):
+    """Enumerate warm pool strategies supported by the runner."""
+
+    WARM_ONLY = "warm-only"
+    COLD_ONLY = "cold-only"
+    HYBRID = "hybrid"
 
 
 class RunnerSettings(BaseModel):
@@ -33,6 +42,9 @@ class RunnerSettings(BaseModel):
         slot_limit: Maximum number of concurrently active sessions.
         warm_pool_config_path: Optional path to a JSON file describing the warm
             workstation pool.
+        warm_pool_mode: Strategy for sourcing browsers — exclusively warm pool,
+            exclusively cold launches, or hybrid (prefer warm, fall back to
+            cold).
         vnc_enabled: Controls whether VNC URLs should be generated for new
             sessions.
         vnc_http_base_url: Base URL for generating human-facing VNC previews.
@@ -71,6 +83,10 @@ class RunnerSettings(BaseModel):
     warm_pool_config_path: Path | None = Field(
         default=None,
         description="Path to the warm pool configuration JSON file",
+    )
+    warm_pool_mode: WarmPoolMode = Field(
+        default=WarmPoolMode.HYBRID,
+        description="Warm pool strategy: warm-only, cold-only, or hybrid",
     )
     vnc_enabled: bool = Field(default=True)
     vnc_http_base_url: AnyUrl = Field(default="http://127.0.0.1:8060/vnc")
@@ -149,6 +165,10 @@ class RunnerSettings(BaseModel):
         if "WARM_POOL_CONFIG_PATH" in env:
             raw = env["WARM_POOL_CONFIG_PATH"].strip()
             source["warm_pool_config_path"] = Path(raw) if raw else None
+        if "WARM_POOL_MODE" in env:
+            raw_mode = env["WARM_POOL_MODE"].strip().lower()
+            if raw_mode:
+                source["warm_pool_mode"] = raw_mode
         if "VNC_ENABLED" in env:
             source["vnc_enabled"] = env["VNC_ENABLED"].lower() in {"1", "true", "yes"}
         if "VNC_HTTP_BASE_URL" in env:
@@ -205,4 +225,4 @@ class RunnerSettings(BaseModel):
         return cls.model_validate(source)
 
 
-__all__ = ["RunnerSettings"]
+__all__ = ["RunnerSettings", "WarmPoolMode"]
