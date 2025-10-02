@@ -1,12 +1,12 @@
 # AGENT_NOTES — camoufox_worker
 
 ## Overview
-Camoufox worker обеспечивает выполнение короткоживущих браузерных задач в двух режимах: нативный запуск Camoufox внутри контейнера и оркестрация удалённых сессий через Gateway/Runner. Реализованы асинхронные HTTP-хелперы для orchestrator-режима с ретраями, единый CLI и юнит-тесты, покрывающие оба сценария.
+Camoufox worker обеспечивает выполнение короткоживущих браузерных задач в двух режимах: нативный запуск Camoufox внутри контейнера и оркестрация удалённых сессий через Gateway/Runner. Реализованы асинхронные HTTP-хелперы для orchestrator-режима с ретраями, единый CLI, юнит-тесты и полноценный FastAPI-сервис для проксирования runner'а (REST + WebSocket) c поддержкой VNC.
 
 ## Interfaces
 * CLI `python -m worker.main run` для запуска единичной задачи с параметрами URL и таймаутом; выводит JSON с полями результата. Режим выбирается через `--mode` или `WORKER_MODE`, для orchestrator доступны опции/ENV `--gateway-url` (`GATEWAY_URL`), `--gateway-token` (`GATEWAY_TOKEN`), `--poll-timeout`, `--poll-interval`.
 * Контейнерный entrypoint `bin/worker-launch.sh` отображает переменные `WORKER_*` (URL, таймауты, режим, gateway) в CLI и при явной передаче аргументов делегирует управление `python -m worker.main ...`.
-* Планируемые интеграции: очередь задач (Redis/AMQP), HTTP API Gateway/Runner для orchestrator-режима.
+* FastAPI сервис (`worker.service.create_app`) предоставляет REST API `GET/POST /sessions`, `GET /sessions/{id}`, `POST /sessions/{id}/touch`, `DELETE /sessions/{id}`, `GET /health`, `GET /metrics`, а также WebSocket `/sessions/{id}/ws` для проксирования Playwright-трафика. Прокси вебсокета повторно использует runner endpoint и поддерживает двунаправленную пересылку.
 
 ## Data & Models
 * `worker.jobs.Job` — Pydantic-модель, описывающая параметры задачи (URL, прокси, таймаут). Помимо нормализованного `HttpUrl` хранит исходную строку `url_source`, чтобы браузер открывал URL без навязанного завершающего слэша.
@@ -20,6 +20,7 @@ Camoufox worker обеспечивает выполнение короткожи
 * CLI основан на Click для дальнейшего расширения команды `run` под дополнительные опции.
 * При ошибках исполнения Camoufox исключения конвертируются в `JobResult` со статусом `failure`, чтобы потребители могли логировать/ретраить без исключений.
 * Orchestrator-helpers используют `httpx.AsyncClient` с Bearer-аутентификацией, экспоненциальным бэкоффом (5xx/сетевые ошибки) и гарантированным `DELETE` в блоке `finally`.
+* FastAPI-слой повторно использует runner REST API, нормализует wsEndpoint и обеспечивает гибкую конфигурацию обязательных флагов браузера через `WorkerSettings.browser_required_flags`, объединяя их с опциональными флагами из запроса без правок кода при изменении набора ключей.
 * Pytest-конфигурация добавляет каталог `services/camoufox_worker` в `sys.path`,
   регистрирует маркер `anyio` и оставляет только `--strict-markers`/`--maxfail=1`
   для базового запуска без `pytest-cov`. Поскольку защитные пропуски удалены,
@@ -64,3 +65,4 @@ Camoufox worker обеспечивает выполнение короткожи
 * 2025-02-23 · gpt-5-codex · Удалены `pytest.importorskip`, глобально прокинут shim `camoufox`,
   обновлены инструкции по зависимостям и тестам.
 * 2025-02-24 · ChatGPT · Добавлен модуль очереди с Redis/AMQP адаптерами, Prometheus метриками, тумблерами профиля и тестами интеграций.
+* 2025-02-26 · ChatGPT · Интегрирован FastAPI worker (REST/VNC/WebSocket), добавлены конфиги `worker.config`, обязательные флаги браузера и unit-тесты `test_service.py`; обновлены зависимости Poetry.
