@@ -6,9 +6,6 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-
-from pydantic import ValidationError
-
 from core.models import (
     Runner,
     RunnerState,
@@ -23,6 +20,7 @@ from core.models import (
     WorkstationMeta,
     WorkstationState,
 )
+from pydantic import ValidationError
 
 
 def _build_session(status: SessionStatus = SessionStatus.INIT) -> Session:

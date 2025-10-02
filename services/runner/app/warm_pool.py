@@ -29,8 +29,12 @@ import tempfile
 from asyncio import Lock
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
+
+from core.models import WorkstationEvent, WorkstationEventType, WorkstationMeta, WorkstationState
 
 from .browser import BrowserLaunchError, BrowserSessionHandle, launch_browser
 from .config import (
@@ -39,6 +43,7 @@ from .config import (
     WorkstationConfigEntry,
     load_warm_pool_config,
 )
+from .events import WorkstationEventPublisher
 
 __all__ = [
     "WarmPoolError",
@@ -54,6 +59,9 @@ __all__ = [
 LOGGER = logging.getLogger(__name__)
 
 
+_WARM_TO_PUBLIC_STATE: dict["WarmPoolState", WorkstationState] = {}
+
+
 class WarmPoolState(Enum):
     """Finite set of warm pool lifecycle states."""
 
@@ -63,6 +71,16 @@ class WarmPoolState(Enum):
     RECYCLING = "recycling"
     DRAINING = "draining"
     ERROR = "error"
+
+
+_WARM_TO_PUBLIC_STATE: dict[WarmPoolState, WorkstationState] = {
+    WarmPoolState.IDLE: WorkstationState.AVAILABLE,
+    WarmPoolState.RESERVED: WorkstationState.PROVISIONING,
+    WarmPoolState.BUSY: WorkstationState.ASSIGNED,
+    WarmPoolState.RECYCLING: WorkstationState.PROVISIONING,
+    WarmPoolState.DRAINING: WorkstationState.UNAVAILABLE,
+    WarmPoolState.ERROR: WorkstationState.UNAVAILABLE,
+}
 
 
 class WarmPoolError(RuntimeError):
@@ -168,6 +186,7 @@ class WarmPoolManager:
         temp_dir_factory: Callable[[str], Path] | None = None,
         max_retries: int = 3,
         retry_base_delay: float = 0.5,
+        event_publisher: WorkstationEventPublisher | None = None,
     ) -> None:
         self._settings = settings
         self._launcher = launcher
@@ -180,6 +199,111 @@ class WarmPoolManager:
         self._config = warm_pool_config
         self._slots: dict[str, _WarmSlot] = {}
         self._draining = False
+        self._event_publisher = event_publisher
+
+    def _build_workstation_meta(
+        self,
+        snapshot: WarmPoolSnapshot,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkstationMeta:
+        """Return :class:`WorkstationMeta` derived from ``snapshot``."""
+
+        extra_metadata: dict[str, Any] = {"warm_pool_state": snapshot.state.value}
+        if snapshot.proxy_url:
+            extra_metadata.setdefault("proxy_url", snapshot.proxy_url)
+        if metadata:
+            extra_metadata.update(metadata)
+        fingerprint = snapshot.fingerprint_id or "unknown"
+        return WorkstationMeta(
+            id=snapshot.workstation_id,
+            fingerprint_id=fingerprint,
+            state=_WARM_TO_PUBLIC_STATE.get(snapshot.state, WorkstationState.UNAVAILABLE),
+            proxy_summary=snapshot.proxy_url,
+            metadata=extra_metadata,
+        )
+
+    async def _publish_event(
+        self,
+        slot: _WarmSlot,
+        snapshot: WarmPoolSnapshot,
+        *,
+        event_type: WorkstationEventType,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Publish ``snapshot`` using the configured workstation event transport."""
+
+        if self._event_publisher is None:
+            return
+        event = WorkstationEvent(
+            type=event_type,
+            workstation=self._build_workstation_meta(snapshot, metadata=metadata),
+            occurred_at=datetime.now(UTC),
+            reason=reason,
+        )
+        await self._event_publisher.publish(event)
+
+    async def _emit_state_change(
+        self,
+        slot: _WarmSlot,
+        snapshot: WarmPoolSnapshot,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a ``workstation.state_changed`` event for ``slot``."""
+
+        await self._publish_event(
+            slot,
+            snapshot,
+            event_type=WorkstationEventType.STATE_CHANGED,
+            reason=reason,
+            metadata=metadata,
+        )
+
+    async def _emit_recycled(
+        self,
+        slot: _WarmSlot,
+        snapshot: WarmPoolSnapshot,
+        *,
+        reason: str,
+    ) -> None:
+        """Emit a ``workstation.recycled`` event when a slot is re-provisioned."""
+
+        metadata: dict[str, Any] | None = None
+        if slot.last_launch_env:
+            metadata = {"launch_env": dict(slot.last_launch_env)}
+        await self._publish_event(
+            slot,
+            snapshot,
+            event_type=WorkstationEventType.RECYCLED,
+            reason=reason,
+            metadata=metadata,
+        )
+
+    async def _emit_error(
+        self,
+        slot: _WarmSlot,
+        snapshot: WarmPoolSnapshot,
+        *,
+        reason: str,
+    ) -> None:
+        """Emit a ``workstation.error`` event describing the last failure."""
+
+        metadata: dict[str, Any] | None = None
+        if slot.last_error is not None:
+            metadata = {
+                "error": str(slot.last_error),
+                "error_type": type(slot.last_error).__name__,
+            }
+        await self._publish_event(
+            slot,
+            snapshot,
+            event_type=WorkstationEventType.ERROR,
+            reason=reason,
+            metadata=metadata,
+        )
 
     async def start(self) -> None:
         """Load configuration and provision all workstations in the pool."""
@@ -203,6 +327,11 @@ class WarmPoolManager:
                         "state": slot.state.value,
                     },
                 )
+                await self._emit_state_change(
+                    slot,
+                    slot.snapshot(),
+                    reason="provisioned",
+                )
             except WarmPoolProvisioningError:
                 LOGGER.exception(
                     "Failed to provision warm pool slot",
@@ -210,6 +339,11 @@ class WarmPoolManager:
                         "workstation_id": entry.id,
                         "fingerprint_id": slot.fingerprint_id,
                     },
+                )
+                await self._emit_error(
+                    slot,
+                    slot.snapshot(),
+                    reason="provisioning-failed",
                 )
 
     async def reserve_slot(
@@ -244,11 +378,20 @@ class WarmPoolManager:
                 )
             slot.state = WarmPoolState.RESERVED
             snapshot = slot.snapshot()
-            return WarmPoolReservation(
-                snapshot=snapshot,
-                handle=slot.handle,
-                environment=dict(slot.last_launch_env),
-            )
+            handle = slot.handle
+            environment = dict(slot.last_launch_env)
+
+        await self._emit_state_change(
+            slot,
+            snapshot,
+            reason="reserved",
+            metadata={"launch_env": environment},
+        )
+        return WarmPoolReservation(
+            snapshot=snapshot,
+            handle=handle,
+            environment=environment,
+        )
 
     async def mark_busy(self, workstation_id: str) -> WarmPoolSnapshot:
         """Transition a ``reserved`` slot into the ``busy`` state."""
@@ -260,7 +403,10 @@ class WarmPoolManager:
                     f"workstation '{workstation_id}' is not reserved"
                 )
             slot.state = WarmPoolState.BUSY
-            return slot.snapshot()
+            snapshot = slot.snapshot()
+
+        await self._emit_state_change(slot, snapshot, reason="busy")
+        return snapshot
 
     async def cancel_reservation(self, workstation_id: str) -> WarmPoolSnapshot:
         """Return a ``reserved`` slot back to ``idle`` without recycling."""
@@ -272,45 +418,173 @@ class WarmPoolManager:
                     f"workstation '{workstation_id}' is not reserved"
                 )
             slot.state = WarmPoolState.IDLE
-            return slot.snapshot()
+            snapshot = slot.snapshot()
+
+        await self._emit_state_change(slot, snapshot, reason="reservation-cancelled")
+        return snapshot
 
     async def release_slot(self, workstation_id: str) -> WarmPoolSnapshot:
         """Recycle a slot after a busy session finishes."""
 
         slot = self._require_slot(workstation_id)
-        async with slot.lock:
-            if slot.state not in {WarmPoolState.BUSY, WarmPoolState.RESERVED}:
-                raise WarmPoolStateError(
-                    f"workstation '{workstation_id}' cannot be recycled from {slot.state.value}"
-                )
-            slot.state = WarmPoolState.RECYCLING
-            await self._teardown_slot(slot)
-            slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
-            try:
-                await self._provision_slot(slot)
-            except WarmPoolProvisioningError:
-                LOGGER.exception(
-                    "Warm pool slot recycle failed",
-                    extra={
-                        "workstation_id": slot.workstation.id,
-                        "fingerprint_id": slot.fingerprint_id,
-                    },
-                )
-                slot.state = WarmPoolState.ERROR
-                raise
-            return slot.snapshot()
+        recycling_snapshot: WarmPoolSnapshot | None = None
+        recycled_snapshot: WarmPoolSnapshot | None = None
+        error_snapshot: WarmPoolSnapshot | None = None
+        try:
+            async with slot.lock:
+                if slot.state not in {WarmPoolState.BUSY, WarmPoolState.RESERVED}:
+                    raise WarmPoolStateError(
+                        f"workstation '{workstation_id}' cannot be recycled from {slot.state.value}"
+                    )
+                slot.state = WarmPoolState.RECYCLING
+                recycling_snapshot = slot.snapshot()
+                await self._teardown_slot(slot)
+                slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
+                try:
+                    await self._provision_slot(slot)
+                except WarmPoolProvisioningError:
+                    LOGGER.exception(
+                        "Warm pool slot recycle failed",
+                        extra={
+                            "workstation_id": slot.workstation.id,
+                            "fingerprint_id": slot.fingerprint_id,
+                        },
+                    )
+                    slot.state = WarmPoolState.ERROR
+                    error_snapshot = slot.snapshot()
+                    raise
+                recycled_snapshot = slot.snapshot()
+        except WarmPoolProvisioningError:
+            if recycling_snapshot is not None:
+                await self._emit_state_change(slot, recycling_snapshot, reason="recycling")
+            if error_snapshot is not None:
+                await self._emit_error(slot, error_snapshot, reason="recycle-failed")
+            raise
+
+        assert recycling_snapshot is not None and recycled_snapshot is not None
+        await self._emit_state_change(slot, recycling_snapshot, reason="recycling")
+        await self._emit_recycled(slot, recycled_snapshot, reason="released")
+        return recycled_snapshot
 
     async def drain(self) -> list[WarmPoolSnapshot]:
         """Stop accepting new reservations and tear down all slots."""
 
         self._draining = True
         snapshots: list[WarmPoolSnapshot] = []
+        events: list[tuple[_WarmSlot, WarmPoolSnapshot]] = []
         for slot in self._slots.values():
             async with slot.lock:
                 slot.state = WarmPoolState.DRAINING
                 await self._teardown_slot(slot)
-                snapshots.append(slot.snapshot())
+                snapshot = slot.snapshot()
+                snapshots.append(snapshot)
+            events.append((slot, snapshot))
+        for slot, snapshot in events:
+            await self._emit_state_change(slot, snapshot, reason="drain")
         return snapshots
+
+    async def drain_slot(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Mark a single workstation as drained and unavailable."""
+
+        slot = self._require_slot(workstation_id)
+        async with slot.lock:
+            if slot.state not in {WarmPoolState.IDLE, WarmPoolState.ERROR}:
+                raise WarmPoolStateError(
+                    f"workstation '{workstation_id}' cannot be drained from {slot.state.value}"
+                )
+            slot.state = WarmPoolState.DRAINING
+            await self._teardown_slot(slot)
+            snapshot = slot.snapshot()
+
+        await self._emit_state_change(slot, snapshot, reason="drain-slot")
+        return snapshot
+
+    async def enable_slot(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Re-enable a previously drained workstation by re-provisioning it."""
+
+        slot = self._require_slot(workstation_id)
+        recycling_snapshot: WarmPoolSnapshot | None = None
+        enabled_snapshot: WarmPoolSnapshot | None = None
+        error_snapshot: WarmPoolSnapshot | None = None
+        try:
+            async with slot.lock:
+                if slot.state not in {WarmPoolState.DRAINING, WarmPoolState.ERROR}:
+                    raise WarmPoolStateError(
+                        f"workstation '{workstation_id}' cannot be enabled from {slot.state.value}"
+                    )
+                slot.state = WarmPoolState.RECYCLING
+                recycling_snapshot = slot.snapshot()
+                await self._teardown_slot(slot)
+                slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
+                try:
+                    await self._provision_slot(slot)
+                except WarmPoolProvisioningError:
+                    LOGGER.exception(
+                        "Warm pool slot enable failed",
+                        extra={
+                            "workstation_id": slot.workstation.id,
+                            "fingerprint_id": slot.fingerprint_id,
+                        },
+                    )
+                    slot.state = WarmPoolState.ERROR
+                    error_snapshot = slot.snapshot()
+                    raise
+                enabled_snapshot = slot.snapshot()
+        except WarmPoolProvisioningError:
+            if recycling_snapshot is not None:
+                await self._emit_state_change(slot, recycling_snapshot, reason="enable")
+            if error_snapshot is not None:
+                await self._emit_error(slot, error_snapshot, reason="enable-failed")
+            raise
+
+        assert recycling_snapshot is not None and enabled_snapshot is not None
+        await self._emit_state_change(slot, recycling_snapshot, reason="enable")
+        await self._emit_recycled(slot, enabled_snapshot, reason="enabled")
+        return enabled_snapshot
+
+    async def restart_slot(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Forcefully recycle an idle workstation to refresh its environment."""
+
+        slot = self._require_slot(workstation_id)
+        recycling_snapshot: WarmPoolSnapshot | None = None
+        restarted_snapshot: WarmPoolSnapshot | None = None
+        error_snapshot: WarmPoolSnapshot | None = None
+        try:
+            async with slot.lock:
+                if slot.state not in {WarmPoolState.IDLE, WarmPoolState.ERROR}:
+                    raise WarmPoolStateError(
+                        "workstation "
+                        f"'{workstation_id}' cannot be restarted from {slot.state.value}"
+                    )
+                slot.state = WarmPoolState.RECYCLING
+                recycling_snapshot = slot.snapshot()
+                await self._teardown_slot(slot)
+                slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
+                try:
+                    await self._provision_slot(slot)
+                except WarmPoolProvisioningError:
+                    LOGGER.exception(
+                        "Warm pool slot restart failed",
+                        extra={
+                            "workstation_id": slot.workstation.id,
+                            "fingerprint_id": slot.fingerprint_id,
+                        },
+                    )
+                    slot.state = WarmPoolState.ERROR
+                    error_snapshot = slot.snapshot()
+                    raise
+                restarted_snapshot = slot.snapshot()
+        except WarmPoolProvisioningError:
+            if recycling_snapshot is not None:
+                await self._emit_state_change(slot, recycling_snapshot, reason="restart")
+            if error_snapshot is not None:
+                await self._emit_error(slot, error_snapshot, reason="restart-failed")
+            raise
+
+        assert recycling_snapshot is not None and restarted_snapshot is not None
+        await self._emit_state_change(slot, recycling_snapshot, reason="restart")
+        await self._emit_recycled(slot, restarted_snapshot, reason="restarted")
+        return restarted_snapshot
 
     def list_slots(self) -> list[WarmPoolSnapshot]:
         """Return snapshots for all known slots."""

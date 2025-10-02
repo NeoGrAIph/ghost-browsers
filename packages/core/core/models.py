@@ -779,7 +779,8 @@ class Session(BaseModel):
             and self.workstation.fingerprint_id != self.workstation_fingerprint_id
         ):
             raise ValueError(
-                "workstation.fingerprint_id must match workstation_fingerprint_id when both are provided"
+                "workstation.fingerprint_id must match "
+                "workstation_fingerprint_id when both are provided"
             )
 
         return self
@@ -902,13 +903,16 @@ class WorkstationEventType(str, Enum):
     """Event types describing workstation lifecycle transitions.
 
     Example:
-        >>> WorkstationEventType.UPDATED.value
-        'workstation.updated'
+        >>> WorkstationEventType.STATE_CHANGED.value
+        'workstation.state_changed'
     """
 
     CREATED = "workstation.created"
     UPDATED = "workstation.updated"
     RELEASED = "workstation.released"
+    STATE_CHANGED = "workstation.state_changed"
+    ERROR = "workstation.error"
+    RECYCLED = "workstation.recycled"
 
 
 class WorkstationEvent(BaseModel):
