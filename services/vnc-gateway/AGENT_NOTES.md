@@ -6,12 +6,12 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 ## Interfaces
 - `GET /sessions/{session_id}` — requires `X-VNC-Token` header; proxies to Runner HTTP API.
 - `WS /sessions/{session_id}/ws` — expects `X-VNC-Token` header; establishes bidirectional tunnel to Runner websocket endpoint.
-- `GET /metrics` — Prometheus exposition endpoint (text format, default registry).
+- `GET /metrics` — Prometheus exposition endpoint (text format) when the Prometheus backend is enabled; returns `404` when OTLP-only metrics are configured.
 
 ## Data & Models
 - `Settings` (`app/camou_vnc_gateway/config.py`): environment-driven configuration using `pydantic-settings`. Includes runner HTTP/WS base URLs and shared token secret.
 - `TokenValidator`: валидирует HS256 JWT с claim'ами `sid`, `exp`, `iss`, `sub`; хранит in-memory кэш `(nonce, iat)` для защиты от повторного использования токенов (per-session `OrderedDict` с лимитом и учётом TTL).
-- `metrics` (`app/camou_vnc_gateway/metrics.py`): инициализирует отдельный `CollectorRegistry`, gauge/ counter для соединений (`camou_vnc_gateway_active_connections`, `camou_vnc_gateway_connection_opens_total`) и counter `camou_vnc_gateway_token_validation_failures_total`.
+- `metrics` (`app/camou_vnc_gateway/metrics.py`): конфигурируемый набор бэкендов. По умолчанию поднимает отдельный `CollectorRegistry` (gauge/counter для соединений и ошибок токенов). Через настройки можно подключить внешний `CollectorRegistry` или OTLP-экспортёр (`MetricsEventExporter`). `/metrics` отдает payload только для Prometheus-конфигурации.
 
 - Токены — стандартные HS256 JWT; валидация выполняется через `python-jose` с проверкой `iss`, `exp`, `sid` и `iat`, после чего nonce/`iat` попадает в кэш чтобы предотвращать replay.
 - Connection metrics backed by in-memory `ConnectionRegistry` with async context manager; логируем события и одновременно обновляем Prometheus-gauge/counter в собственном registry.
@@ -28,11 +28,11 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 - `ConnectionRegistry` is process-local and not durable; acceptable for current scope. Gauge удаляется после закрытия последнего соединения, чтобы не накапливать пустые time-series.
 - Сервис остаётся частью публичного периметра: проверка VNC-токена обязательна даже для запросов,
   поступающих из кластера. Беспарольный режим распространяется только на REST/SSE/WS Gateway.
-- `/metrics` рассчитан на scrape раз в ≤30s; registry in-memory, поэтому при перезапуске значения счётчиков обнуляются.
+- `/metrics` рассчитан на scrape раз в ≤30s; registry in-memory, поэтому при перезапуске значения счётчиков обнуляются. При работе с OTLP-бэкендом HTTP-экспорт отключается (отдаём `404`).
 
 ## Known Gaps / TODO
 - [x] Replace manual websocket proxy with production-ready solution once Runner API stabilises (e.g. uvicorn websockets integration). (Done in this iteration.)
-- [ ] Integrate metrics registry with Prometheus/OpenTelemetry backend when available.
+- [x] Integrate metrics registry with Prometheus/OpenTelemetry backend when available. (Customisable backend wired via settings.)
 - [x] Harden token validator against replay (нужен учёт `iat`/одноразовых токенов поверх проверки истечения). (Implemented in-memory nonce/`iat` cache.)
 
 ## How to Test
@@ -44,3 +44,4 @@ poetry run pytest -q
 ```
 
 - 2025-10-09 · gpt-5-codex · Переписан WS-прокси на uvicorn/websockets `TaskGroup`-relay, добавлены интеграционные тесты с real сервером, внедрён Prometheus `/metrics` (active/total connections, token failures), расширен `TokenValidator` (nonce/iat cache) и документирован сценарий предотвращения replay.
+- 2025-10-10 · gpt-5-codex · Добавлена конфигурация метрик через настройки (Prometheus registry/OTLP exporter), обновлён `/metrics` endpoint и покрытие тестами.

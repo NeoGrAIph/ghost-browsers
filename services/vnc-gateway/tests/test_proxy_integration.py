@@ -7,10 +7,10 @@ import socket
 from typing import Any
 
 import websockets
-from starlette import status
-
 from camou_vnc_gateway.config import Settings
 from camou_vnc_gateway.proxy import RunnerProxy
+from starlette import status
+
 from tests.stubs import StubClientWebSocket as _StubClientWebSocket
 
 
