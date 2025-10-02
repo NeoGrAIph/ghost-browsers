@@ -14,7 +14,13 @@ from app.dependencies.session_manager import (
 from app.events import InMemorySessionEventPublisher
 from app.main import app
 from app.session_manager import SessionCreatePayload, SessionManager
-from app.warm_pool import WarmPoolReservation, WarmPoolSnapshot, WarmPoolState, WarmPoolStateError
+from app.warm_pool import (
+    WarmPoolReservation,
+    WarmPoolSnapshot,
+    WarmPoolState,
+    WarmPoolStateError,
+    WarmPoolStatistics,
+)
 from core.models import SessionVncDetails
 from httpx import AsyncClient
 
@@ -106,6 +112,7 @@ class _MainStubWarmPool:
         self.reservations: list[str] = []
         self.busy: list[str] = []
         self.releases: list[str] = []
+        self.draining = False
 
     async def start(self) -> None:
         """Warm pool stubs start instantly."""
@@ -182,6 +189,24 @@ class _MainStubWarmPool:
             state=WarmPoolState.IDLE,
         )
 
+    def get_statistics(self) -> WarmPoolStatistics:
+        """Return aggregate counts mirroring the real warm pool manager."""
+
+        idle = sum(1 for slot in self._slots.values() if slot["state"] is WarmPoolState.IDLE)
+        busy = sum(
+            1
+            for slot in self._slots.values()
+            if slot["state"] in {WarmPoolState.RESERVED, WarmPoolState.BUSY}
+        )
+        error = sum(1 for slot in self._slots.values() if slot["state"] is WarmPoolState.ERROR)
+        return WarmPoolStatistics(
+            total=len(self._slots),
+            idle=idle,
+            busy=busy,
+            error=error,
+            draining=self.draining,
+        )
+
     def _require_slot(self, workstation_id: str) -> dict[str, object]:
         try:
             return self._slots[workstation_id]
@@ -208,6 +233,7 @@ async def test_health_endpoint_reports_extended_metrics() -> None:
         proxy_enabled=True,
         proxy_http_base_url="http://proxy.example:3128",
         prewarm_failure_history_size=5,
+        prewarm_navigation=False,
     )
     publisher = InMemorySessionEventPublisher()
     warm_pool = _MainStubWarmPool()
@@ -241,6 +267,14 @@ async def test_health_endpoint_reports_extended_metrics() -> None:
     assert payload["runner_id"] == "runner-health"
     assert payload["camoufox_path"].endswith("camoufox")
     assert payload["slots"] == {"total": 3, "active": 2, "available": 1}
+    assert payload["warm_pool"] == {
+        "enabled": True,
+        "total": 3,
+        "idle": 1,
+        "busy": 2,
+        "error": 0,
+        "draining": False,
+    }
     assert payload["vnc"] == {
         "http_base_url": "http://localhost:9000/vnc",
         "ws_base_url": "ws://localhost:9000/vnc",
@@ -253,6 +287,8 @@ async def test_health_endpoint_reports_extended_metrics() -> None:
         "socks_base_url": None,
     }
     assert payload["prewarm"] == {
+        "enabled": False,
+        "start_url": None,
         "failures": 2,
         "last_error": "prewarm retry failed",
     }
@@ -305,6 +341,11 @@ async def test_metrics_endpoint_exposes_prometheus_payload() -> None:
     assert "runner_active_sessions" in body
     assert "runner_vnc_allocations" in body
     assert "runner_vnc_allocation_requests_total" in body
+    assert "runner_workstations_total" in body
+    assert "runner_session_allocate_seconds_count" in body
+    assert "runner_workstation_recycle_seconds_bucket" in body
+    assert "runner_workstation_proxy_errors_total" in body
+    assert "runner_workstation_navigation_errors_total" in body
 
 
 @pytest.mark.anyio("asyncio")

@@ -15,6 +15,7 @@ from .dependencies import (
     get_runner_settings,
     get_session_manager,
 )
+from .logging import configure_logging
 from .metrics import METRICS_REGISTRY
 from .routers import workstations_router
 from .session_manager import (
@@ -24,6 +25,8 @@ from .session_manager import (
     SessionNotFoundError,
     SessionUpdatePayload,
 )
+
+configure_logging()
 
 app = FastAPI(title="Ghost Browsers Runner", version="0.1.0")
 app.include_router(workstations_router)
@@ -91,6 +94,15 @@ async def health(
     active_slots = metrics.active_sessions
     total_slots = settings.slot_limit
     available_slots = max(total_slots - active_slots, 0)
+    warm_pool_stats = manager.get_warm_pool_statistics()
+    warm_pool_payload = {
+        "enabled": warm_pool_stats is not None and warm_pool_stats.total > 0,
+        "total": warm_pool_stats.total if warm_pool_stats else 0,
+        "idle": warm_pool_stats.idle if warm_pool_stats else 0,
+        "busy": warm_pool_stats.busy if warm_pool_stats else 0,
+        "error": warm_pool_stats.error if warm_pool_stats else 0,
+        "draining": warm_pool_stats.draining if warm_pool_stats else False,
+    }
     return {
         "status": "ok",
         "runner_id": settings.runner_id,
@@ -100,6 +112,7 @@ async def health(
             "active": active_slots,
             "available": available_slots,
         },
+        "warm_pool": warm_pool_payload,
         "vnc": {
             "http_base_url": str(settings.vnc_http_base_url),
             "ws_base_url": str(settings.vnc_ws_base_url),
@@ -112,6 +125,8 @@ async def health(
             "socks_base_url": _normalise_base_url(settings.proxy_socks_base_url),
         },
         "prewarm": {
+            "enabled": settings.prewarm_navigation,
+            "start_url": str(settings.start_url) if settings.start_url else None,
             "failures": metrics.prewarm_failure_count,
             "last_error": metrics.last_prewarm_error,
         },
