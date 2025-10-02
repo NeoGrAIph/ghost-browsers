@@ -25,6 +25,10 @@ from .models import (
     SessionStatus,
     SessionVncDetails,
     StartUrlWait,
+    WorkstationEvent,
+    WorkstationEventType,
+    WorkstationMeta,
+    WorkstationState,
 )
 from .websocket_bridge import (
     AbstractSessionEventBridge,
@@ -43,4 +47,8 @@ __all__ = [
     "SessionVncDetails",
     "AbstractSessionEventBridge",
     "InMemorySessionEventBridge",
+    "WorkstationEvent",
+    "WorkstationEventType",
+    "WorkstationMeta",
+    "WorkstationState",
 ]

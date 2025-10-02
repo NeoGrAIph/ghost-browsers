@@ -21,13 +21,21 @@
 - `Session`: UUID, `runner_id`, статус (`INIT→DEAD`), `created_at`, `last_seen_at`
   (alias `updated_at`), опциональный `ended_at`, флаги `headless`, `idle_ttl_seconds`
   (30–3600), `browser`, `labels`, `start_url`, `start_url_wait`, `ws_endpoint`,
-  `ws_public_endpoint`, `vnc_enabled`, `proxy`, `vnc`, произвольная метадата.
+  `ws_public_endpoint`, `vnc_enabled`, `proxy`, `vnc`, произвольная метадата, а также
+  `workstation_id`, `workstation_fingerprint_id` и вложенный `workstation` с
+  публичными метаданными. Модель гарантирует согласованность top-level полей с
+  вложенным объектом.
 - `SessionEvent`: уникальный `id`, тип (`created|updated|ended`), snapshot сессии,
   время возникновения, опциональная причина, удобный флаг `is_terminal` (TRUE только
   для `SessionStatus.DEAD`).
+- `WorkstationMeta`: `id`, `fingerprint_id`, `state`, опциональный `proxy_summary`,
+  пользовательская метадата (фильтрована под UI).
+- `WorkstationEvent`: уникальный `id`, `type` (`created|updated|released`), snapshot
+  метаданных, `occurred_at`, опциональная `reason` (строго trim/не пустая).
 - Подмодели: `SessionProxySettings` (минимум один URL), `SessionVncDetails`
   (хотя бы один из HTTP/WS URL, опциональный токен с TTL ≤ 300 секунд).
-- Перечисления: `SessionStatus`, `StartUrlWait`, `SessionEventType`.
+- Перечисления: `SessionStatus`, `StartUrlWait`, `SessionEventType`,
+  `WorkstationState`, `WorkstationEventType`.
 
 ## Decisions
 - Используем `frozen=True` для моделей, чтобы сделать объекты неизменяемыми и
@@ -51,6 +59,9 @@
 - `Runner.available_slots ≤ total_slots`; OFFLINE-раннер не может быть `healthy`.
 - `SessionProxySettings` требует хотя бы одного URL, предотвращая пустые прокси.
 - `SessionVncDetails` требует хотя бы один из HTTP/WS URL и валидный TTL при наличии токена.
+- `Session.workstation` валидируется на совпадение с `workstation_id` и
+  `workstation_fingerprint_id`, чтобы избежать рассинхронизации payload’ов.
+- `WorkstationEvent` требует `occurred_at` с tzinfo и непустую `reason` при наличии.
 
 ## Known Gaps / TODO
 - [ ] Провести нагрузочное тестирование in-memory моста под массовыми подписками,
@@ -77,3 +88,5 @@
 - 2025-02-23 · gpt-5-codex — Удалены `pytest.importorskip`; тесты требуют установки зависимостей,
   добавлена документация по запуску без пропусков.
 - 2025-10-14 · gpt-5-codex — Расширен `Session` полем `ws_public_endpoint` и обновлены тесты сериализации.
+- 2025-10-15 · ChatGPT — Добавлены модели и события рабочей станции, расширен контракт `Session`
+  workstation-полями, обновлены тесты сериализации/валидации.
