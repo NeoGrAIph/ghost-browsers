@@ -68,6 +68,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
   показывать последние сбои без риска утечки памяти.
+- **Container image**: Runner контейнер собирается из `mcr.microsoft.com/playwright/python`, использует Poetry для in-project виртуального окружения под учёткой `pwuser`, копирует `camoufox` и `packages/*` рядом со сервисом и не выполняет `python -m camoufox fetch` на этапе сборки или рантайма.
 - **Warm pool-backed sessions**: `SessionManager` теперь зависит от `WarmPoolManager`, резервирует слот до создания сессии и
   рециклирует его при завершении. В случае исчерпания слотов API возвращает 429.
 - **Warm pool strategy modes**: `RunnerSettings.warm_pool_mode` позволяет выбирать между
@@ -107,6 +108,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - Взаимодействие с Gateway/SSE происходит только внутри доверенной сети кластера; авторизация на уровне HTTP не ожидается,
   вместо этого требуется сетевое разделение и настройка доверенных CIDR на стороне Gateway.
 - Доступность VNC зависит от бинарей `Xvfb`, `x11vnc` и `websockify`; при их отсутствии `ProcessVncController` отключается и сессии остаются без VNC-URL.
+- Docker-образ предполагает запуск под `pwuser`, PATH включает `.venv/bin`, а контекст сборки обязан содержать каталоги `camoufox` и `packages`, иначе Poetry не найдёт path-зависимости.
 
 ## Known Gaps / TODO
 - [x] Зафиксирован профиль нагрузки для in-memory издателя: 10k событий (10 параллельных продюсеров) удерживают publish avg ≤ 20 мс, peak ≤ 100 мс, drain ≤ 200 мс (см. `test_inmemory_publisher_drain_latency_under_parallel_load`).
@@ -119,9 +121,11 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_config_warm_pool.py -q`
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_warm_pool.py -q`
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_workstations_api.py -q`
+- `docker build -f services/runner/Dockerfile -t ghost-runner:latest .`
 
 ## Changelog (for agents)
 - 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
+- 2025-10-03 · gpt-5-codex · Добавлен Dockerfile на базе Playwright-образа, Poetry-инсталляция зависимостей и `.dockerignore` для сборки runner внутри контейнера без выполнения `camoufox fetch`.
 - 2025-10-05 · gpt-5-codex · Sanitised runner VNC payloads to defer token issuance to the gateway and extended unit tests.
 - 2025-10-07 · gpt-5-codex · Зафиксировано использование in-memory event publisher как основного транспорта, обновлены Known Gaps.
 - 2025-10-08 · gpt-5-codex · Добавлен HTTP publisher (`POST /events`) и покрытие unit-тестами + конфиг-переключатель в зависимостях.
@@ -141,4 +145,3 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-21 · gpt-5-codex · Реализованы режимы warm pool (warm-only/cold-only/hybrid), гибридный fallback на `launch_browser`, расширение метаданных `browser_origin` и покрытие тестами.
 - 2025-10-22 · gpt-5-codex · Добавлен `GET /sessions` для восстановления состояния gateway и юнит-тесты на пустой и заполненный реестры.
 - 2025-10-24 · gpt-5-codex · Добавлен стресс-тест in-memory издателя (10k событий) и задокументированы пороги publish/drain.
-

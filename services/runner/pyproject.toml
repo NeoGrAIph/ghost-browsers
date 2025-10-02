@@ -2,6 +2,7 @@
 name = "camou-runner"
 version = "0.1.0"
 description = "Ghost-browsers Session Runner (to be implemented)"
+authors = ["Ghost Browsers <ops@ghost.local>"]
 packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
@@ -27,3 +28,7 @@ markers = [
     "anyio: mark tests requiring the AnyIO event loop",
 ]
 testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

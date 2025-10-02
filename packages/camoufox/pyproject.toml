@@ -2,6 +2,7 @@
 name = "camoufox"
 version = "0.0.0"
 description = "Stub Camoufox bindings for local development and tests"
+authors = ["Ghost Browsers <ops@ghost.local>"]
 packages = [{include = "camoufox", from = "../.."}]
 
 [tool.poetry.dependencies]

@@ -1,21 +1,34 @@
 # syntax=docker/dockerfile:1.6
 FROM mcr.microsoft.com/playwright/python:v1.54.0-noble
 
-# Важно: Playwright-образ уже содержит системные зависимости и Xvfb.
-# Переключаемся на встроенного non-root пользователя pwuser (он есть в образе).
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_VERSION=1.8.3 \
+    POETRY_HOME=/opt/poetry \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=1 \
+    POETRY_VIRTUALENVS_CREATE=1 \
+    PATH="${POETRY_HOME}/bin:${PATH}"
+
+USER root
+RUN pip install --upgrade pip && pip install "poetry==${POETRY_VERSION}"
+
+WORKDIR /workspace
+# Copy the repository segments that runner depends on directly. Path dependencies
+# in pyproject.toml assume ``packages`` and the top-level ``camoufox`` package
+# live next to the runner service inside the workspace.
+COPY camoufox ./camoufox
+COPY packages ./packages
+COPY services/runner ./services/runner
+RUN chown -R pwuser:pwuser /workspace
+
 USER pwuser
-WORKDIR /home/pwuser/app
+WORKDIR /workspace/services/runner
+RUN poetry install --without dev
 
-# Устанавливаем Camoufox (при необходимости зафиксируйте версию)
-# Примечание: пакет playwright как зависимость Camoufox устанавливать отдельно обычно не требуется,
-# но если ваш проект его использует напрямую, добавьте `pip install playwright==<версия>`.
-RUN pip install --no-cache-dir -U "camoufox[geoip]"
+ENV PATH="/workspace/services/runner/.venv/bin:${PATH}" \
+    CAMOUFOX_HEADLESS=virtual
 
-# Скачиваем сам браузер и данные Camoufox В КЕШ pwuser (исключит повторные докачки)
-RUN python -m camoufox fetch
-
-# Headless через виртуальный дисплей (Xvfb уже в образе)
-ENV CAMOUFOX_HEADLESS=virtual
-
-# Опционально: быстрый smoke-тест (удалите/замените на запуск сервиса)
-CMD ["python", "-m", "camoufox", "version"]
+EXPOSE 8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
