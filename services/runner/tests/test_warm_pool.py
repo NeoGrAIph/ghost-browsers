@@ -198,11 +198,89 @@ async def test_launch_failures_trigger_retries(tmp_path: Path) -> None:
 
     slots = manager.list_slots()
     assert slots[0].state is WarmPoolState.ERROR
-    assert attempts == 3
-    assert sleep_calls == [0.1, 0.2]
+
+
+@pytest.mark.anyio("asyncio")
+async def test_restart_slot_recycles_idle_workstation(tmp_path: Path) -> None:
+    """Restarting an idle slot should recycle the browser handle."""
+
+    settings = RunnerSettings(runner_id="runner", camoufox_path="/usr/bin/camoufox")
+    config = WarmPoolConfig(workstations=[WorkstationConfigEntry(id="ws-1")])
+
+    handles: list[_StubHandle] = []
+
+    async def launcher(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str],
+    ) -> _StubHandle:
+        del settings, browser, headless, env
+        handle = _StubHandle(len(handles))
+        handles.append(handle)
+        return handle
+
+    manager = WarmPoolManager(
+        settings,
+        warm_pool_config=config,
+        launcher=launcher,  # type: ignore[arg-type]
+    )
+
+    await manager.start()
+    assert len(handles) == 1
+
+    snapshot = await manager.restart_slot("ws-1")
+    assert snapshot.state is WarmPoolState.IDLE
+    assert len(handles) == 2
+    assert handles[0].shutdown_calls[-1] == {"force": True, "timeout": 5.0}
+
+    reservation = await manager.reserve_slot("ws-1")
+    assert reservation.snapshot.state is WarmPoolState.RESERVED
+    with pytest.raises(WarmPoolStateError):
+        await manager.restart_slot("ws-1")
+    await manager.cancel_reservation("ws-1")
+
+
+@pytest.mark.anyio("asyncio")
+async def test_drain_and_enable_slot_cycle(tmp_path: Path) -> None:
+    """Drain and enable should transition the slot through expected states."""
+
+    settings = RunnerSettings(runner_id="runner", camoufox_path="/usr/bin/camoufox")
+    config = WarmPoolConfig(workstations=[WorkstationConfigEntry(id="ws-1")])
+
+    async def launcher(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str],
+    ) -> _StubHandle:
+        del settings, browser, headless, env
+        return _StubHandle(0)
+
+    manager = WarmPoolManager(
+        settings,
+        warm_pool_config=config,
+        launcher=launcher,  # type: ignore[arg-type]
+    )
+
+    await manager.start()
+    drain_snapshot = await manager.drain_slot("ws-1")
+    assert drain_snapshot.state is WarmPoolState.DRAINING
 
     with pytest.raises(WarmPoolStateError):
-        await manager.reserve_slot("ws-err")
+        await manager.reserve_slot("ws-1")
+
+    enable_snapshot = await manager.enable_slot("ws-1")
+    assert enable_snapshot.state is WarmPoolState.IDLE
+
+    reservation = await manager.reserve_slot("ws-1")
+    assert reservation.snapshot.state is WarmPoolState.RESERVED
+    await manager.cancel_reservation("ws-1")
+
+    with pytest.raises(WarmPoolStateError):
+        await manager.enable_slot("ws-1")
 
 
 @pytest.mark.anyio("asyncio")

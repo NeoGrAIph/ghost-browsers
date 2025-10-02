@@ -12,6 +12,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import RunnerSettings
 from .dependencies import get_runner_settings, get_session_manager
+from .routers import workstations_router
 from .metrics import METRICS_REGISTRY
 from .session_manager import (
     SessionCreatePayload,
@@ -22,6 +23,7 @@ from .session_manager import (
 )
 
 app = FastAPI(title="Ghost Browsers Runner", version="0.1.0")
+app.include_router(workstations_router)
 
 
 def _normalise_base_url(url: Any | None) -> str | None:

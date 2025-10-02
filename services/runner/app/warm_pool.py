@@ -283,22 +283,61 @@ class WarmPoolManager:
                 raise WarmPoolStateError(
                     f"workstation '{workstation_id}' cannot be recycled from {slot.state.value}"
                 )
-            slot.state = WarmPoolState.RECYCLING
-            await self._teardown_slot(slot)
-            slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
-            try:
-                await self._provision_slot(slot)
-            except WarmPoolProvisioningError:
-                LOGGER.exception(
-                    "Warm pool slot recycle failed",
-                    extra={
-                        "workstation_id": slot.workstation.id,
-                        "fingerprint_id": slot.fingerprint_id,
-                    },
+            return await self._recreate_slot(slot, "Warm pool slot recycle failed")
+
+    async def restart_slot(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Force a fresh browser instance for ``workstation_id``.
+
+        Args:
+            workstation_id: Identifier of the warm workstation slot to recycle.
+
+        Returns:
+            WarmPoolSnapshot: Snapshot describing the refreshed workstation.
+
+        Raises:
+            WarmPoolStateError: If the workstation is currently reserved, busy,
+                or draining, or when the identifier is unknown.
+        """
+
+        slot = self._require_slot(workstation_id)
+        async with slot.lock:
+            if slot.state is WarmPoolState.DRAINING:
+                raise WarmPoolStateError(
+                    f"workstation '{workstation_id}' is draining"
                 )
-                slot.state = WarmPoolState.ERROR
-                raise
+            if slot.state is WarmPoolState.RESERVED:
+                raise WarmPoolStateError(
+                    f"workstation '{workstation_id}' is reserved"
+                )
+            if slot.state is WarmPoolState.BUSY:
+                raise WarmPoolStateError(
+                    f"workstation '{workstation_id}' is busy"
+                )
+            return await self._recreate_slot(slot, "Warm pool slot restart failed")
+
+    async def drain_slot(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Mark ``workstation_id`` as draining and tear it down."""
+
+        slot = self._require_slot(workstation_id)
+        async with slot.lock:
+            if slot.state not in {WarmPoolState.IDLE, WarmPoolState.ERROR}:
+                raise WarmPoolStateError(
+                    f"workstation '{workstation_id}' cannot be drained from {slot.state.value}"
+                )
+            slot.state = WarmPoolState.DRAINING
+            await self._teardown_slot(slot)
             return slot.snapshot()
+
+    async def enable_slot(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Re-provision a drained workstation and return it to service."""
+
+        slot = self._require_slot(workstation_id)
+        async with slot.lock:
+            if slot.state is not WarmPoolState.DRAINING:
+                raise WarmPoolStateError(
+                    f"workstation '{workstation_id}' is not draining"
+                )
+            return await self._recreate_slot(slot, "Warm pool slot enable failed")
 
     async def drain(self) -> list[WarmPoolSnapshot]:
         """Stop accepting new reservations and tear down all slots."""
@@ -435,6 +474,28 @@ class WarmPoolManager:
         if slot.temp_dir and slot.temp_dir.exists():
             shutil.rmtree(slot.temp_dir, ignore_errors=True)
         slot.temp_dir = None
+
+    async def _recreate_slot(
+        self, slot: _WarmSlot, failure_message: str
+    ) -> WarmPoolSnapshot:
+        """Recycle ``slot`` by tearing down and provisioning a fresh browser."""
+
+        slot.state = WarmPoolState.RECYCLING
+        await self._teardown_slot(slot)
+        slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
+        try:
+            await self._provision_slot(slot)
+        except WarmPoolProvisioningError:
+            LOGGER.exception(
+                failure_message,
+                extra={
+                    "workstation_id": slot.workstation.id,
+                    "fingerprint_id": slot.fingerprint_id,
+                },
+            )
+            slot.state = WarmPoolState.ERROR
+            raise
+        return slot.snapshot()
 
     async def _safe_shutdown(self, handle: BrowserSessionHandle | None) -> None:
         """Best-effort shutdown helper used during recycling and drain."""

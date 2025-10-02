@@ -21,6 +21,10 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
     runner-а: `runner_active_sessions`, `runner_reaper_runs_total`,
     `runner_reaper_expired_sessions_total`, `runner_reaper_last_run_timestamp`,
     `runner_vnc_allocations`, `runner_vnc_allocation_requests_total`.
+  - `GET /workstations` — возвращает снимки слотов warm pool (state, fingerprint, proxy).
+  - `POST /workstations/{id}/restart` — принудительно рециклирует слот (idle/error → idle).
+  - `POST /workstations/{id}/drain` — переводит слот в `draining`, закрывая браузер.
+  - `POST /workstations/{id}/enable` — репровиженит `draining` слот и возвращает его в `idle`.
 - **Event transport**
   - `SessionEventPublisher.publish(SessionEvent)` — protocol for pushing lifecycle events downstream. Default implementation stores events in memory (`InMemorySessionEventPublisher`) but can be swapped for HTTP/SSE bridges via `CallbackSessionEventPublisher`.
   - `HttpSessionEventPublisher` — при наличии `RunnerSettings.event_endpoint` POST-ит события на `gateway /events`.
@@ -53,6 +57,10 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   показывать последние сбои без риска утечки памяти.
 - **Warm pool-backed sessions**: `SessionManager` теперь зависит от `WarmPoolManager`, резервирует слот до создания сессии и
   рециклирует его при завершении. В случае исчерпания слотов API возвращает 429.
+- **Warm pool operations API**: Роутер `/workstations` использует общий singleton `WarmPoolManager`
+  (через `get_warm_pool_manager`), лениво вызывает `start()` и предоставляет операции
+  restart/drain/enable. `WarmPoolStateError` мапится на HTTP 409, а сообщения вида
+  «unknown workstation» → 404; это не ломает ленивое резервирование слотов в `SessionManager`.
 - **Gateway proxy compatibility**: `SessionCreatePayload` остаётся публичным контрактом, но теперь вызывается через Gateway, потому важна обратная совместимость и строгая валидация.
 - **Playwright launch lifecycle**: `app.browser.launch_browser` стартует Playwright в режиме `launch-server`, сохраняет `wsEndpoint`/PID в метаданных и позволяет `SessionManager` останавливать процесс при переходе в `DEAD` или очистке endpoint. Исключения при старте выполняют откат без публикации событий.
 - **Idle TTL reaper**: `SessionManager` содержит AnyIO-based reaper, который вызывает
@@ -107,3 +115,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-15 · gpt-5-codex · Добавлены warm pool-конфиги (JSON), загрузка при старте, новые настройки и модульные тесты на валидацию/парсинг.
 - 2025-10-16 · gpt-5-codex · Реализован ``WarmPoolManager`` с управлением состояниями, recycle, преднавигацией и юнит-тестами на ключевые сценарии.
 - 2025-10-17 · gpt-5-codex · Интегрирован warm pool в `SessionManager`/API, добавлен отклик 429 при нехватке слотов и покрытие тестами.
+- 2025-10-18 · gpt-5-codex · Добавлен API `/workstations`, методы per-slot restart/drain/enable и дополнительные тесты warm pool/роутера.
