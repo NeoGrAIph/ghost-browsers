@@ -13,6 +13,34 @@
 - Docstring/inline-комментарии; тесты на создание/удаление сессии (без реального браузера — заглушки).
 - Обновить `AGENT_NOTES.md` (Interfaces/Decisions/TODO/How to Test).
 
+## Сборка контейнера
+
+1. Убедитесь, что Docker поддерживает BuildKit (`DOCKER_BUILDKIT=1`).
+2. Соберите образ с предзагруженным Camoufox-браузером:
+
+   ```bash
+   docker build \
+     -f services/runner/Dockerfile \
+     -t ghost-runner:latest \
+     .
+   ```
+
+   Образ использует wheel `camoufox[geoip]==0.4.11`, прогружает артефакты через `python -m camoufox fetch` **на этапе сборки** и запускается под `pwuser`.
+
+3. Запуск локально:
+
+   ```bash
+   docker run --rm -p 8080:8080 ghost-runner:latest
+   ```
+
+   После старта проверьте окружение:
+
+   ```bash
+   curl http://localhost:8080/health | jq
+   ```
+
+   Ответ должен содержать `camoufox_path` со значением `/usr/bin/camoufox` и статус `ok`.
+
 ## Контракт `/health`
 
 Эндпоинт `GET /health` должен возвращать JSON-структуру:

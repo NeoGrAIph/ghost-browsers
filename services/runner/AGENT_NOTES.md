@@ -68,7 +68,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
   показывать последние сбои без риска утечки памяти.
-- **Container image**: Runner контейнер собирается из `mcr.microsoft.com/playwright/python`, использует Poetry для in-project виртуального окружения под учёткой `pwuser`, копирует `camoufox` и `packages/*` рядом со сервисом и не выполняет `python -m camoufox fetch` на этапе сборки или рантайма.
+- **Container image**: Runner контейнер собирается из `mcr.microsoft.com/playwright/python`, использует Poetry для in-project виртуального окружения под учёткой `pwuser`, устанавливает production wheel `camoufox[geoip]==0.4.11`, прогружает артефакты Camoufox во время сборки, удаляет локальные stub-пакеты из образа и монтирует BuildKit-кеши для Poetry/pip.
 - **Warm pool-backed sessions**: `SessionManager` теперь зависит от `WarmPoolManager`, резервирует слот до создания сессии и
   рециклирует его при завершении. В случае исчерпания слотов API возвращает 429.
 - **Warm pool strategy modes**: `RunnerSettings.warm_pool_mode` позволяет выбирать между
@@ -145,3 +145,5 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-21 · gpt-5-codex · Реализованы режимы warm pool (warm-only/cold-only/hybrid), гибридный fallback на `launch_browser`, расширение метаданных `browser_origin` и покрытие тестами.
 - 2025-10-22 · gpt-5-codex · Добавлен `GET /sessions` для восстановления состояния gateway и юнит-тесты на пустой и заполненный реестры.
 - 2025-10-24 · gpt-5-codex · Добавлен стресс-тест in-memory издателя (10k событий) и задокументированы пороги publish/drain.
+- 2025-10-25 · gpt-5-codex · Dockerfile переключён на production `camoufox[geoip]==0.4.11` с прогревом артефактов на сборке,
+  добавлены BuildKit-кеши, расширен `.dockerignore`, README-TASK дополнен инструкциями по сборке/запуску.
