@@ -17,6 +17,10 @@
   - `PATCH /sessions/commands/{id}` — проксирование частичного обновления на Runner с обновлением регистра.
   - `DELETE /sessions/commands/{id}` — удаление сессии через Runner с очисткой локального регистра.
   - `GET /runners` — список зарегистрированных раннеров с признаком здоровья и последним heartbeat.
+  - `GET /workstations` — перечень рабочих станций с последними событиями.
+  - `GET /workstations/{id}` — конкретная рабочая станция по идентификатору.
+  - `POST /workstations` — регистрация/обновление метаданных рабочей станции без события.
+  - `POST /workstations/events` — приём `WorkstationEvent` и фиксация последнего состояния/причины.
 - Streaming:
   - `GET /events` — SSE-канал, ретранслирующий `SessionEvent` (кеш последнего события на подписчика);
     поддерживает аутентификацию через заголовок `Authorization` или query-параметр
@@ -34,7 +38,9 @@
 - `Session` теперь хранит прямой `ws_endpoint` от runner'а и проксируемый `ws_public_endpoint`; Gateway больше не перезаписывает
   прямой URL в REST-ответах, чтобы внутренние клиенты могли подключаться без прокси.
 - `SessionRegistry`/`RunnerRegistry` — простые in-memory контейнеры с `asyncio.Lock` для потокобезопасности.
+- `WorkstationRegistry` — in-memory карта рабочих станций, сохраняет `WorkstationRecord` с последним событием.
 - `InMemorySessionEventBridge` (из core) хранит последнее событие и раздаёт подписчикам.
+- `WorkstationRecord`/`WorkstationUpsertPayload` — gateway-модели для REST, совместимы с `core.WorkstationMeta`/`WorkstationEvent` и сохраняют идентификаторы/состояние.
 
 ## Decisions
 - JWKS кэшируется в памяти и повторно запрашивается при отсутствии нужного `kid` (устойчивость к ротации ключей).
@@ -42,6 +48,7 @@
 - Runner-инстансы больше не присылают пред-выданные VNC токены; `VncTokenService.enrich_vnc_details` всегда монтирует подпись, если поле `token` отсутствует, перезаписывая TTL на конфигурационный.
 - Переиспользуем подход из beta-контроллера: для каждого раннера можно настроить шаблоны публичных VNC-URL (HTTP/WS) и при регистрации сессии мы переписываем внутренние адреса на общую точку входа, что позволяет использовать ограниченное число наружных портов.
 - SSE реализовано через `StreamingResponse`, WebSocket — нативный FastAPI роутер; для обоих каналов используется единый event bridge.
+- Маршруты `/workstations` валидируют payload через `WorkstationUpsertPayload`/`WorkstationEvent` и возвращают `WorkstationRecord`, сохраняя идентификаторы и состояние даже при мета-апдейтах.
 - Эндпоинты мутаций (`POST /sessions`, `/sessions/{id}/proxy`, `/sessions/{id}/touch`, `DELETE /sessions/{id}`)
   после успешного завершения формируют `SessionEvent` и отправляют его в bridge, чтобы UI обновлялся даже при изменениях,
   инициированных самим Gateway.
@@ -108,3 +115,4 @@
 - 2025-10-15 · gpt-5-codex · Добавлена конфигурация доверенных CIDR/заголовков, обход аутентификации для внутренних вызовов
   и покрывающие unit-тесты HTTP/SSE/WS.
 - 2025-10-16 · gpt-5-codex · Уточнена документация зависимостей безопасности и обработка пустых env-карт для доверенных CIDR.
+- 2025-10-17 · gpt-5-codex · Добавлены registry/роуты для рабочих станций, модели `WorkstationRecord`/`WorkstationUpsertPayload` и unit-тесты API контрактов.

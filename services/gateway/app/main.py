@@ -10,7 +10,7 @@ from core import InMemorySessionEventBridge
 from fastapi import FastAPI
 
 from .config import GatewaySettings
-from .routers import events_router, runners_router, sessions_router
+from .routers import events_router, runners_router, sessions_router, workstations_router
 from .security import KeycloakAuthenticator, VncTokenService
 from .services.discovery import (
     RunnerDiscoveryService,
@@ -21,6 +21,7 @@ from .services.runner_health import RunnerHealthClient
 from .services.runner_registry import RunnerRegistry
 from .services.runner_ws_proxy import RunnerWebSocketProxy
 from .services.session_registry import SessionRegistry
+from .services.workstation_registry import WorkstationRegistry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.runner_client = RunnerCommandClient()
     app.state.runner_health_client = RunnerHealthClient()
     app.state.runner_ws_proxy = RunnerWebSocketProxy()
+    app.state.workstation_registry = WorkstationRegistry()
     app.state.runner_discovery = RunnerDiscoveryService(
         settings=config,
         runner_registry=app.state.runner_registry,
@@ -51,6 +53,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(runners_router)
     app.include_router(events_router)
+    app.include_router(workstations_router)
 
     _LOGGER.debug(
         "Gateway application initialised",
