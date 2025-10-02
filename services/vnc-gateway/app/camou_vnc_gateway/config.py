@@ -11,6 +11,7 @@ dependency injection.  Tests may override the dependency with
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AnyHttpUrl, AnyUrl, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -41,6 +42,18 @@ class Settings(BaseSettings):
     token_secret:
         Shared secret string used by :class:`~app.token.TokenValidator` to
         validate HMAC based VNC tokens.
+    metrics_backend:
+        Metrics exporter backend.  ``"prometheus"`` (default) keeps using a
+        :class:`prometheus_client.CollectorRegistry`, while ``"otlp"`` forwards
+        events to the configured OTLP exporter.
+    metrics_registry_import:
+        Optional ``module:attribute`` string pointing to an existing
+        :class:`prometheus_client.CollectorRegistry` instance or factory.  Used
+        only when ``metrics_backend`` equals ``"prometheus"``.
+    metrics_otlp_exporter_import:
+        Optional ``module:attribute`` string returning an object implementing
+        :class:`~camou_vnc_gateway.metrics.MetricsEventExporter`.  Only consulted
+        for the ``"otlp"`` backend.
     """
 
     model_config = SettingsConfigDict(env_prefix="VNC_GATEWAY_", extra="ignore")
@@ -48,6 +61,9 @@ class Settings(BaseSettings):
     runner_http_base: AnyHttpUrl = Field(default="http://runner:8080")
     runner_ws_base: RunnerWebsocketUrl = Field(default="ws://runner:8080")
     token_secret: str = Field(min_length=1, default="dev-secret")
+    metrics_backend: Literal["prometheus", "otlp"] = Field(default="prometheus")
+    metrics_registry_import: str | None = Field(default=None)
+    metrics_otlp_exporter_import: str | None = Field(default=None)
 
 @lru_cache
 def get_settings() -> Settings:

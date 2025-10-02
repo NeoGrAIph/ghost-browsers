@@ -5,12 +5,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
+from camou_vnc_gateway.config import Settings
+from camou_vnc_gateway.proxy import RunnerProxy
 from starlette import status
 from websockets.exceptions import ConnectionClosedOK
 
-from camou_vnc_gateway.config import Settings
-from camou_vnc_gateway.proxy import RunnerProxy
 from tests.stubs import StubClientWebSocket
 
 
@@ -48,6 +47,8 @@ class StubRunnerConnection:
         """Queue a payload that should be delivered to the client."""
 
         self._incoming.put_nowait(payload)
+
+
 class DummyConnectContext:
     """Context manager mimicking :func:`websockets.connect`."""
 
@@ -73,10 +74,17 @@ async def _run_forward_websocket_happy_path(monkeypatch) -> None:
 
     monkeypatch.setattr("camou_vnc_gateway.proxy.websockets.connect", fake_connect)
 
-    settings = Settings(token_secret="secret", runner_http_base="http://runner", runner_ws_base="ws://runner")
+    settings = Settings(
+        token_secret="secret",
+        runner_http_base="http://runner",
+        runner_ws_base="ws://runner",
+    )
     proxy = RunnerProxy(settings)
 
-    websocket = StubClientWebSocket(query_string="target_port=5901", headers={"sec-websocket-protocol": "binary"})
+    websocket = StubClientWebSocket(
+        query_string="target_port=5901",
+        headers={"sec-websocket-protocol": "binary"},
+    )
 
     runner.queue_incoming("runner-text")
     runner.queue_incoming(b"runner-bytes")
@@ -105,7 +113,11 @@ async def _run_forward_websocket_invalid_port(monkeypatch) -> None:
 
     monkeypatch.setattr("camou_vnc_gateway.proxy.websockets.connect", fail_connect)
 
-    settings = Settings(token_secret="secret", runner_http_base="http://runner", runner_ws_base="ws://runner")
+    settings = Settings(
+        token_secret="secret",
+        runner_http_base="http://runner",
+        runner_ws_base="ws://runner",
+    )
     proxy = RunnerProxy(settings)
 
     websocket = StubClientWebSocket(query_string="target_port=invalid")
@@ -124,7 +136,11 @@ async def _run_forward_websocket_network_error(monkeypatch) -> None:
 
     monkeypatch.setattr("camou_vnc_gateway.proxy.websockets.connect", fake_connect)
 
-    settings = Settings(token_secret="secret", runner_http_base="http://runner", runner_ws_base="ws://runner")
+    settings = Settings(
+        token_secret="secret",
+        runner_http_base="http://runner",
+        runner_ws_base="ws://runner",
+    )
     proxy = RunnerProxy(settings)
 
     websocket = StubClientWebSocket()

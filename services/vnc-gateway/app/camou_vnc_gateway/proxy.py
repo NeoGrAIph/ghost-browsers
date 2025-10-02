@@ -268,7 +268,11 @@ class RunnerProxy:
                         if websocket.application_state is WebSocketState.DISCONNECTED:
                             break
 
-                        sender = websocket.send_text if isinstance(payload, str) else websocket.send_bytes
+                        sender = (
+                            websocket.send_text
+                            if isinstance(payload, str)
+                            else websocket.send_bytes
+                        )
                         try:
                             async with asyncio.timeout(self._ws_send_timeout):
                                 await sender(payload)
@@ -283,7 +287,7 @@ class RunnerProxy:
                         tg.create_task(runner_to_client())
                 except* RelayTimeoutError as exc_group:
                     exc = exc_group.exceptions[0]
-                    raise exc
+                    raise exc from None
         except RelayTimeoutError as exc:
             LOG.warning(
                 "WebSocket relay timeout",
@@ -314,7 +318,11 @@ class RunnerProxy:
             "transfer-encoding",
             "upgrade",
         }
-        return {k: headers[k] for k in keys if k.lower() not in hop_by_hop and k.lower() != "host"}
+        return {
+            k: headers[k]
+            for k in keys
+            if k.lower() not in hop_by_hop and k.lower() != "host"
+        }
 
     @staticmethod
     def _filter_response_headers(headers: httpx.Headers) -> dict[str, str]:
