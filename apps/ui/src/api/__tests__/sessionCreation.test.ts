@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { buildSessionCreatePayload } from '../sessionCreation';
-import type { SessionComposerValues } from '../../components/SessionComposer';
+import type { SessionComposerSubmission } from '../sessionCreation';
 
 describe('session creation adapter', () => {
-  const baseValues: SessionComposerValues = {
+  const baseValues: SessionComposerSubmission = {
     browserName: 'Camoufox',
     region: 'eu-central',
     proxyId: 'proxy-1',

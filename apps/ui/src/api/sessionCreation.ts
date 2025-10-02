@@ -1,6 +1,19 @@
 import type { SessionComposerValues } from '../components/SessionComposer';
 
 /**
+ * Subset of form values that the Runner payload adapter depends on.
+ */
+export interface SessionComposerSubmission extends SessionComposerValues {
+  readonly headless: boolean;
+  readonly idleTtlSeconds: number;
+  readonly startUrl: string;
+  readonly startUrlWait: 'none' | 'domcontentloaded' | 'load';
+  readonly proxyHttp: string;
+  readonly proxyHttps: string;
+  readonly proxySocks: string;
+}
+
+/**
  * JSON payload accepted by the Runner ``POST /sessions`` endpoint.
  */
 export interface SessionCreateRequest {
@@ -27,7 +40,7 @@ const sanitizeUrl = (value: string): string | null => {
 };
 
 const buildProxy = (
-  values: SessionComposerValues,
+  values: SessionComposerSubmission,
 ): SessionCreateRequest['proxy'] => {
   const http = sanitizeUrl(values.proxyHttp);
   const https = sanitizeUrl(values.proxyHttps);
@@ -48,7 +61,7 @@ const buildProxy = (
  * Convert form values collected by :component:`SessionComposer` into a Runner payload.
  */
 export const buildSessionCreatePayload = (
-  values: SessionComposerValues,
+  values: SessionComposerSubmission,
 ): SessionCreateRequest => {
   const startUrl = sanitizeUrl(values.startUrl);
   const labels: Record<string, string> = { region: values.region };

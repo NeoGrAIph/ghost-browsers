@@ -55,3 +55,5 @@
 - 2025-03-17 · gpt-5-codex · Интегрированы `/runners` в UI: динамический SessionComposer, статус-панель воркеров, тесты на загрузку/ошибки и фильтрацию раннеров.
 - 2025-10-02 · gpt-5-codex · Добавлены UI-тесты для SessionToolbar/Dashboard с моками React Query/API, обновлены скрипты и CI.
 - 2025-10-14 · gpt-5-codex · UI принимает `ws_public_endpoint`, хранит обе ссылки на WebSocket и по умолчанию использует прямой `wsEndpoint`.
+- 2025-10-15 · gpt-5-codex · Уточнены моки React Query/API в тестах DashboardPage для строгой типизации ESLint; адаптер
+  `buildSessionCreatePayload` теперь использует явный тип `SessionComposerSubmission`.

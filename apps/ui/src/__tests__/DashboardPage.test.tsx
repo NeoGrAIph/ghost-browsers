@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { QueryKey, UseQueryResult } from '@tanstack/react-query';
 
 import { DashboardPage } from '../pages/DashboardPage';
 import { useSessionFilters } from '../store/sessionFilters';
@@ -7,26 +8,59 @@ import { queryKeys } from '../utils/queryKeys';
 import type { Session } from '../types/session';
 import type { RunnerStatus } from '../types/runner';
 
-const useQueryMock = vi.fn();
-const useMutationMock = vi.fn();
-const invalidateQueriesMock = vi.fn();
+type MockedQueryResult<TData> = Pick<
+  UseQueryResult<TData, Error>,
+  'data' | 'isLoading' | 'isFetching' | 'error'
+>;
 
-vi.mock('@tanstack/react-query', () => ({
-  useQuery: (...args: unknown[]) => useQueryMock(...args),
-  useMutation: (...args: unknown[]) => useMutationMock(...args),
-  useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
+const useQueryMock = vi.fn<(options: { queryKey: QueryKey }) => MockedQueryResult<unknown>>();
+
+type MutationOptions = {
+  mutationFn: (variables: unknown) => unknown;
+  onSuccess?: () => void;
+};
+
+type MutationResult = {
+  mutate: (value?: unknown) => void;
+  mutateAsync: (value?: unknown) => Promise<unknown>;
+  isPending: boolean;
+};
+
+const useMutationMock = vi.fn<(options: MutationOptions) => MutationResult>();
+const invalidateQueriesMock = vi.fn<(options: { queryKey: QueryKey }) => void>();
+
+vi.mock('@tanstack/react-query', () => {
+  const module: {
+    useQuery: (options: { queryKey: QueryKey }) => MockedQueryResult<unknown>;
+    useMutation: (options: MutationOptions) => MutationResult;
+    useQueryClient: () => {
+      invalidateQueries: (options: { queryKey: QueryKey }) => void;
+    };
+  } = {
+    useQuery: (options: { queryKey: QueryKey }) => useQueryMock(options),
+    useMutation: (options: MutationOptions) => useMutationMock(options),
+    useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
+  };
+  return module;
+});
+
+const {
+  fetchSessionsMock,
+  fetchRunnersMock,
+  createSessionMock,
+  deleteSessionMock,
+} = vi.hoisted(() => ({
+  fetchSessionsMock: vi.fn<(...args: unknown[]) => Promise<Session[]>>(),
+  fetchRunnersMock: vi.fn<(...args: unknown[]) => Promise<RunnerStatus[]>>(),
+  createSessionMock: vi.fn<(...args: unknown[]) => Promise<Session>>(),
+  deleteSessionMock: vi.fn<(...args: unknown[]) => Promise<void>>(),
 }));
 
-const fetchSessionsMock = vi.fn();
-const fetchRunnersMock = vi.fn();
-const createSessionMock = vi.fn();
-const deleteSessionMock = vi.fn();
-
 vi.mock('../api/client', () => ({
-  fetchSessions: (...args: unknown[]) => fetchSessionsMock(...args),
-  fetchRunners: (...args: unknown[]) => fetchRunnersMock(...args),
-  createSession: (...args: unknown[]) => createSessionMock(...args),
-  deleteSession: (...args: unknown[]) => deleteSessionMock(...args),
+  fetchSessions: fetchSessionsMock,
+  fetchRunners: fetchRunnersMock,
+  createSession: createSessionMock,
+  deleteSession: deleteSessionMock,
 }));
 
 vi.mock('../hooks/useAuth', () => ({
@@ -69,9 +103,9 @@ vi.mock('../components/SessionComposer', () => ({
       {isLoading && <div>Загружаем доступные параметры…</div>}
       <button
         type="button"
-        onClick={() =>
-          onSubmit({ browserName: 'Chrome', region: 'eu', proxyId: null, runnerId: null })
-        }
+        onClick={() => {
+          void onSubmit({ browserName: 'Chrome', region: 'eu', proxyId: null, runnerId: null });
+        }}
       >
         Отправить composer
       </button>
@@ -133,29 +167,20 @@ describe('DashboardPage', () => {
     fetchRunnersMock.mockReset();
     createSessionMock.mockReset();
     deleteSessionMock.mockReset();
-    useMutationMock.mockImplementation(
-      ({
-        mutationFn,
-        onSuccess,
-      }: {
-        mutationFn: (value: unknown) => unknown;
-        onSuccess?: () => void;
-      }) => ({
-        mutate: (value?: unknown) => {
-          const result = mutationFn(value as never);
-          Promise.resolve(result).then(() => {
-            onSuccess?.();
-          });
-          return result;
-        },
-        mutateAsync: async (value?: unknown) => {
-          const result = await Promise.resolve(mutationFn(value as never));
+    useMutationMock.mockImplementation(({ mutationFn, onSuccess }: MutationOptions) => ({
+      mutate: (value?: unknown) => {
+        const result = mutationFn(value);
+        void Promise.resolve(result).then(() => {
           onSuccess?.();
-          return result;
-        },
-        isPending: false,
-      }),
-    );
+        });
+      },
+      mutateAsync: async (value?: unknown) => {
+        const result = await Promise.resolve(mutationFn(value));
+        onSuccess?.();
+        return result;
+      },
+      isPending: false,
+    }));
   });
 
   afterEach(() => {
@@ -163,9 +188,9 @@ describe('DashboardPage', () => {
   });
 
   it('shows loading and refreshing states when queries are pending', () => {
-    useQueryMock.mockImplementation(({ queryKey }: { queryKey: unknown }) => {
+    useQueryMock.mockImplementation(({ queryKey }: { queryKey: QueryKey }) => {
       if (queryKey === queryKeys.sessions) {
-        return { data: undefined, isLoading: true, isFetching: true };
+        return { data: undefined, isLoading: true, isFetching: true, error: undefined };
       }
       if (queryKey === queryKeys.runners) {
         return { data: undefined, isLoading: true, isFetching: true, error: null };
@@ -193,9 +218,9 @@ describe('DashboardPage', () => {
       proxyId: null,
     });
 
-    useQueryMock.mockImplementation(({ queryKey }: { queryKey: unknown }) => {
+    useQueryMock.mockImplementation(({ queryKey }: { queryKey: QueryKey }) => {
       if (queryKey === queryKeys.sessions) {
-        return { data: sessions, isLoading: false, isFetching: false };
+        return { data: sessions, isLoading: false, isFetching: false, error: undefined };
       }
       if (queryKey === queryKeys.runners) {
         return { data: [createRunner({ id: 'runner-alpha' })], isLoading: false, isFetching: false, error: null };
@@ -212,9 +237,9 @@ describe('DashboardPage', () => {
   it('creates a session through the composer and invalidates the cache', async () => {
     const sessions = [createSession({ id: 'session-alpha' })];
 
-    useQueryMock.mockImplementation(({ queryKey }: { queryKey: unknown }) => {
+    useQueryMock.mockImplementation(({ queryKey }: { queryKey: QueryKey }) => {
       if (queryKey === queryKeys.sessions) {
-        return { data: sessions, isLoading: false, isFetching: false };
+        return { data: sessions, isLoading: false, isFetching: false, error: undefined };
       }
       if (queryKey === queryKeys.runners) {
         return { data: [createRunner({ id: 'runner-alpha' })], isLoading: false, isFetching: false, error: null };
@@ -250,9 +275,9 @@ describe('DashboardPage', () => {
   it('deletes the selected session and refreshes the cache', async () => {
     const sessions = [createSession({ id: 'session-alpha', runnerId: 'runner-alpha' })];
 
-    useQueryMock.mockImplementation(({ queryKey }: { queryKey: unknown }) => {
+    useQueryMock.mockImplementation(({ queryKey }: { queryKey: QueryKey }) => {
       if (queryKey === queryKeys.sessions) {
-        return { data: sessions, isLoading: false, isFetching: false };
+        return { data: sessions, isLoading: false, isFetching: false, error: undefined };
       }
       if (queryKey === queryKeys.runners) {
         return { data: [createRunner({ id: 'runner-alpha' })], isLoading: false, isFetching: false, error: null };
