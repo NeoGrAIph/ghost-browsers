@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt, model_validator
 
 
 class RunnerSettings(BaseModel):
@@ -54,12 +54,38 @@ class RunnerSettings(BaseModel):
     vnc_enabled: bool = Field(default=True)
     vnc_http_base_url: AnyUrl = Field(default="http://127.0.0.1:8060/vnc")
     vnc_ws_base_url: AnyUrl = Field(default="ws://127.0.0.1:8060/vnc")
+    vnc_display_min: PositiveInt = Field(default=100, ge=1, le=1024)
+    vnc_display_max: PositiveInt = Field(default=199, ge=1, le=1024)
+    vnc_port_min: PositiveInt = Field(default=5900, ge=1024, le=65535)
+    vnc_port_max: PositiveInt = Field(default=5999, ge=1024, le=65535)
+    vnc_ws_port_min: PositiveInt = Field(default=6900, ge=1024, le=65535)
+    vnc_ws_port_max: PositiveInt = Field(default=6999, ge=1024, le=65535)
+    vnc_resolution: str = Field(default="1920x1080x24")
+    vnc_web_assets_path: Path | None = Field(default=Path("/usr/share/novnc"))
+    vnc_startup_timeout_seconds: float = Field(default=5.0, gt=0.0, le=30.0)
     vnc_token_ttl_seconds: PositiveInt = Field(default=120, le=300)
     proxy_enabled: bool = Field(default=False)
     proxy_http_base_url: AnyUrl | None = Field(default=None)
     proxy_https_base_url: AnyUrl | None = Field(default=None)
     proxy_socks_base_url: AnyUrl | None = Field(default=None)
     prewarm_failure_history_size: PositiveInt = Field(default=5, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def _validate_vnc_ranges(self) -> "RunnerSettings":
+        """Ensure VNC port and display ranges are coherent."""
+
+        if self.vnc_display_min > self.vnc_display_max:
+            raise ValueError("vnc_display_min must be <= vnc_display_max")
+        if self.vnc_port_min > self.vnc_port_max:
+            raise ValueError("vnc_port_min must be <= vnc_port_max")
+        if self.vnc_ws_port_min > self.vnc_ws_port_max:
+            raise ValueError("vnc_ws_port_min must be <= vnc_ws_port_max")
+        display_span = self.vnc_display_max - self.vnc_display_min + 1
+        vnc_span = self.vnc_port_max - self.vnc_port_min + 1
+        ws_span = self.vnc_ws_port_max - self.vnc_ws_port_min + 1
+        if min(display_span, vnc_span, ws_span) <= 0:
+            raise ValueError("VNC resource ranges must include at least one value")
+        return self
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "RunnerSettings":
@@ -91,6 +117,26 @@ class RunnerSettings(BaseModel):
             source["vnc_ws_base_url"] = env["VNC_WS_BASE_URL"]
         if "VNC_TOKEN_TTL_SECONDS" in env:
             source["vnc_token_ttl_seconds"] = int(env["VNC_TOKEN_TTL_SECONDS"])
+        if "VNC_DISPLAY_MIN" in env:
+            source["vnc_display_min"] = int(env["VNC_DISPLAY_MIN"])
+        if "VNC_DISPLAY_MAX" in env:
+            source["vnc_display_max"] = int(env["VNC_DISPLAY_MAX"])
+        if "VNC_PORT_MIN" in env:
+            source["vnc_port_min"] = int(env["VNC_PORT_MIN"])
+        if "VNC_PORT_MAX" in env:
+            source["vnc_port_max"] = int(env["VNC_PORT_MAX"])
+        if "VNC_WS_PORT_MIN" in env:
+            source["vnc_ws_port_min"] = int(env["VNC_WS_PORT_MIN"])
+        if "VNC_WS_PORT_MAX" in env:
+            source["vnc_ws_port_max"] = int(env["VNC_WS_PORT_MAX"])
+        if "VNC_RESOLUTION" in env:
+            source["vnc_resolution"] = env["VNC_RESOLUTION"]
+        if "VNC_WEB_ASSETS_PATH" in env:
+            source["vnc_web_assets_path"] = Path(env["VNC_WEB_ASSETS_PATH"])
+        if "VNC_STARTUP_TIMEOUT_SECONDS" in env:
+            source["vnc_startup_timeout_seconds"] = float(
+                env["VNC_STARTUP_TIMEOUT_SECONDS"]
+            )
         if "PROXY_ENABLED" in env:
             source["proxy_enabled"] = env["PROXY_ENABLED"].lower() in {"1", "true", "yes"}
         if "PROXY_HTTP_BASE_URL" in env:

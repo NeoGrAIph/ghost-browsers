@@ -30,7 +30,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
 - **Camoufox stub dependency**: Для unit-тестов в CI runner использует локальный путь-зависимость `packages/camoufox`, реализующую CLI/API-совместимый stub. Это позволяет выполнять `poetry install` без доступа к проприетарному пакету.
-- **Automatic VNC stubs**: When sessions are non-headless and no explicit VNC payload is provided, the manager synthesises `SessionVncDetails` using configurable base URLs and bounded TTL (<=300s) to respect `SessionVncDetails` invariants. Глобальный флаг `RunnerSettings.vnc_enabled` отключает генерацию stub-значений.
+- **Process-backed VNC controller**: Non-headless sessions allocate Xvfb/x11vnc/websockify helpers via `ProcessVncController`. The controller maintains a bounded pool of displays and ports, composes public HTTP/WS URLs from `RunnerSettings`, and tears down helpers whenever sessions terminate or switch to headless mode.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
@@ -54,13 +54,14 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
   апдейтов/завершений, чтобы метрики `next_expiry_at`/`reaper` оставались консистентными.
 - Взаимодействие с Gateway/SSE происходит только внутри доверенной сети кластера; авторизация на уровне HTTP не ожидается,
   вместо этого требуется сетевое разделение и настройка доверенных CIDR на стороне Gateway.
+- Доступность VNC зависит от бинарей `Xvfb`, `x11vnc` и `websockify`; при их отсутствии `ProcessVncController` отключается и сессии остаются без VNC-URL.
 
 ## Known Gaps / TODO
 - [ ] Зафиксировать профиль нагрузки для in-memory издателя после появления боевых метрик, чтобы подтвердить соответствие latency требованиям.
 
 ## How to Test
 - `poetry install --no-root`
-- `poetry run pytest -q` (anyio-powered unit tests)
+- `PYTHONPATH=. poetry run pytest -q` (anyio-powered unit tests)
 - `poetry run ruff check .`
 
 ## Changelog (for agents)
@@ -72,3 +73,4 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
   чтобы `poetry install` и unit-тесты проходили в офлайн-окружении без лишних слешей.
 - 2025-10-10 · gpt-5-codex · Добавлен модуль `app.browser` с управлением процессом Playwright/Camoufox и интеграционными тестами на создание/завершение сессий.
 - 2025-10-11 · gpt-5-codex · Добавлены фоновые reaper-задачи, TTL-метрики в `/health`, эндпоинт `POST /sessions/{id}/touch` и покрытие тестами.
+- 2025-10-12 · gpt-5-codex · Интегрирован процессный noVNC-контроллер, расширены настройки VNC и обновлены unit-тесты с заглушками.

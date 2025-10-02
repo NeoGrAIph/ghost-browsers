@@ -16,6 +16,7 @@ from app.dependencies.session_manager import (
 from app.events import InMemorySessionEventPublisher
 from app.main import app
 from app.session_manager import SessionCreatePayload, SessionManager
+from core.models import SessionVncDetails
 
 
 @pytest.fixture
@@ -34,6 +35,37 @@ class _MainStubHandle:
 
     async def shutdown(self, *, force: bool, timeout: float = 5.0) -> None:
         """Pretend to terminate the Playwright subprocess."""
+
+        return None
+
+
+class _MainStubVncHandle:
+    """Lightweight VNC handle used by API-level tests."""
+
+    def __init__(self, session_id: str) -> None:
+        self.details = SessionVncDetails(
+            http_url=f"http://stub-vnc/{session_id}",
+            websocket_url=f"ws://stub-vnc/{session_id}",
+            token=None,
+            token_ttl_seconds=None,
+        )
+
+    def browser_environment(self) -> dict[str, str]:
+        """Expose a fake ``DISPLAY`` environment for browsers."""
+
+        return {"DISPLAY": ":stub"}
+
+
+class _MainStubVncController:
+    """Test double replacing the process-based VNC controller."""
+
+    async def allocate(self, session_id: str) -> _MainStubVncHandle:
+        """Return a deterministic handle for ``session_id``."""
+
+        return _MainStubVncHandle(session_id)
+
+    async def release(self, handle: _MainStubVncHandle | None) -> None:
+        """No-op release hook for compatibility with the real controller."""
 
         return None
 
@@ -61,7 +93,13 @@ def stub_launch_browser(monkeypatch: pytest.MonkeyPatch) -> None:
 
     counter = 0
 
-    async def _fake_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+    async def _fake_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str] | None = None,
+    ) -> _MainStubHandle:
         nonlocal counter
         counter += 1
         return _MainStubHandle(f"ws://health/{counter}", pid=4500 + counter)
@@ -93,10 +131,11 @@ async def test_health_endpoint_reports_extended_metrics(
         publisher,
         clock=clock,
         reaper_interval_seconds=5.0,
+        vnc_controller=_MainStubVncController(),
     )
 
-    await manager.create_session(SessionCreatePayload())
-    await manager.create_session(SessionCreatePayload())
+    await manager.create_session(SessionCreatePayload(headless=False))
+    await manager.create_session(SessionCreatePayload(headless=False))
     await manager.record_prewarm_failure("prewarm timeout")
     await manager.record_prewarm_failure("prewarm retry failed")
 
@@ -159,9 +198,10 @@ async def test_touch_endpoint_extends_idle_deadline(
         publisher,
         clock=clock,
         reaper_interval_seconds=5.0,
+        vnc_controller=_MainStubVncController(),
     )
     session = await manager.create_session(
-        SessionCreatePayload(idle_ttl_seconds=45)
+        SessionCreatePayload(idle_ttl_seconds=45, headless=False)
     )
 
     app.dependency_overrides[get_runner_settings] = lambda: settings
