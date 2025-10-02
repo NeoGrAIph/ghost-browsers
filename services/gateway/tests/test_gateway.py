@@ -477,7 +477,12 @@ async def test_sse_accepts_access_token_query_parameter(gateway_app: FastAPI) ->
     request = Request(scope)
     authenticator = gateway_app.state.authenticator
 
-    user = await get_current_user(request=request, credentials=None, authenticator=authenticator)
+    user = await get_current_user(
+        request=request,
+        credentials=None,
+        authenticator=authenticator,
+        settings=gateway_app.state.settings,
+    )
     assert user.subject == "tester"
 
 
