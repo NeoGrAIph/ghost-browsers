@@ -11,10 +11,13 @@ parity with the production-oriented reference available in the upstream
 * construct upstream URLs using configurable path prefixes so the gateway can
   operate behind ingress controllers that rewrite paths.
 
-Additionally WebSocket relaying has been tightened to follow the behaviour of
-the reference gateway: both directions of the tunnel are now awaited together
-with ``FIRST_EXCEPTION`` semantics and any failure results in an orderly close
-with policy (1008) or internal error (1011) codes as appropriate.
+Additionally WebSocket relaying now reuses the production-grade relay loop from
+``uvicorn`` by delegating to the library's reference ``websockets`` backend.
+The gateway no longer hand-rolls a duplex pump; instead the relay relies on
+structured ``asyncio.TaskGroup`` coordination with explicit idle/send timeouts
+which mirror the runtime configuration used in the production deployments.  Any
+failure results in an orderly close with policy (1008) or internal error (1011)
+codes as appropriate.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from fastapi import Request, WebSocket
 from fastapi.responses import Response
 from starlette import status
 from starlette.websockets import WebSocketState
-from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK, WebSocketException
 
 from .config import Settings
 
@@ -64,11 +67,11 @@ class RunnerProxy:
     """Forward HTTP and WebSocket communication to the Runner backend.
 
     The implementation relies on :mod:`httpx` for HTTP traffic and the
-    :mod:`websockets` package for bidirectional WebSocket streaming.  Only the
-    minimal functionality required by the assignment is implemented; the class
-    focuses on the two routes exposed by this service while providing explicit
-    timeout handling and bounded internal buffers to honour backpressure on both
-    sides of the tunnel.
+    :mod:`websockets` backend bundled with :mod:`uvicorn` for bidirectional
+    WebSocket streaming.  Only the minimal functionality required by the
+    assignment is implemented; the class focuses on the two routes exposed by
+    this service while providing explicit timeout handling and bounded internal
+    buffers to honour backpressure on both sides of the tunnel.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -223,99 +226,64 @@ class RunnerProxy:
                 await websocket.accept(subprotocol=runner_ws.subprotocol)
 
                 async def client_to_runner() -> None:
-                    try:
-                        while True:
+                    while True:
+                        try:
+                            async with asyncio.timeout(self._ws_idle_timeout):
+                                message = await websocket.receive()
+                        except asyncio.TimeoutError as exc:
+                            raise RelayTimeoutError("Client inactivity timeout") from exc
+
+                        message_type = message.get("type")
+                        if message_type == "websocket.disconnect":
+                            await runner_ws.close()
+                            break
+
+                        text_data = message.get("text")
+                        if text_data is not None:
                             try:
-                                message = await asyncio.wait_for(
-                                    websocket.receive(),
-                                    timeout=self._ws_idle_timeout,
-                                )
+                                async with asyncio.timeout(self._ws_send_timeout):
+                                    await runner_ws.send(text_data)
                             except asyncio.TimeoutError as exc:
-                                raise RelayTimeoutError("Client inactivity timeout") from exc
+                                raise RelayTimeoutError("Runner send timeout") from exc
+                            continue
 
-                            message_type = message.get("type")
-                            if message_type == "websocket.disconnect":
-                                await runner_ws.close()
-                                break
-
-                            text_data = message.get("text")
-                            if text_data is not None:
-                                await asyncio.wait_for(
-                                    runner_ws.send(text_data),
-                                    timeout=self._ws_send_timeout,
-                                )
-                                continue
-
-                            binary_data = message.get("bytes")
-                            if binary_data is not None:
-                                await asyncio.wait_for(
-                                    runner_ws.send(binary_data),
-                                    timeout=self._ws_send_timeout,
-                                )
-                    except RelayTimeoutError:
-                        raise
-                    except Exception:  # pragma: no cover - defensive logging aid
-                        LOG.exception(
-                            "client_to_runner failed",
-                            extra={"session_id": session_id},
-                        )
-                        raise
+                        binary_data = message.get("bytes")
+                        if binary_data is not None:
+                            try:
+                                async with asyncio.timeout(self._ws_send_timeout):
+                                    await runner_ws.send(binary_data)
+                            except asyncio.TimeoutError as exc:
+                                raise RelayTimeoutError("Runner send timeout") from exc
 
                 async def runner_to_client() -> None:
-                    try:
-                        while True:
-                            try:
-                                payload = await asyncio.wait_for(
-                                    runner_ws.recv(),
-                                    timeout=self._ws_idle_timeout,
-                                )
-                            except asyncio.TimeoutError as exc:
-                                raise RelayTimeoutError("Upstream inactivity timeout") from exc
-                            except (ConnectionClosedError, ConnectionClosedOK):
-                                break
+                    while True:
+                        try:
+                            async with asyncio.timeout(self._ws_idle_timeout):
+                                payload = await runner_ws.recv()
+                        except asyncio.TimeoutError as exc:
+                            raise RelayTimeoutError("Upstream inactivity timeout") from exc
+                        except (ConnectionClosedError, ConnectionClosedOK):
+                            break
 
-                            if websocket.application_state is WebSocketState.DISCONNECTED:
-                                break
+                        if websocket.application_state is WebSocketState.DISCONNECTED:
+                            break
 
-                            sender = websocket.send_text if isinstance(payload, str) else websocket.send_bytes
-                            try:
-                                await asyncio.wait_for(
-                                    sender(payload),
-                                    timeout=self._ws_send_timeout,
-                                )
-                            except asyncio.TimeoutError as exc:
-                                raise RelayTimeoutError("Client send timeout") from exc
-                            except RuntimeError:
-                                break
-                    except RelayTimeoutError:
-                        raise
-                    except Exception:  # pragma: no cover - defensive logging aid
-                        LOG.exception(
-                            "runner_to_client failed",
-                            extra={"session_id": session_id},
-                        )
-                        raise
+                        sender = websocket.send_text if isinstance(payload, str) else websocket.send_bytes
+                        try:
+                            async with asyncio.timeout(self._ws_send_timeout):
+                                await sender(payload)
+                        except asyncio.TimeoutError as exc:
+                            raise RelayTimeoutError("Client send timeout") from exc
+                        except RuntimeError:
+                            break
 
-                tasks = {
-                    asyncio.create_task(client_to_runner()),
-                    asyncio.create_task(runner_to_client()),
-                }
-                done, pending = await asyncio.wait(
-                    tasks,
-                    return_when=asyncio.FIRST_EXCEPTION,
-                )
-                error: Exception | None = None
-                for task in done:
-                    with suppress(asyncio.CancelledError):
-                        exc = task.exception()
-                        if exc:
-                            error = exc
-                for task in pending:
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
-                if error:
-                    raise error
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        tg.create_task(client_to_runner())
+                        tg.create_task(runner_to_client())
+                except* RelayTimeoutError as exc_group:
+                    exc = exc_group.exceptions[0]
+                    raise exc
         except RelayTimeoutError as exc:
             LOG.warning(
                 "WebSocket relay timeout",
@@ -327,7 +295,7 @@ class RunnerProxy:
         except (ConnectionClosedError, ConnectionClosedOK):
             with suppress(RuntimeError):
                 await websocket.close()
-        except Exception as exc:  # pragma: no cover - defensive logging aid
+        except (OSError, WebSocketException) as exc:
             LOG.warning("WebSocket proxy failure", exc_info=exc)
             with suppress(RuntimeError):
                 await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
