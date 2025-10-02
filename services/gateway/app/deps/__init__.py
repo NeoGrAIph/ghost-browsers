@@ -12,6 +12,7 @@ from ..services.runner_health import RunnerHealthClient
 from ..services.runner_registry import RunnerRegistry
 from ..services.runner_ws_proxy import RunnerWebSocketProxy
 from ..services.session_registry import SessionRegistry
+from ..services.workstation_registry import WorkstationRegistry
 
 
 def get_session_registry(request: Request) -> SessionRegistry:
@@ -56,6 +57,12 @@ def get_runner_ws_proxy(request: Request) -> RunnerWebSocketProxy:
     return request.app.state.runner_ws_proxy  # type: ignore[attr-defined]
 
 
+def get_workstation_registry(request: Request) -> WorkstationRegistry:
+    """Return the workstation registry stored in the application state."""
+
+    return request.app.state.workstation_registry  # type: ignore[attr-defined]
+
+
 def get_session_registry_ws(websocket: WebSocket) -> SessionRegistry:
     """Return the session registry for WebSocket dependency injection."""
 
@@ -85,4 +92,5 @@ __all__ = [
     "get_session_registry_ws",
     "get_runner_registry_ws",
     "get_runner_ws_proxy_ws",
+    "get_workstation_registry",
 ]
