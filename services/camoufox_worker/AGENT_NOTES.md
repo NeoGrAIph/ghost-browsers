@@ -7,6 +7,7 @@ Camoufox worker обеспечивает выполнение короткожи
 * CLI `python -m worker.main run` для запуска единичной задачи с параметрами URL и таймаутом; выводит JSON с полями результата. Режим выбирается через `--mode` или `WORKER_MODE`, для orchestrator доступны опции/ENV `--gateway-url` (`GATEWAY_URL`), `--gateway-token` (`GATEWAY_TOKEN`), `--poll-timeout`, `--poll-interval`.
 * Контейнерный entrypoint `bin/worker-launch.sh` отображает переменные `WORKER_*` (URL, таймауты, режим, gateway) в CLI и при явной передаче аргументов делегирует управление `python -m worker.main ...`.
 * FastAPI сервис (`worker.service.create_app`) предоставляет REST API `GET/POST /sessions`, `GET /sessions/{id}`, `POST /sessions/{id}/touch`, `DELETE /sessions/{id}`, `GET /health`, `GET /metrics`, а также WebSocket `/sessions/{id}/ws` для проксирования Playwright-трафика. Прокси вебсокета повторно использует runner endpoint и поддерживает двунаправленную пересылку.
+  Ответы теперь содержат одновременно прямой `ws_endpoint` от runner'а и `ws_proxy_endpoint` с путём прокси `/sessions/{id}/ws`, чтобы клиенты могли выбирать прямое соединение при доступности.
 
 ## Data & Models
 * `worker.jobs.Job` — Pydantic-модель, описывающая параметры задачи (URL, прокси, таймаут). Помимо нормализованного `HttpUrl` хранит исходную строку `url_source`, чтобы браузер открывал URL без навязанного завершающего слэша.
@@ -66,3 +67,4 @@ Camoufox worker обеспечивает выполнение короткожи
   обновлены инструкции по зависимостям и тестам.
 * 2025-02-24 · ChatGPT · Добавлен модуль очереди с Redis/AMQP адаптерами, Prometheus метриками, тумблерами профиля и тестами интеграций.
 * 2025-02-26 · ChatGPT · Интегрирован FastAPI worker (REST/VNC/WebSocket), добавлены конфиги `worker.config`, обязательные флаги браузера и unit-тесты `test_service.py`; обновлены зависимости Poetry.
+* 2025-10-14 · gpt-5-codex · Возврат прямого runner `ws_endpoint` в REST-ответах и добавление поля `ws_proxy_endpoint` вместо перезаписи URL прокси.

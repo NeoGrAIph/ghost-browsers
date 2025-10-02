@@ -57,6 +57,7 @@ const sampleSession = (overrides: Partial<Session> = {}): Session => ({
   idleTtlSeconds: 300,
   browser: 'Chrome',
   wsEndpoint: null,
+  publicWsEndpoint: null,
   proxy: null,
   vnc: null,
   vncEnabled: null,

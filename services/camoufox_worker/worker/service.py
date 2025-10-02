@@ -187,6 +187,8 @@ def _merge_browser_flags(
 
 
 def _to_worker_detail(app_state: AppState, data: dict[str, Any]) -> SessionDetail:
+    runner_ws = data.get("ws_endpoint")
+    proxy_ws = f"/sessions/{data['id']}/ws" if runner_ws else None
     return SessionDetail(
         id=data["id"],
         status=SessionStatus(data["status"]),
@@ -199,7 +201,8 @@ def _to_worker_detail(app_state: AppState, data: dict[str, Any]) -> SessionDetai
         worker_id=app_state.worker_id,
         vnc_enabled=bool(data.get("vnc_enabled", False)),
         start_url_wait=data.get("start_url_wait", app_state.settings.session_defaults.start_url_wait),
-        ws_endpoint=f"/sessions/{data['id']}/ws",
+        ws_endpoint=runner_ws,
+        ws_proxy_endpoint=proxy_ws,
         vnc=data.get("vnc", {}) or {},
     )
 

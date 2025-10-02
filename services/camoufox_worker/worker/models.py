@@ -49,7 +49,8 @@ class SessionSummary(BaseModel):
 class SessionDetail(SessionSummary):
     """Extended session representation used by the UI."""
 
-    ws_endpoint: str
+    ws_endpoint: str | None
+    ws_proxy_endpoint: str | None = None
     vnc: dict[str, Any]
 
 

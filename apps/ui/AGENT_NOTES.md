@@ -14,7 +14,9 @@
 ## Data & Models
 - `Session`/`SessionEvent` описаны в `types/session.ts` (Zod схемы) и адаптеры `adaptSession*`
   нормализуют snake_case FastAPI payload в camelCase модель UI (добавляют `region`,
-  `proxyId`, `proxyLabel`, `snapshotUrl`).
+  `proxyId`, `proxyLabel`, `snapshotUrl`). `adaptSession` теперь выбирает прямой
+  `wsEndpoint` при наличии и прокидывает fallback `publicWsEndpoint` для случаев,
+  когда до runner'а нет прямого доступа.
 - Состояние фильтров в `store/sessionFilters.ts` (Zustand).
 
 ## Decisions
@@ -51,3 +53,4 @@
 - 2024-09-10 · gpt-5-codex · Переключили SSE на `/events`, пробрасываем токен через `access_token`, добавлен vitest для клиента.
 - 2024-09-11 · gpt-5-codex · Перевели UI на командные эндпоинты `/sessions/commands`, покрыли DashboardPage сценарии создания/удаления.
 - 2025-03-17 · gpt-5-codex · Интегрированы `/runners` в UI: динамический SessionComposer, статус-панель воркеров, тесты на загрузку/ошибки и фильтрацию раннеров.
+- 2025-10-14 · gpt-5-codex · UI принимает `ws_public_endpoint`, хранит обе ссылки на WebSocket и по умолчанию использует прямой `wsEndpoint`.

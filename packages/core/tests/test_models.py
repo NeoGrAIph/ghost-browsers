@@ -169,6 +169,7 @@ def test_session_serialization_round_trip() -> None:
         vnc=vnc,
         proxy=proxy,
         ws_endpoint="/sessions/runner-1/session/ws",
+        ws_public_endpoint="wss://gateway/sessions/runner-1/session/ws",
     )
 
     dumped = session.model_dump(mode="json")

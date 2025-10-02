@@ -50,6 +50,7 @@ export const SessionSchema = z.object({
   browser: z.string(),
   labels: z.record(z.string()).default({}),
   ws_endpoint: z.string().nullable(),
+  ws_public_endpoint: z.string().nullable(),
   proxy: SessionProxySchema.nullable(),
   vnc: SessionVncSchema.nullable(),
   vnc_enabled: z.boolean().nullable(),
@@ -108,6 +109,7 @@ export interface Session {
   readonly idleTtlSeconds: number;
   readonly browser: string;
   readonly wsEndpoint: string | null;
+  readonly publicWsEndpoint: string | null;
   readonly proxy: SessionProxy | null;
   readonly vnc: SessionVnc | null;
   readonly vncEnabled: boolean | null;
@@ -182,7 +184,8 @@ export const adaptSession = (session: RawSession): Session => {
     headless: session.headless,
     idleTtlSeconds: session.idle_ttl_seconds,
     browser: session.browser,
-    wsEndpoint: session.ws_endpoint ?? null,
+    wsEndpoint: session.ws_endpoint ?? session.ws_public_endpoint ?? null,
+    publicWsEndpoint: session.ws_public_endpoint ?? null,
     proxy: adaptProxy(session.proxy),
     vnc: adaptVnc(session.vnc),
     vncEnabled: session.vnc_enabled ?? null,

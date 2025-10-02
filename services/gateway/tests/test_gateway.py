@@ -120,8 +120,10 @@ def test_session_crud(gateway_client: TestClient) -> None:
     }
     response = gateway_client.post("/sessions", json=session_body)
     assert response.status_code == 201
-    session_id = response.json()["id"]
-    assert response.json()["ws_endpoint"] == f"/sessions/{session_id}/ws"
+    payload = response.json()
+    session_id = payload["id"]
+    assert payload["ws_endpoint"] == "ws://runner-1/playwright/1"
+    assert payload["ws_public_endpoint"] == f"/sessions/{session_id}/ws"
 
     response = gateway_client.get("/sessions")
     assert response.status_code == 200
