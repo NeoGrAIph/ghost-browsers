@@ -1,11 +1,10 @@
-"""Session event transport abstraction for the runner service."""
+"""Event publisher abstractions for session and workstation lifecycles."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
-"""Event publisher abstractions for session and workstation lifecycles."""
-
-from typing import Protocol
+from typing import Any, Protocol
 
 import anyio
 import httpx
@@ -75,6 +74,86 @@ class InMemoryWorkstationEventPublisher:
             drained = list(self._events)
             self._events.clear()
             return drained
+
+
+class CallbackWorkstationEventPublisher:
+    """Proxy workstation events to an arbitrary asynchronous callback.
+
+    The wrapper mirrors :class:`CallbackSessionEventPublisher` but forwards
+    :class:`WorkstationEvent` payloads. It is primarily used by SSE and
+    WebSocket bridges that want to reuse the publisher protocol while
+    delegating delivery mechanics to framework-specific helpers.
+    """
+
+    def __init__(self, callback: Callable[[WorkstationEvent], Awaitable[None]]) -> None:
+        self._callback = callback
+
+    async def publish(self, event: WorkstationEvent) -> None:
+        """Forward ``event`` to the configured callback."""
+
+        await self._callback(event)
+
+
+class SseWorkstationEventPublisher:
+    """Serialise workstation events to Server-Sent Events frames.
+
+    Args:
+        send: Coroutine used to emit encoded SSE payloads towards the client.
+            The callable receives a fully formatted SSE string including the
+            terminating blank line.
+        json_dumps: Optional callable used to serialise the event body. By
+            default :func:`json.dumps` is used.
+
+    Example:
+        >>> async def push(frame: str) -> None:
+        ...     sent_frames.append(frame)
+        >>> publisher = SseWorkstationEventPublisher(push)
+        >>> # await publisher.publish(event)  # doctest: +SKIP
+    """
+
+    def __init__(
+        self,
+        send: Callable[[str], Awaitable[None]],
+        *,
+        json_dumps: Callable[[Any], str] | None = None,
+    ) -> None:
+        self._send = send
+        self._json_dumps = json_dumps or json.dumps
+
+    async def publish(self, event: WorkstationEvent) -> None:
+        """Encode ``event`` as an SSE frame and push it downstream."""
+
+        payload = self._json_dumps(event.model_dump(mode="json", by_alias=True))
+        frame = f"event: {event.type.value}\ndata: {payload}\n\n"
+        await self._send(frame)
+
+
+class WebSocketWorkstationEventPublisher:
+    """Publish workstation events over an abstract WebSocket channel.
+
+    Args:
+        send: Coroutine used to transmit JSON-compatible dictionaries to the
+            connected WebSocket client.
+
+    Example:
+        >>> async def push(message: dict[str, Any]) -> None:
+        ...     delivered.append(message)
+        >>> publisher = WebSocketWorkstationEventPublisher(push)
+        >>> # await publisher.publish(event)  # doctest: +SKIP
+    """
+
+    def __init__(self, send: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        self._send = send
+
+    async def publish(self, event: WorkstationEvent) -> None:
+        """Forward ``event`` as a JSON-compatible dictionary."""
+
+        await self._send(
+            {
+                "type": event.type.value,
+                "event": event.model_dump(mode="json", by_alias=True),
+            }
+        )
 
 
 class CallbackSessionEventPublisher:
@@ -159,10 +238,13 @@ class HttpSessionEventPublisher:
 
 
 __all__ = [
+    "CallbackWorkstationEventPublisher",
     "CallbackSessionEventPublisher",
     "HttpSessionEventPublisher",
     "InMemorySessionEventPublisher",
     "InMemoryWorkstationEventPublisher",
+    "SseWorkstationEventPublisher",
     "SessionEventPublisher",
+    "WebSocketWorkstationEventPublisher",
     "WorkstationEventPublisher",
 ]

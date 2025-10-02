@@ -21,11 +21,14 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
     runner-а: `runner_active_sessions`, `runner_reaper_runs_total`,
     `runner_reaper_expired_sessions_total`, `runner_reaper_last_run_timestamp`,
     `runner_vnc_allocations`, `runner_vnc_allocation_requests_total`.
-  - `GET /workstations` — возвращает снимки состояния warm-пула (idle/reserved/busy).
-  - `POST /workstations/reserve` — резервирует слот (по ID или первый idle) и отдаёт launch env.
-  - `POST /workstations/{id}/busy` — переводит слот из reserved в busy.
+  - `GET /workstations` — возвращает `WorkstationListResponse` с массивом `WorkstationSnapshotModel` (``workstation_id``, fingerprint, proxy, state).
+  - `POST /workstations/reserve` — принимает `WorkstationReservationRequest`, возвращает `WorkstationReservationResponse` (snapshot + launch env).
+  - `POST /workstations/{id}/busy` — переводит слот из reserved в busy, возвращает `WorkstationActionResponse`.
   - `POST /workstations/{id}/cancel` — откатывает неудачное резервирование в idle.
-  - `POST /workstations/{id}/release` — рециклирует busy слот обратно в idle.
+  - `POST /workstations/{id}/release` — рециклирует busy слот обратно в idle и возвращает новый snapshot.
+  - `POST /workstations/{id}/restart` — форсирует recycle браузера без участия сессий.
+  - `POST /workstations/{id}/drain` — помечает рабочую станцию как недоступную (state=`draining`).
+  - `POST /workstations/{id}/enable` — восстанавливает drained/error слот (перезапускает браузер).
 - **Event transport**
   - `SessionEventPublisher.publish(SessionEvent)` — protocol for pushing lifecycle events downstream. Default implementation stores events in memory (`InMemorySessionEventPublisher`) but can be swapped for HTTP/SSE bridges via `CallbackSessionEventPublisher`.
   - `HttpSessionEventPublisher` — при наличии `RunnerSettings.event_endpoint` POST-ит события на `gateway /events`.
@@ -46,11 +49,15 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   (разрешены `extra`, чтобы операторы могли добавлять свои атрибуты). JSON-файл читается
   при старте через `load_warm_pool_config`, I/O и ошибки сериализации/валидации оборачиваются
   в `WarmPoolConfigError`.
+- REST-роутер `app.routers.workstations` использует Pydantic-модели `WorkstationSnapshotModel`,
+  `WorkstationListResponse`, `WorkstationReservationRequest/Response` и `WorkstationActionResponse`
+  для документирования и сериализации warm-пула.
 
 ## Decisions
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
-- **Workstation events**: маршруты `/workstations` используют `WorkstationEventPublisher` (по умолчанию `InMemoryWorkstationEventPublisher`) и транслируют `WorkstationEvent` для синхронизации warm-пула с Gateway/UI.
+- **Workstation events**: `WarmPoolManager` публикует `workstation.state_changed|recycled|error` при любых переходах слота; маршруты `/workstations` только вызывают методы менеджера.
+- **SSE/WS обёртки**: `SseWorkstationEventPublisher` и `WebSocketWorkstationEventPublisher` форматируют события для стриминга в Gateway/UI.
 - **Camoufox stub dependency**: Для unit-тестов в CI runner использует локальный путь-зависимость `packages/camoufox`, реализующую CLI/API-совместимый stub. Это позволяет выполнять `poetry install` без доступа к проприетарному пакету.
 - **Process-backed VNC controller**: Non-headless sessions allocate Xvfb/x11vnc/websockify helpers via `ProcessVncController`. The controller maintains a bounded pool of displays and ports, composes public HTTP/WS URLs from `RunnerSettings`, and tears down helpers whenever sessions terminate or switch to headless mode.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
@@ -115,3 +122,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-16 · gpt-5-codex · Реализован ``WarmPoolManager`` с управлением состояниями, recycle, преднавигацией и юнит-тестами на ключевые сценарии.
 - 2025-10-17 · gpt-5-codex · Интегрирован warm pool в `SessionManager`/API, добавлен отклик 429 при нехватке слотов и покрытие тестами.
 - 2025-10-18 · gpt-5-codex · Добавлены REST-эндпоинты `/workstations*`, in-memory издатель `WorkstationEvent` и интеграционные тесты API.
+- 2025-10-19 · gpt-5-codex · Вынесены маршруты `/workstations` в отдельный роутер с Pydantic-моделями, WarmPoolManager публикует события state/error/recycled, добавлены SSE/WS-обёртки и интеграционные тесты.

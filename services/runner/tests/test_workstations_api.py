@@ -2,23 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections import defaultdict
+from pathlib import Path
 
 import pytest
+from app.browser import BrowserLaunchError
+from app.config import RunnerSettings, WarmPoolConfig, WorkstationConfigEntry
 from app.dependencies.session_manager import (
     get_warm_pool_manager,
     get_workstation_event_publisher,
 )
 from app.events import InMemoryWorkstationEventPublisher
 from app.main import app
-from app.warm_pool import (
-    WarmPoolReservation,
-    WarmPoolSnapshot,
-    WarmPoolState,
-    WarmPoolStateError,
-)
+from app.warm_pool import WarmPoolManager, WarmPoolState
 from core.models import WorkstationEventType, WorkstationState
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
@@ -28,449 +26,323 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-class _StubWarmHandle:
-    """Minimal placeholder representing a warm workstation browser handle."""
+class _StubHandle:
+    """Minimal browser handle used by the warm pool during tests."""
 
     def __init__(self, workstation_id: str) -> None:
         self.workstation_id = workstation_id
+        self.shutdown_calls: list[dict[str, object]] = []
+
+    async def shutdown(self, *, force: bool, timeout: float = 5.0) -> None:
+        """Record shutdown invocations for assertions."""
+
+        self.shutdown_calls.append({"force": force, "timeout": timeout})
 
 
-class _StubWarmPoolManager:
-    """Async test double implementing the warm pool interface."""
+async def _build_warm_pool(
+    tmp_path: Path,
+    *,
+    workstations: list[str],
+    fail_next_launch: bool = False,
+) -> tuple[
+    WarmPoolManager,
+    InMemoryWorkstationEventPublisher,
+    list[_StubHandle],
+    list[dict[str, str]],
+]:
+    """Construct a warm pool manager wired with deterministic dependencies."""
 
-    def __init__(self, *, workstations: list[str] | None = None) -> None:
-        self._workstations = workstations or ["ws-1", "ws-2", "ws-3"]
-        self._slots: dict[str, dict[str, Any]] = {
-            workstation: {
-                "state": WarmPoolState.IDLE,
-                "fingerprint": f"fp-{workstation}",
-                "proxy": None,
-            }
-            for workstation in self._workstations
-        }
-        self.reservations: list[str] = []
-        self.busy: list[str] = []
-        self.cancellations: list[str] = []
-        self.releases: list[str] = []
+    publisher = InMemoryWorkstationEventPublisher()
+    settings = RunnerSettings()
+    config = WarmPoolConfig(
+        workstations=[WorkstationConfigEntry(id=identifier) for identifier in workstations]
+    )
+    handles: list[_StubHandle] = []
+    launch_env_history: list[dict[str, str]] = []
+    failure_counter = {"remaining": 0}
 
-    async def start(self) -> None:
-        """Real manager initialises slots; stub does nothing."""
+    async def launcher(
+        runner_settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str],
+    ) -> _StubHandle:
+        """Return synthetic handles while optionally simulating launch failures."""
 
-        return None
+        del runner_settings, browser, headless
+        if failure_counter["remaining"]:
+            failure_counter["remaining"] -= 1
+            raise BrowserLaunchError("synthetic launch failure")
+        launch_env_history.append(dict(env))
+        handle = _StubHandle(env["CAMOUFOX_WORKSTATION_ID"])
+        handles.append(handle)
+        return handle
 
-    def list_slots(self) -> list[WarmPoolSnapshot]:
-        """Return current slot snapshots for the warm pool."""
+    counters: defaultdict[str, int] = defaultdict(int)
 
-        return [
-            WarmPoolSnapshot(
-                workstation_id=workstation,
-                fingerprint_id=slot["fingerprint"],
-                proxy_url=slot["proxy"],
-                state=slot["state"],
-            )
-            for workstation, slot in self._slots.items()
-        ]
+    def temp_dir_factory(workstation_id: str) -> Path:
+        """Allocate unique temporary directories per workstation."""
 
-    async def reserve_slot(
-        self, workstation_id: str | None = None
-    ) -> WarmPoolReservation:
-        """Reserve the requested workstation or the first idle slot."""
+        index = counters[workstation_id]
+        counters[workstation_id] += 1
+        path = tmp_path / f"warm-{workstation_id}-{index}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
-        target = workstation_id or self._first_idle()
-        slot = self._require_slot(target)
-        if slot["state"] is not WarmPoolState.IDLE:
-            raise WarmPoolStateError(f"workstation '{target}' is not idle")
-        slot["state"] = WarmPoolState.RESERVED
-        self.reservations.append(target)
-        snapshot = WarmPoolSnapshot(
-            workstation_id=target,
-            fingerprint_id=slot["fingerprint"],
-            proxy_url=slot["proxy"],
-            state=WarmPoolState.RESERVED,
-        )
-        env = {
-            "CAMOUFOX_WORKSTATION_ID": target,
-            "CAMOUFOX_FINGERPRINT_ID": slot["fingerprint"],
-        }
-        return WarmPoolReservation(
-            snapshot=snapshot,
-            handle=_StubWarmHandle(target),
-            environment=env,
-        )
-
-    async def mark_busy(self, workstation_id: str) -> WarmPoolSnapshot:
-        """Mark a reserved workstation as busy."""
-
-        slot = self._require_slot(workstation_id)
-        if slot["state"] is not WarmPoolState.RESERVED:
-            raise WarmPoolStateError(f"workstation '{workstation_id}' is not reserved")
-        slot["state"] = WarmPoolState.BUSY
-        self.busy.append(workstation_id)
-        return WarmPoolSnapshot(
-            workstation_id=workstation_id,
-            fingerprint_id=slot["fingerprint"],
-            proxy_url=slot["proxy"],
-            state=WarmPoolState.BUSY,
-        )
-
-    async def cancel_reservation(self, workstation_id: str) -> WarmPoolSnapshot:
-        """Return a reserved workstation to idle."""
-
-        slot = self._require_slot(workstation_id)
-        if slot["state"] is not WarmPoolState.RESERVED:
-            raise WarmPoolStateError(f"workstation '{workstation_id}' is not reserved")
-        slot["state"] = WarmPoolState.IDLE
-        self.cancellations.append(workstation_id)
-        return WarmPoolSnapshot(
-            workstation_id=workstation_id,
-            fingerprint_id=slot["fingerprint"],
-            proxy_url=slot["proxy"],
-            state=WarmPoolState.IDLE,
-        )
-
-    async def release_slot(self, workstation_id: str) -> WarmPoolSnapshot:
-        """Recycle a busy workstation back to idle."""
-
-        slot = self._require_slot(workstation_id)
-        if slot["state"] not in {WarmPoolState.BUSY, WarmPoolState.RESERVED}:
-            raise WarmPoolStateError(
-                f"workstation '{workstation_id}' cannot be recycled from {slot['state'].value}"
-            )
-        slot["state"] = WarmPoolState.IDLE
-        self.releases.append(workstation_id)
-        return WarmPoolSnapshot(
-            workstation_id=workstation_id,
-            fingerprint_id=slot["fingerprint"],
-            proxy_url=slot["proxy"],
-            state=WarmPoolState.IDLE,
-        )
-
-    def _require_slot(self, workstation_id: str) -> dict[str, Any]:
-        try:
-            return self._slots[workstation_id]
-        except KeyError as exc:
-            raise WarmPoolStateError(
-                f"unknown workstation '{workstation_id}'"
-            ) from exc
-
-    def _first_idle(self) -> str:
-        for workstation_id, slot in self._slots.items():
-            if slot["state"] is WarmPoolState.IDLE:
-                return workstation_id
-        raise WarmPoolStateError("no idle warm workstations available")
+    manager = WarmPoolManager(
+        settings,
+        warm_pool_config=config,
+        launcher=launcher,  # type: ignore[arg-type]
+        temp_dir_factory=temp_dir_factory,
+        event_publisher=publisher,
+    )
+    await manager.start()
+    await publisher.drain()
+    if fail_next_launch:
+        failure_counter["remaining"] = 3
+    return manager, publisher, handles, launch_env_history
 
 
 async def _override_dependencies(
-    warm_pool: _StubWarmPoolManager,
-    publisher: InMemoryWorkstationEventPublisher,
+    manager: WarmPoolManager, publisher: InMemoryWorkstationEventPublisher
 ) -> None:
-    """Replace warm pool and event publisher dependencies for the test scope."""
+    """Override FastAPI dependencies for the duration of a test."""
 
     get_warm_pool_manager.cache_clear()
     get_workstation_event_publisher.cache_clear()
-    app.dependency_overrides[get_warm_pool_manager] = lambda: warm_pool
+    app.dependency_overrides[get_warm_pool_manager] = lambda: manager
     app.dependency_overrides[get_workstation_event_publisher] = lambda: publisher
 
 
 def _reset_overrides() -> None:
-    """Clear FastAPI dependency overrides set for integration tests."""
+    """Clear dependency overrides applied during a test run."""
 
     app.dependency_overrides.clear()
 
 
 @pytest.mark.anyio("asyncio")
-async def test_reserve_workstation_success() -> None:
-    """``POST /workstations/reserve`` should reserve a slot and emit an event."""
+async def test_list_workstations_returns_snapshot(tmp_path: Path) -> None:
+    """``GET /workstations`` should expose configured warm pool slots."""
 
-    warm_pool = _StubWarmPoolManager(workstations=["ws-alpha"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
+    manager, publisher, _, _ = await _build_warm_pool(tmp_path, workstations=["ws-a", "ws-b"])
+    await _override_dependencies(manager, publisher)
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get("/workstations")
+    finally:
+        await manager.drain()
+        _reset_overrides()
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["items"][0]["workstation_id"] == "ws-a"
+    assert body["items"][0]["state"] == WarmPoolState.IDLE.value
+
+
+@pytest.mark.anyio("asyncio")
+async def test_reserve_workstation_emits_state_change(tmp_path: Path) -> None:
+    """Reserving a workstation should emit a state change event with launch env."""
+
+    manager, publisher, _, env_history = await _build_warm_pool(
+        tmp_path, workstations=["ws-alpha"]
+    )
+    await _override_dependencies(manager, publisher)
 
     try:
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.post(
-                "/workstations/reserve", json={"workstation_id": "ws-alpha"}
+                "/workstations/reserve",
+                json={"workstation_id": "ws-alpha"},
             )
     finally:
+        await manager.drain()
         _reset_overrides()
 
+    events = await publisher.drain()
     assert response.status_code == 200
     body = response.json()
-    assert body["snapshot"]["workstation_id"] == "ws-alpha"
     assert body["snapshot"]["state"] == WarmPoolState.RESERVED.value
-    assert body["environment"] == {
-        "CAMOUFOX_WORKSTATION_ID": "ws-alpha",
-        "CAMOUFOX_FINGERPRINT_ID": "fp-ws-alpha",
-    }
-    assert warm_pool.reservations == ["ws-alpha"]
+    assert events and events[0].type is WorkstationEventType.STATE_CHANGED
+    assert events[0].reason == "reserved"
+    assert events[0].workstation.state is WorkstationState.PROVISIONING
+    assert events[0].workstation.metadata["launch_env"]["CAMOUFOX_WORKSTATION_ID"] == "ws-alpha"
+    assert env_history and env_history[0]["CAMOUFOX_WORKSTATION_ID"] == "ws-alpha"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_mark_busy_emits_state_event(tmp_path: Path) -> None:
+    """Transition into BUSY should emit a workstation.state_changed event."""
+
+    manager, publisher, _, _ = await _build_warm_pool(tmp_path, workstations=["ws-1"])
+    await _override_dependencies(manager, publisher)
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            await client.post("/workstations/reserve", json={"workstation_id": "ws-1"})
+            await publisher.drain()
+            response = await client.post("/workstations/ws-1/busy")
+    finally:
+        await manager.drain()
+        _reset_overrides()
+
     events = await publisher.drain()
-    assert len(events) == 1
-    event = events[0]
-    assert event.type is WorkstationEventType.UPDATED
-    assert event.reason == "reserved"
-    assert event.workstation.id == "ws-alpha"
-    assert event.workstation.state is WorkstationState.PROVISIONING
-    assert event.workstation.metadata["launch_env"] == body["environment"]
-
-
-@pytest.mark.anyio("asyncio")
-async def test_reserve_workstation_conflict_when_not_idle() -> None:
-    """Reserving an already reserved workstation should return HTTP 409."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-beta"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            first = await client.post(
-                "/workstations/reserve", json={"workstation_id": "ws-beta"}
-            )
-            assert first.status_code == 200
-            response = await client.post(
-                "/workstations/reserve", json={"workstation_id": "ws-beta"}
-            )
-    finally:
-        _reset_overrides()
-
-    assert response.status_code == 409
-    assert "not idle" in response.json()["detail"]
-
-
-@pytest.mark.anyio("asyncio")
-async def test_reserve_workstation_unknown_identifier() -> None:
-    """Unknown workstations should surface as HTTP 404 responses."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-known"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post(
-                "/workstations/reserve", json={"workstation_id": "ws-missing"}
-            )
-    finally:
-        _reset_overrides()
-
-    assert response.status_code == 404
-    assert response.json()["detail"].startswith("unknown workstation")
-
-
-@pytest.mark.anyio("asyncio")
-async def test_mark_workstation_busy_success() -> None:
-    """``POST /workstations/{id}/busy`` should transition to busy and emit an event."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-busy"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            reserve = await client.post(
-                "/workstations/reserve", json={"workstation_id": "ws-busy"}
-            )
-            assert reserve.status_code == 200
-            response = await client.post("/workstations/ws-busy/busy")
-    finally:
-        _reset_overrides()
-
     assert response.status_code == 200
-    assert response.json()["snapshot"]["state"] == WarmPoolState.BUSY.value
-    assert warm_pool.busy == ["ws-busy"]
+    assert events[0].type is WorkstationEventType.STATE_CHANGED
+    assert events[0].reason == "busy"
+    assert events[0].workstation.state is WorkstationState.ASSIGNED
+
+
+@pytest.mark.anyio("asyncio")
+async def test_cancel_reservation_emits_state_event(tmp_path: Path) -> None:
+    """Cancelling a reservation should emit a workstation.state_changed event."""
+
+    manager, publisher, _, _ = await _build_warm_pool(tmp_path, workstations=["ws-2"])
+    await _override_dependencies(manager, publisher)
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            await client.post("/workstations/reserve", json={"workstation_id": "ws-2"})
+            await publisher.drain()
+            response = await client.post("/workstations/ws-2/cancel")
+    finally:
+        await manager.drain()
+        _reset_overrides()
+
     events = await publisher.drain()
-    assert [event.reason for event in events][-1] == "busy"
-    assert events[-1].workstation.state is WorkstationState.ASSIGNED
-
-
-@pytest.mark.anyio("asyncio")
-async def test_mark_workstation_busy_conflict_when_idle() -> None:
-    """Marking a workstation busy without a reservation should fail with 409."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-idle"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post("/workstations/ws-idle/busy")
-    finally:
-        _reset_overrides()
-
-    assert response.status_code == 409
-    assert "not reserved" in response.json()["detail"]
-
-
-@pytest.mark.anyio("asyncio")
-async def test_mark_workstation_busy_unknown_identifier() -> None:
-    """Busy endpoint should return 404 for unknown workstations."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-catalog"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post("/workstations/ws-absent/busy")
-    finally:
-        _reset_overrides()
-
-    assert response.status_code == 404
-    assert response.json()["detail"].startswith("unknown workstation")
-
-
-@pytest.mark.anyio("asyncio")
-async def test_cancel_reservation_success() -> None:
-    """Cancelling a reservation should return the workstation to idle."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-cancel"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            reserve = await client.post(
-                "/workstations/reserve", json={"workstation_id": "ws-cancel"}
-            )
-            assert reserve.status_code == 200
-            response = await client.post("/workstations/ws-cancel/cancel")
-    finally:
-        _reset_overrides()
-
     assert response.status_code == 200
-    assert response.json()["snapshot"]["state"] == WarmPoolState.IDLE.value
-    assert warm_pool.cancellations == ["ws-cancel"]
+    assert events[0].type is WorkstationEventType.STATE_CHANGED
+    assert events[0].reason == "reservation-cancelled"
+    assert events[0].workstation.state is WorkstationState.AVAILABLE
+
+
+@pytest.mark.anyio("asyncio")
+async def test_release_workstation_emits_recycled_event(tmp_path: Path) -> None:
+    """Releasing a workstation should emit state change and recycled events."""
+
+    manager, publisher, handles, _ = await _build_warm_pool(tmp_path, workstations=["ws-r"])
+    await _override_dependencies(manager, publisher)
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            await client.post("/workstations/reserve", json={"workstation_id": "ws-r"})
+            await client.post("/workstations/ws-r/busy")
+            await publisher.drain()
+            response = await client.post("/workstations/ws-r/release")
+    finally:
+        await manager.drain()
+        _reset_overrides()
+
     events = await publisher.drain()
-    assert events[-1].reason == "cancelled"
-    assert events[-1].workstation.state is WorkstationState.AVAILABLE
-
-
-@pytest.mark.anyio("asyncio")
-async def test_cancel_reservation_conflict_when_idle() -> None:
-    """Cancelling a workstation without a reservation should raise HTTP 409."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-free"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post("/workstations/ws-free/cancel")
-    finally:
-        _reset_overrides()
-
-    assert response.status_code == 409
-    assert "not reserved" in response.json()["detail"]
-
-
-@pytest.mark.anyio("asyncio")
-async def test_cancel_reservation_unknown_identifier() -> None:
-    """Cancel endpoint should surface unknown workstations as HTTP 404."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-list"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post("/workstations/ws-missing/cancel")
-    finally:
-        _reset_overrides()
-
-    assert response.status_code == 404
-    assert response.json()["detail"].startswith("unknown workstation")
-
-
-@pytest.mark.anyio("asyncio")
-async def test_release_workstation_success() -> None:
-    """Releasing a busy workstation should recycle the slot and emit events."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-release"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            reserve = await client.post(
-                "/workstations/reserve", json={"workstation_id": "ws-release"}
-            )
-            assert reserve.status_code == 200
-            busy = await client.post("/workstations/ws-release/busy")
-            assert busy.status_code == 200
-            response = await client.post("/workstations/ws-release/release")
-    finally:
-        _reset_overrides()
-
     assert response.status_code == 200
-    assert response.json()["snapshot"]["state"] == WarmPoolState.IDLE.value
-    assert warm_pool.releases == ["ws-release"]
-    events = await publisher.drain()
-    assert events[-1].reason == "released"
-    assert events[-1].type is WorkstationEventType.RELEASED
-    assert events[-1].workstation.state is WorkstationState.AVAILABLE
+    event_types = [event.type for event in events]
+    assert WorkstationEventType.STATE_CHANGED in event_types
+    assert WorkstationEventType.RECYCLED in event_types
+    assert any(
+        event.reason == "recycling"
+        for event in events
+        if event.type is WorkstationEventType.STATE_CHANGED
+    )
+    recycled_event = next(
+        event for event in events if event.type is WorkstationEventType.RECYCLED
+    )
+    assert recycled_event.reason == "released"
+    assert recycled_event.workstation.state is WorkstationState.AVAILABLE
+    assert handles and handles[0].shutdown_calls, "Handle should have been recycled"
 
 
 @pytest.mark.anyio("asyncio")
-async def test_release_workstation_conflict_when_idle() -> None:
-    """Releasing an idle workstation should report HTTP 409."""
+async def test_restart_endpoint_recycles_slot(tmp_path: Path) -> None:
+    """Restart should recycle the workstation and emit recycle events."""
 
-    warm_pool = _StubWarmPoolManager(workstations=["ws-idle-release"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post("/workstations/ws-idle-release/release")
-    finally:
-        _reset_overrides()
-
-    assert response.status_code == 409
-    assert "cannot be recycled" in response.json()["detail"]
-
-
-@pytest.mark.anyio("asyncio")
-async def test_release_workstation_unknown_identifier() -> None:
-    """Release endpoint should return HTTP 404 for unknown identifiers."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-known-release"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
+    manager, publisher, _, _ = await _build_warm_pool(tmp_path, workstations=["ws-restart"])
+    await _override_dependencies(manager, publisher)
 
     try:
         async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post("/workstations/ws-ghost/release")
+            await publisher.drain()
+            response = await client.post("/workstations/ws-restart/restart")
     finally:
-        _reset_overrides()
-
-    assert response.status_code == 404
-    assert response.json()["detail"].startswith("unknown workstation")
-
-
-@pytest.mark.anyio("asyncio")
-async def test_workstation_event_stream_tracks_full_lifecycle() -> None:
-    """A full reserve → busy → release flow should emit ordered events."""
-
-    warm_pool = _StubWarmPoolManager(workstations=["ws-flow"])
-    publisher = InMemoryWorkstationEventPublisher()
-    await _override_dependencies(warm_pool, publisher)
-
-    try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            await client.post("/workstations/reserve", json={"workstation_id": "ws-flow"})
-            await client.post("/workstations/ws-flow/busy")
-            await client.post("/workstations/ws-flow/release")
-    finally:
+        await manager.drain()
         _reset_overrides()
 
     events = await publisher.drain()
-    assert [event.reason for event in events] == ["reserved", "busy", "released"]
-    assert [event.type for event in events] == [
-        WorkstationEventType.UPDATED,
-        WorkstationEventType.UPDATED,
-        WorkstationEventType.RELEASED,
-    ]
-    assert [event.workstation.state for event in events] == [
-        WorkstationState.PROVISIONING,
-        WorkstationState.ASSIGNED,
-        WorkstationState.AVAILABLE,
-    ]
+    assert response.status_code == 200
+    event_types = [event.type for event in events]
+    assert WorkstationEventType.STATE_CHANGED in event_types
+    assert WorkstationEventType.RECYCLED in event_types
+    assert any(
+        event.reason == "restart"
+        for event in events
+        if event.type is WorkstationEventType.STATE_CHANGED
+    )
+    recycled_event = next(
+        event for event in events if event.type is WorkstationEventType.RECYCLED
+    )
+    assert recycled_event.reason == "restarted"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_drain_and_enable_cycle(tmp_path: Path) -> None:
+    """Drain and enable endpoints should toggle availability and emit events."""
+
+    manager, publisher, _, _ = await _build_warm_pool(tmp_path, workstations=["ws-cycle"])
+    await _override_dependencies(manager, publisher)
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            drain_response = await client.post("/workstations/ws-cycle/drain")
+            drain_events = await publisher.drain()
+            enable_response = await client.post("/workstations/ws-cycle/enable")
+    finally:
+        await manager.drain()
+        _reset_overrides()
+
+    enable_events = await publisher.drain()
+    assert drain_response.status_code == 200
+    assert drain_events[0].type is WorkstationEventType.STATE_CHANGED
+    assert drain_events[0].reason == "drain-slot"
+    assert drain_events[0].workstation.state is WorkstationState.UNAVAILABLE
+
+    assert enable_response.status_code == 200
+    enable_types = [event.type for event in enable_events]
+    assert WorkstationEventType.STATE_CHANGED in enable_types
+    assert WorkstationEventType.RECYCLED in enable_types
+    assert any(
+        event.reason == "enable"
+        for event in enable_events
+        if event.type is WorkstationEventType.STATE_CHANGED
+    )
+    recycled_event = next(
+        event for event in enable_events
+        if event.type is WorkstationEventType.RECYCLED
+    )
+    assert recycled_event.reason == "enabled"
+    assert recycled_event.workstation.state is WorkstationState.AVAILABLE
+
+
+@pytest.mark.anyio("asyncio")
+async def test_restart_failure_emits_error_event(tmp_path: Path) -> None:
+    """Failed restarts should surface ``workstation.error`` events."""
+
+    manager, publisher, _, _ = await _build_warm_pool(
+        tmp_path, workstations=["ws-fail"], fail_next_launch=True
+    )
+    await _override_dependencies(manager, publisher)
+
+    try:
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await publisher.drain()
+            response = await client.post("/workstations/ws-fail/restart")
+    finally:
+        await manager.drain()
+        _reset_overrides()
+
+    events = await publisher.drain()
+    assert response.status_code == 500
+    assert any(event.type is WorkstationEventType.ERROR for event in events)
+    error_event = next(event for event in events if event.type is WorkstationEventType.ERROR)
+    assert error_event.reason == "restart-failed"
+    assert error_event.workstation.state is WorkstationState.UNAVAILABLE

@@ -10,8 +10,8 @@ from app.config import RunnerSettings
 from app.events import InMemorySessionEventPublisher
 from app.metrics import METRICS_REGISTRY
 from app.session_manager import (
-    SessionCreatePayload,
     SessionCapacityError,
+    SessionCreatePayload,
     SessionManager,
     SessionUpdatePayload,
 )
