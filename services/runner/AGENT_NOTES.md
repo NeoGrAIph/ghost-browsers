@@ -98,6 +98,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - `SessionManager` always updates `last_seen_at` on mutations to ensure monotonic timestamps.
 - `SessionEvent` timestamps are UTC and emitted for every state change; terminal events require `SessionStatus.DEAD`.
 - Session mutations occur under an `anyio.Lock` to avoid race conditions in async contexts.
+- Нагрузочный тест издателя подтверждает, что 10 параллельных продюсеров (10k событий) удерживают publish avg ≤ 20 мс, peak ≤ 100 мс, а drain ≤ 200 мс (pytest `test_inmemory_publisher_drain_latency_under_parallel_load`).
 - Health payload normalises proxy base URLs by stripping trailing slashes
   only when the configured path is empty, preserving operator-provided
   values.
@@ -108,7 +109,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - Доступность VNC зависит от бинарей `Xvfb`, `x11vnc` и `websockify`; при их отсутствии `ProcessVncController` отключается и сессии остаются без VNC-URL.
 
 ## Known Gaps / TODO
-- [ ] Зафиксировать профиль нагрузки для in-memory издателя после появления боевых метрик, чтобы подтвердить соответствие latency требованиям.
+- [x] Зафиксирован профиль нагрузки для in-memory издателя: 10k событий (10 параллельных продюсеров) удерживают publish avg ≤ 20 мс, peak ≤ 100 мс, drain ≤ 200 мс (см. `test_inmemory_publisher_drain_latency_under_parallel_load`).
 - [x] Документирован поток восстановления: gateway опрашивает `GET /sessions` на старте (см. `test_lifespan_restores_sessions_from_healthy_runners`), runner покрыт тестами `test_list_sessions_returns_*`.
 
 ## How to Test
@@ -139,4 +140,5 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-20 · gpt-5-codex · Добавлены warm-pool метрики/таймеры, расширен `/health` данными пула и настроен формат логов с идентификаторами; обновлены тесты `/metrics` и `/health`.
 - 2025-10-21 · gpt-5-codex · Реализованы режимы warm pool (warm-only/cold-only/hybrid), гибридный fallback на `launch_browser`, расширение метаданных `browser_origin` и покрытие тестами.
 - 2025-10-22 · gpt-5-codex · Добавлен `GET /sessions` для восстановления состояния gateway и юнит-тесты на пустой и заполненный реестры.
+- 2025-10-24 · gpt-5-codex · Добавлен стресс-тест in-memory издателя (10k событий) и задокументированы пороги publish/drain.
 

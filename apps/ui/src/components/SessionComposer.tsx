@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { SessionComposerData, RunnerChoice } from '../utils/composer';
 
+/**
+ * Aggregated form state collected by the session composer modal.
+ */
 export interface SessionComposerValues {
   readonly browserName: string;
   readonly region: string;
