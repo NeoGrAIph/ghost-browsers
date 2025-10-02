@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from httpx import AsyncClient
-
 from app.config import RunnerSettings
 from app.dependencies.session_manager import (
     get_event_publisher,
@@ -17,6 +15,7 @@ from app.events import InMemorySessionEventPublisher
 from app.main import app
 from app.session_manager import SessionCreatePayload, SessionManager
 from core.models import SessionVncDetails
+from httpx import AsyncClient
 
 
 @pytest.fixture
@@ -179,6 +178,47 @@ async def test_health_endpoint_reports_extended_metrics(
     assert ttl["next_expiry_at"] == (
         clock() + timedelta(seconds=300)
     ).isoformat()
+
+
+@pytest.mark.anyio("asyncio")
+async def test_metrics_endpoint_exposes_prometheus_payload(
+    stub_launch_browser: None,
+) -> None:
+    """``GET /metrics`` should serve Prometheus-formatted metrics."""
+
+    clock = _ApiStubClock(datetime(2024, 3, 3, 12, 0, 0, tzinfo=UTC))
+    settings = RunnerSettings(
+        runner_id="runner-metrics",
+        camoufox_path="/usr/bin/camoufox",
+        vnc_enabled=True,
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        settings,
+        publisher,
+        clock=clock,
+        reaper_interval_seconds=5.0,
+        vnc_controller=_MainStubVncController(),
+    )
+
+    await manager.create_session(SessionCreatePayload(headless=False))
+
+    app.dependency_overrides[get_runner_settings] = lambda: settings
+    app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get("/metrics")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    body = response.text
+    assert "runner_active_sessions" in body
+    assert "runner_vnc_allocations" in body
+    assert "runner_vnc_allocation_requests_total" in body
 
 
 @pytest.mark.anyio("asyncio")

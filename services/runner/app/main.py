@@ -7,10 +7,12 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from core.models import Session
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Response, status
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import RunnerSettings
 from .dependencies import get_runner_settings, get_session_manager
+from .metrics import METRICS_REGISTRY
 from .session_manager import (
     SessionCreatePayload,
     SessionManager,
@@ -181,6 +183,14 @@ async def delete_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="session not found",
         ) from exc
+
+
+@app.get("/metrics", summary="Prometheus metrics")
+async def metrics() -> Response:
+    """Expose service metrics for Prometheus scrapers."""
+
+    payload = generate_latest(METRICS_REGISTRY)
+    return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
 
 
 @app.on_event("startup")

@@ -25,7 +25,11 @@ class BrowserSessionHandle:
         process: Underlying subprocess kept alive for the duration of the session.
 
     Example:
-        >>> # handle = await launch_browser(settings, browser="camoufox", headless=True)  # doctest: +SKIP
+        >>> # handle = await launch_browser(  # doctest: +SKIP
+        ...     settings,
+        ...     browser="camoufox",
+        ...     headless=True,
+        ... )
         >>> # await handle.shutdown()  # doctest: +SKIP
     """
 
@@ -100,8 +104,15 @@ async def launch_browser(
             valid ``wsEndpoint`` payload within ``read_timeout`` seconds.
 
     Example:
-        >>> settings = RunnerSettings(runner_id="runner", camoufox_path="/usr/bin/camoufox")
-        >>> # handle = await launch_browser(settings, browser="camoufox", headless=True)  # doctest: +SKIP
+        >>> settings = RunnerSettings(  # doctest: +SKIP
+        ...     runner_id="runner",
+        ...     camoufox_path="/usr/bin/camoufox",
+        ... )
+        >>> # handle = await launch_browser(  # doctest: +SKIP
+        ...     settings,
+        ...     browser="camoufox",
+        ...     headless=True,
+        ... )
     """
 
     cli = os.environ.get("PLAYWRIGHT_CLI", "playwright")

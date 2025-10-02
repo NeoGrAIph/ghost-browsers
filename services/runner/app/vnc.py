@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import shutil
 from asyncio import streams, subprocess
 from collections import deque
@@ -281,15 +280,15 @@ class ProcessVncController:
         while True:
             try:
                 reader, writer = await asyncio.open_connection(host, port)
-            except OSError:
+            except OSError as exc:
                 if process.returncode is not None:
                     raise VncError(
                         f"websockify exited with code {process.returncode}"
-                    )
+                    ) from exc
                 if asyncio.get_running_loop().time() >= deadline:
                     raise VncError(
                         f"timed out waiting for websockify on {host}:{port}"
-                    )
+                    ) from exc
                 await asyncio.sleep(0.1)
             else:
                 writer.close()

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from app.config import RunnerSettings
 from app.events import InMemorySessionEventPublisher
+from app.metrics import METRICS_REGISTRY
 from app.session_manager import (
     SessionCreatePayload,
     SessionManager,
@@ -255,7 +256,7 @@ async def test_metrics_track_active_sessions_and_prewarm_failures(
         vnc_controller=stub_vnc_controller,
     )
 
-    first = await manager.create_session(SessionCreatePayload())
+    await manager.create_session(SessionCreatePayload())
     await manager.create_session(SessionCreatePayload())
     await manager.record_prewarm_failure("warmup-1")
     await manager.record_prewarm_failure("warmup-2")
@@ -264,6 +265,38 @@ async def test_metrics_track_active_sessions_and_prewarm_failures(
     assert metrics.active_sessions == 2
     assert metrics.prewarm_failure_count == 2
     assert metrics.prewarm_failures == ["warmup-1", "warmup-2"]
+
+
+@pytest.mark.anyio("asyncio")
+async def test_prometheus_metrics_follow_session_and_vnc_lifecycle(
+    stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
+) -> None:
+    """Prometheus gauges should mirror active sessions and VNC allocations."""
+
+    def _sample(name: str) -> float:
+        value = METRICS_REGISTRY.get_sample_value(name)
+        return 0.0 if value is None else value
+
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        RunnerSettings(runner_id="runner-prom", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        vnc_controller=stub_vnc_controller,
+    )
+
+    post_init_active = _sample("runner_active_sessions")
+    post_init_vnc = _sample("runner_vnc_allocations")
+
+    session = await manager.create_session(SessionCreatePayload(headless=False))
+
+    assert _sample("runner_active_sessions") == pytest.approx(post_init_active + 1.0)
+    assert _sample("runner_vnc_allocations") == pytest.approx(post_init_vnc + 1.0)
+
+    await manager.end_session(session.id)
+
+    assert _sample("runner_active_sessions") == pytest.approx(post_init_active)
+    assert _sample("runner_vnc_allocations") == pytest.approx(post_init_vnc)
 
 
 @pytest.mark.anyio("asyncio")
@@ -316,6 +349,12 @@ async def test_reap_expired_sessions_marks_session_dead_and_records_metrics(
         SessionCreatePayload(idle_ttl_seconds=30)
     )
 
+    runs_before = METRICS_REGISTRY.get_sample_value("runner_reaper_runs_total") or 0.0
+    expired_before = (
+        METRICS_REGISTRY.get_sample_value("runner_reaper_expired_sessions_total")
+        or 0.0
+    )
+
     clock.advance(31)
     expired = await manager.reap_expired_sessions()
 
@@ -332,6 +371,14 @@ async def test_reap_expired_sessions_marks_session_dead_and_records_metrics(
     assert metrics.reaper_expired_sessions == 1
     assert metrics.reaper_total_runs == 1
     assert metrics.next_idle_expiry_at is None
+    assert (
+        METRICS_REGISTRY.get_sample_value("runner_reaper_runs_total")
+        == pytest.approx(runs_before + 1.0)
+    )
+    assert (
+        METRICS_REGISTRY.get_sample_value("runner_reaper_expired_sessions_total")
+        == pytest.approx(expired_before + 1.0)
+    )
 
 
 @pytest.mark.anyio("asyncio")
@@ -480,7 +527,7 @@ async def test_create_session_launches_browser(monkeypatch: pytest.MonkeyPatch) 
     assert session.ws_endpoint == "ws://playwright.test/session"
     assert session.metadata["flow"] == "launch-test"
     assert session.metadata["runner_browser_pid"] == stub_handle.pid
-    stored_handle = getattr(manager, "_browser_handles")[session.id]
+    stored_handle = manager._browser_handles[session.id]
     assert stored_handle is stub_handle
     events = await publisher.drain()
     assert [event.type for event in events] == [SessionEventType.CREATED]
@@ -520,7 +567,7 @@ async def test_update_session_cleans_up_browser(monkeypatch: pytest.MonkeyPatch)
     assert updated.status is SessionStatus.DEAD
     assert updated.ws_endpoint is None
     assert stub_handle.shutdown_calls == [{"force": True, "timeout": 5.0}]
-    assert session.id not in getattr(manager, "_browser_handles")
+    assert session.id not in manager._browser_handles
     events = await publisher.drain()
     assert [event.type for event in events] == [
         SessionEventType.CREATED,
@@ -556,5 +603,5 @@ async def test_create_session_rolls_back_on_launch_failure(
     with pytest.raises(RuntimeError):
         await manager.create_session(SessionCreatePayload())
 
-    assert getattr(manager, "_browser_handles") == {}
+    assert manager._browser_handles == {}
     assert await publisher.drain() == []

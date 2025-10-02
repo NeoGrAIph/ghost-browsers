@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-import contextlib
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -25,6 +25,14 @@ from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 from .browser import BrowserSessionHandle, launch_browser
 from .config import RunnerSettings
 from .events import SessionEventPublisher
+from .metrics import (
+    ACTIVE_SESSIONS_GAUGE,
+    REAPER_EXPIRED_SESSIONS_COUNTER,
+    REAPER_LAST_RUN_GAUGE,
+    REAPER_RUNS_COUNTER,
+    VNC_ALLOCATION_REQUESTS_COUNTER,
+    VNC_ALLOCATIONS_GAUGE,
+)
 from .vnc import VncController, VncSessionHandle
 
 
@@ -93,7 +101,7 @@ class SessionManagerMetrics(BaseModel):
         reaper_last_run_at: Timestamp of the most recent reaper execution.
 
     Example:
-        >>> SessionManagerMetrics(
+        >>> metrics = SessionManagerMetrics(
         ...     active_sessions=1,
         ...     prewarm_failures=["boom"],
         ...     last_prewarm_error="boom",
@@ -101,7 +109,8 @@ class SessionManagerMetrics(BaseModel):
         ...     reaper_total_runs=2,
         ...     reaper_expired_sessions=1,
         ... )
-        SessionManagerMetrics(active_sessions=1, prewarm_failures=['boom'], last_prewarm_error='boom', ...)
+        >>> metrics.active_sessions
+        1
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -157,6 +166,12 @@ class SessionManager:
         self._reaper_last_run_at: datetime | None = None
         self._reaper_interval = max(0.1, float(reaper_interval_seconds))
         self._reaper_task_group: TaskGroup | None = None
+        ACTIVE_SESSIONS_GAUGE.set(0)
+        VNC_ALLOCATIONS_GAUGE.set(0)
+        REAPER_LAST_RUN_GAUGE.set(0)
+        REAPER_RUNS_COUNTER.inc(0)
+        REAPER_EXPIRED_SESSIONS_COUNTER.inc(0)
+        VNC_ALLOCATION_REQUESTS_COUNTER.inc(0)
 
     async def create_session(self, payload: SessionCreatePayload) -> Session:
         """Create, persist, and broadcast a new session object."""
@@ -222,9 +237,11 @@ class SessionManager:
             self._browser_handles[session_id] = browser_handle
             if vnc_handle is not None:
                 self._vnc_handles[session_id] = vnc_handle
+            VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
             self._recalculate_next_idle_expiry_locked()
             if session.status is not SessionStatus.DEAD:
                 self._active_sessions += 1
+                ACTIVE_SESSIONS_GAUGE.set(self._active_sessions)
             await self._publish(session, SessionEventType.CREATED, reason=None)
             return session
 
@@ -387,7 +404,9 @@ class SessionManager:
                     next_expiry = candidate
             self._next_idle_expiry_at = next_expiry
             self._reaper_total_runs += 1
+            REAPER_RUNS_COUNTER.inc()
             self._reaper_last_run_at = now
+            REAPER_LAST_RUN_GAUGE.set(now.timestamp())
         expired = 0
         for session_id in expired_ids:
             try:
@@ -402,6 +421,7 @@ class SessionManager:
         if expired:
             async with self._lock:
                 self._reaper_expired_sessions += expired
+                REAPER_EXPIRED_SESSIONS_COUNTER.inc(expired)
         return expired
 
     async def start(self) -> None:
@@ -449,6 +469,7 @@ class SessionManager:
         if self._vnc_controller is None:
             return None, None
         handle = await self._vnc_controller.allocate(str(session_id))
+        VNC_ALLOCATION_REQUESTS_COUNTER.inc()
         return handle.details, handle
 
     def _sanitize_vnc_payload(
@@ -488,6 +509,7 @@ class SessionManager:
             self._active_sessions = max(0, self._active_sessions - 1)
         elif not was_active and is_active:
             self._active_sessions += 1
+        ACTIVE_SESSIONS_GAUGE.set(self._active_sessions)
 
     def _recalculate_next_idle_expiry_locked(self) -> None:
         """Recompute the nearest idle expiry using the current session map.
@@ -577,6 +599,7 @@ class SessionManager:
         if handle is None or self._vnc_controller is None:
             return
         await self._vnc_controller.release(handle)
+        VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
 
     async def _discard_vnc_handle(
         self, session_id: UUID, handle: VncSessionHandle | None
@@ -590,18 +613,21 @@ class SessionManager:
             return
         if self._vnc_controller is not None:
             await self._vnc_controller.release(handle)
+        VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
 
     async def _shutdown_all_vnc(self) -> None:
         """Terminate every tracked VNC handle during service shutdown."""
 
         if self._vnc_controller is None:
             self._vnc_handles.clear()
+            VNC_ALLOCATIONS_GAUGE.set(0)
             return
         handles = list(self._vnc_handles.items())
         self._vnc_handles.clear()
         for _session_id, handle in handles:
             with contextlib.suppress(Exception):
                 await self._vnc_controller.release(handle)
+        VNC_ALLOCATIONS_GAUGE.set(0)
 
     def _should_cleanup_vnc(self, previous: Session, current: Session) -> bool:
         """Determine whether the stored VNC handle should be released."""
