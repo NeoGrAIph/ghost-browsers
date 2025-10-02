@@ -6,6 +6,7 @@ import {
   adaptSessionEvent,
   type Session,
   type SessionEvent,
+  type SessionProxyUpdate,
 } from '../types/session';
 import { createUrl } from '../utils/url';
 import { RunnerStatusSchema, adaptRunnerStatus, type RunnerStatus } from '../types/runner';
@@ -160,6 +161,23 @@ export const createSession = async (
       },
       headers,
     )
+    .then(adaptSession);
+
+/**
+ * Updates the proxy configuration for an existing session and returns the refreshed payload.
+ *
+ * @param sessionId - Identifier of the session to update.
+ * @param payload - Proxy configuration enforcing at least one endpoint.
+ * @param headers - Optional authentication headers with a bearer token.
+ * @returns Session payload normalised for the UI.
+ */
+export const updateSessionProxy = async (
+  sessionId: string,
+  payload: SessionProxyUpdate,
+  headers?: AuthHeaders,
+): Promise<Session> =>
+  apiClient
+    .post(`/sessions/${sessionId}/proxy`, SessionSchema, payload, headers)
     .then(adaptSession);
 
 /**

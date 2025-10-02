@@ -24,6 +24,22 @@ export const SessionProxySchema = z.object({
 });
 
 /**
+ * Zod schema representing the payload accepted by the proxy update endpoint.
+ *
+ * The backend enforces that at least one proxy endpoint is provided which we
+ * mirror on the client to surface validation issues before sending the
+ * request.
+ */
+export const SessionProxyUpdateSchema = SessionProxySchema.superRefine((value, ctx) => {
+  if (!value.http && !value.https && !value.socks) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one proxy URL must be provided.',
+    });
+  }
+});
+
+/**
  * Zod schema describing the VNC connection parameters for a session.
  */
 export const SessionVncSchema = z.object({
@@ -73,6 +89,7 @@ export type SessionEventType = z.infer<typeof SessionEventTypeSchema>;
 export type RawSession = z.infer<typeof SessionSchema>;
 export type RawSessionEvent = z.infer<typeof SessionEventSchema>;
 export type StartUrlWait = RawSession['start_url_wait'];
+export type SessionProxyUpdate = z.infer<typeof SessionProxyUpdateSchema>;
 
 /**
  * UI-friendly proxy descriptor with camelCase keys.
