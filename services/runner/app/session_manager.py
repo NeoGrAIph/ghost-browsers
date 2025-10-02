@@ -6,6 +6,7 @@ import contextlib
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -30,6 +31,7 @@ from .metrics import (
     REAPER_EXPIRED_SESSIONS_COUNTER,
     REAPER_LAST_RUN_GAUGE,
     REAPER_RUNS_COUNTER,
+    SESSION_ALLOCATE_SECONDS,
     VNC_ALLOCATION_REQUESTS_COUNTER,
     VNC_ALLOCATIONS_GAUGE,
 )
@@ -39,6 +41,7 @@ from .warm_pool import (
     WarmPoolProvisioningError,
     WarmPoolReservation,
     WarmPoolStateError,
+    WarmPoolStatistics,
 )
 
 
@@ -190,73 +193,77 @@ class SessionManager:
     async def create_session(self, payload: SessionCreatePayload) -> Session:
         """Create, persist, and broadcast a new session object."""
 
-        async with self._lock:
-            session_id = uuid4()
-            now = self._clock()
-            sanitized_vnc = self._sanitize_vnc_payload(payload.vnc)
-            vnc_details, vnc_handle = await self._resolve_vnc(
-                payload,
-                session_id,
-                sanitized_vnc=sanitized_vnc,
-            )
-            try:
-                reservation = await self._reserve_warm_slot(payload.metadata)
-            except Exception:
-                await self._discard_vnc_handle(session_id, vnc_handle)
-                raise
-            workstation_id = reservation.snapshot.workstation_id
-            browser_handle = reservation.handle
-            metadata = self._merge_warm_pool_metadata(
-                dict(payload.metadata), reservation
-            )
-            if browser_handle.pid is not None:
-                metadata.setdefault("runner_browser_pid", browser_handle.pid)
-            vnc_enabled = (
-                payload.vnc_enabled
-                if payload.vnc_enabled is not None
-                else (vnc_details is not None and not payload.headless)
-            )
-            try:
-                session = Session(
-                    id=session_id,
-                    runner_id=self._settings.runner_id,
-                    status=payload.status,
-                    created_at=now,
-                    last_seen_at=now,
-                    headless=payload.headless,
-                    idle_ttl_seconds=payload.idle_ttl_seconds,
-                    start_url=payload.start_url,
-                    start_url_wait=payload.start_url_wait,
-                    browser=payload.browser,
-                    labels=payload.labels,
-                    ws_endpoint=browser_handle.ws_endpoint,
-                    proxy=payload.proxy,
-                    vnc=vnc_details,
-                    vnc_enabled=vnc_enabled,
-                    metadata=metadata,
+        start_time = perf_counter()
+        try:
+            async with self._lock:
+                session_id = uuid4()
+                now = self._clock()
+                sanitized_vnc = self._sanitize_vnc_payload(payload.vnc)
+                vnc_details, vnc_handle = await self._resolve_vnc(
+                    payload,
+                    session_id,
+                    sanitized_vnc=sanitized_vnc,
                 )
-            except Exception:
-                await self._cancel_warm_reservation(workstation_id)
-                await self._discard_vnc_handle(session_id, vnc_handle)
-                raise
-            try:
-                await self._mark_warm_slot_busy(workstation_id)
-            except SessionCapacityError:
-                await self._cancel_warm_reservation(workstation_id)
-                await self._discard_vnc_handle(session_id, vnc_handle)
-                raise
-            self._sessions[session_id] = session
-            self._browser_handles[session_id] = browser_handle
-            self._warm_sessions[session_id] = workstation_id
-            if vnc_handle is not None:
-                self._vnc_handles[session_id] = vnc_handle
-            VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
-            self._recalculate_next_idle_expiry_locked()
-            if session.status is not SessionStatus.DEAD:
-                self._active_sessions += 1
-                ACTIVE_SESSIONS_GAUGE.set(self._active_sessions)
-            await self._publish(session, SessionEventType.CREATED, reason=None)
-            return session
+                try:
+                    reservation = await self._reserve_warm_slot(payload.metadata)
+                except Exception:
+                    await self._discard_vnc_handle(session_id, vnc_handle)
+                    raise
+                workstation_id = reservation.snapshot.workstation_id
+                browser_handle = reservation.handle
+                metadata = self._merge_warm_pool_metadata(
+                    dict(payload.metadata), reservation
+                )
+                if browser_handle.pid is not None:
+                    metadata.setdefault("runner_browser_pid", browser_handle.pid)
+                vnc_enabled = (
+                    payload.vnc_enabled
+                    if payload.vnc_enabled is not None
+                    else (vnc_details is not None and not payload.headless)
+                )
+                try:
+                    session = Session(
+                        id=session_id,
+                        runner_id=self._settings.runner_id,
+                        status=payload.status,
+                        created_at=now,
+                        last_seen_at=now,
+                        headless=payload.headless,
+                        idle_ttl_seconds=payload.idle_ttl_seconds,
+                        start_url=payload.start_url,
+                        start_url_wait=payload.start_url_wait,
+                        browser=payload.browser,
+                        labels=payload.labels,
+                        ws_endpoint=browser_handle.ws_endpoint,
+                        proxy=payload.proxy,
+                        vnc=vnc_details,
+                        vnc_enabled=vnc_enabled,
+                        metadata=metadata,
+                    )
+                except Exception:
+                    await self._cancel_warm_reservation(workstation_id)
+                    await self._discard_vnc_handle(session_id, vnc_handle)
+                    raise
+                try:
+                    await self._mark_warm_slot_busy(workstation_id)
+                except SessionCapacityError:
+                    await self._cancel_warm_reservation(workstation_id)
+                    await self._discard_vnc_handle(session_id, vnc_handle)
+                    raise
+                self._sessions[session_id] = session
+                self._browser_handles[session_id] = browser_handle
+                self._warm_sessions[session_id] = workstation_id
+                if vnc_handle is not None:
+                    self._vnc_handles[session_id] = vnc_handle
+                VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
+                self._recalculate_next_idle_expiry_locked()
+                if session.status is not SessionStatus.DEAD:
+                    self._active_sessions += 1
+                    ACTIVE_SESSIONS_GAUGE.set(self._active_sessions)
+                await self._publish(session, SessionEventType.CREATED, reason=None)
+                return session
+        finally:
+            SESSION_ALLOCATE_SECONDS.observe(perf_counter() - start_time)
 
     async def update_session(self, session_id: UUID, payload: SessionUpdatePayload) -> Session:
         """Apply a partial update to a stored session and broadcast the change."""
@@ -344,6 +351,14 @@ class SessionManager:
 
         async with self._lock:
             return list(self._sessions.values())
+
+    def get_warm_pool_statistics(self) -> WarmPoolStatistics | None:
+        """Return warm pool utilisation statistics for health reporting."""
+
+        warm_pool = self._warm_pool
+        if warm_pool is None:
+            return None
+        return warm_pool.get_statistics()
 
     async def record_prewarm_failure(self, message: str) -> None:
         """Append ``message`` to the rolling prewarm failure history."""

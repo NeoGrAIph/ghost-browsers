@@ -15,7 +15,13 @@ from app.session_manager import (
     SessionManager,
     SessionUpdatePayload,
 )
-from app.warm_pool import WarmPoolReservation, WarmPoolSnapshot, WarmPoolState, WarmPoolStateError
+from app.warm_pool import (
+    WarmPoolReservation,
+    WarmPoolSnapshot,
+    WarmPoolState,
+    WarmPoolStateError,
+    WarmPoolStatistics,
+)
 from core.models import (
     SessionEventType,
     SessionProxySettings,
@@ -139,6 +145,24 @@ class _StubWarmPoolManager:
             fingerprint_id=slot["fingerprint"],
             proxy_url=slot["proxy"],
             state=WarmPoolState.IDLE,
+        )
+
+    def get_statistics(self) -> WarmPoolStatistics:
+        """Return utilisation counters for compatibility with the real manager."""
+
+        idle = sum(1 for slot in self._slots.values() if slot["state"] is WarmPoolState.IDLE)
+        busy = sum(
+            1
+            for slot in self._slots.values()
+            if slot["state"] in {WarmPoolState.RESERVED, WarmPoolState.BUSY}
+        )
+        error = sum(1 for slot in self._slots.values() if slot["state"] is WarmPoolState.ERROR)
+        return WarmPoolStatistics(
+            total=len(self._slots),
+            idle=idle,
+            busy=busy,
+            error=error,
+            draining=False,
         )
 
     def _make_handle(self, workstation_id: str) -> _StubBrowserHandle:

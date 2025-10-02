@@ -43,6 +43,10 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - Prometheus-инструментация живёт в `app.metrics` и использует отдельный `CollectorRegistry`;
   `SessionManager` синхронизирует gauge/counter-метрики при создании/завершении сессий,
   аллокации VNC и работе idle-reaper-а.
+- Дополнительно экспортируются warm-pool gauges (`runner_workstations_*`), histogram
+  `runner_workstation_recycle_seconds`, summary `runner_session_allocate_seconds` и счётчики
+  ошибок навигации/прокси; `WarmPoolManager` и `SessionManager` обновляют значения при смене
+  состояния.
 - Конфигурация пула прогретых рабочих станций описывается `WarmPoolConfig`
   (`app.config.warm_pool`). Запись (`WorkstationConfigEntry`) содержит хотя бы `id`
   (строгая уникальность, проверяется валидатором) и произвольные дополнительные поля
@@ -75,6 +79,9 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Prometheus registry**: Runner экспортирует `/metrics`, используя
   `prometheus_client.CollectorRegistry`; значения обновляются в момент изменения состояния
   (`active_sessions`, VNC аллокации, пробеги reaper-а) вместо ленивой агрегации на запрос.
+- **Structured logging defaults**: `app.logging.configure_logging()` обеспечивает единый формат
+  логов и гарантирует наличие полей `session_id`, `workstation_id`, `fingerprint_id` даже при
+  отсутствии значений в `extra`.
 - **JSON-конфиг пула прогрева**: Дополнительные параметры окружения (`WARM_POOL_CONFIG_PATH`,
   `BROWSER_PREFS_PATH`, `PREWARM_NAVIGATION`, `START_URL`, `START_URL_WAIT_MS`) разбираются в
   `RunnerSettings`. Отдельный JSON-файл описывает warm pool; при ошибках чтения/валидации
@@ -123,3 +130,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-17 · gpt-5-codex · Интегрирован warm pool в `SessionManager`/API, добавлен отклик 429 при нехватке слотов и покрытие тестами.
 - 2025-10-18 · gpt-5-codex · Добавлены REST-эндпоинты `/workstations*`, in-memory издатель `WorkstationEvent` и интеграционные тесты API.
 - 2025-10-19 · gpt-5-codex · Вынесены маршруты `/workstations` в отдельный роутер с Pydantic-моделями, WarmPoolManager публикует события state/error/recycled, добавлены SSE/WS-обёртки и интеграционные тесты.
+- 2025-10-20 · gpt-5-codex · Добавлены warm-pool метрики/таймеры, расширен `/health` данными пула и настроен формат логов с идентификаторами; обновлены тесты `/metrics` и `/health`.
