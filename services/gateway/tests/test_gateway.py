@@ -29,6 +29,7 @@ from app.deps import get_vnc_token_service  # noqa: E402
 from app.deps.security import get_authenticator, get_current_user  # noqa: E402
 from app.security import AuthenticatedUser, KeycloakAuthenticator, VncTokenService  # noqa: E402
 from app.services.runner_client import RunnerCommandClient  # noqa: E402
+from app.services.runner_health import RunnerHealthClient  # noqa: E402
 from core import (
     Runner,
     Session,
@@ -196,6 +197,78 @@ def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> Non
     assert payload["websocket_url"] == f"wss://vnc.example/ws/{session_id}"
     assert payload["token"]
     assert payload["token_ttl_seconds"] == 120
+
+
+@pytest.mark.anyio("asyncio")
+async def test_lifespan_restores_sessions_from_healthy_runners() -> None:
+    """Gateway lifespan should recover active sessions during startup."""
+
+    now = datetime.now(tz=UTC)
+    session_id = uuid4()
+    session_payload = {
+        "id": str(session_id),
+        "runner_id": "runner-1",
+        "status": SessionStatus.READY.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+        "labels": {"region": "eu-central"},
+        "ws_endpoint": "ws://runner-1/playwright/1",
+    }
+    list_requests: list[httpx.Request] = []
+
+    def _list_handler(request: httpx.Request) -> httpx.Response:
+        list_requests.append(request)
+        assert request.url.path == "/sessions"
+        return httpx.Response(200, json=[session_payload])
+
+    health_requests: list[httpx.Request] = []
+
+    def _health_handler(request: httpx.Request) -> httpx.Response:
+        health_requests.append(request)
+        assert request.url.path == "/health"
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "runner_id": "runner-1",
+                "slots": {"total": 1, "available": 0},
+                "vnc": {"enabled": True},
+            },
+        )
+
+    settings = GatewaySettings(
+        discovery_mode="static",
+        runners=[
+            Runner(
+                id="runner-1",
+                base_url="http://runner-1",
+                total_slots=1,
+                supports_vnc=True,
+            )
+        ],
+        jwt_jwks_url="http://jwks.local",
+        vnc_token_secret="unit-test-secret",
+        vnc_token_ttl_seconds=120,
+    )
+    app = create_app(settings)
+    app.state.runner_client = RunnerCommandClient(transport=httpx.MockTransport(_list_handler))
+    app.state.runner_health_client = RunnerHealthClient(transport=httpx.MockTransport(_health_handler))
+
+    async with app.router.lifespan_context(app):
+        stored = await app.state.session_registry.list()
+        assert len(stored) == 1
+        session = stored[0]
+        assert session.id == session_id
+        assert session.runner_id == "runner-1"
+        assert session.ws_endpoint == "ws://runner-1/playwright/1"
+        public = await app.state.runner_registry.resolve_session_ws_public(session.id)
+        assert public == f"/sessions/{session_id}/ws"
+
+    assert [request.url.path for request in list_requests] == ["/sessions"]
+    if health_requests:
+        assert [request.url.path for request in health_requests] == ["/health"]
 
 
 def test_session_reads_reflect_runner_override_updates(

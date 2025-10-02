@@ -128,6 +128,38 @@ async def test_delete_session_issues_delete(sample_runner: Runner) -> None:
     assert requests[0].url.path.endswith(f"/sessions/{session_id}")
 
 
+async def test_list_sessions_returns_validated_models(sample_runner: Runner) -> None:
+    """``list_sessions`` issues ``GET /sessions`` and validates each entry."""
+
+    requests: list[httpx.Request] = []
+    payload = [_session_payload(), _session_payload()]
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=payload)
+
+    client = RunnerCommandClient(transport=httpx.MockTransport(_handler))
+
+    sessions = await client.list_sessions(sample_runner)
+
+    assert requests
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == "/sessions"
+    assert [str(session.id) for session in sessions] == [item["id"] for item in payload]
+
+
+async def test_list_sessions_rejects_invalid_entries(sample_runner: Runner) -> None:
+    """Non-mapping elements in the response should trigger ``RunnerCommandError``."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["invalid"])
+
+    client = RunnerCommandClient(transport=httpx.MockTransport(_handler))
+
+    with pytest.raises(RunnerCommandError):
+        await client.list_sessions(sample_runner)
+
+
 async def test_create_session_raises_on_unexpected_status(sample_runner: Runner) -> None:
     """Non-201 responses for create commands raise ``RunnerCommandError``."""
 

@@ -91,6 +91,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   `RunnerSettings`. Отдельный JSON-файл описывает warm pool; при ошибках чтения/валидации
   старт завершается с развёрнутым сообщением, что упрощает операционную диагностику.
 - **Warm pool state machine**: ``WarmPoolManager`` использует явные состояния (`idle → reserved → busy → recycling`, а также `draining`/`error`) и индивидуальные ``asyncio.Lock`` для каждой рабочей станции. Это предотвращает гонки при параллельных резервациях и гарантирует, что recycle всегда закрывает процесс, чистит профили и перезапускает Camoufox с тем же fingerprint.
+- **Session recovery endpoint**: Runner публикует `GET /sessions`, который отдаёт `SessionManager.list_sessions` для восстановления состояния control-plane сервисов (gateway, worker) после рестартов. Контракт покрыт юнит-тестами `test_list_sessions_returns_empty_collection` и `test_list_sessions_returns_active_sessions`.
 
 ## Constraints & Invariants
 - `RunnerSettings.vnc_token_ttl_seconds` capped at 300 seconds to align with `SessionVncDetails` validation.
@@ -108,6 +109,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 
 ## Known Gaps / TODO
 - [ ] Зафиксировать профиль нагрузки для in-memory издателя после появления боевых метрик, чтобы подтвердить соответствие latency требованиям.
+- [x] Документирован поток восстановления: gateway опрашивает `GET /sessions` на старте (см. `test_lifespan_restores_sessions_from_healthy_runners`), runner покрыт тестами `test_list_sessions_returns_*`.
 
 ## How to Test
 - `poetry install --no-root`
@@ -136,3 +138,5 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-19 · gpt-5-codex · Вынесены маршруты `/workstations` в отдельный роутер с Pydantic-моделями, WarmPoolManager публикует события state/error/recycled, добавлены SSE/WS-обёртки и интеграционные тесты.
 - 2025-10-20 · gpt-5-codex · Добавлены warm-pool метрики/таймеры, расширен `/health` данными пула и настроен формат логов с идентификаторами; обновлены тесты `/metrics` и `/health`.
 - 2025-10-21 · gpt-5-codex · Реализованы режимы warm pool (warm-only/cold-only/hybrid), гибридный fallback на `launch_browser`, расширение метаданных `browser_origin` и покрытие тестами.
+- 2025-10-22 · gpt-5-codex · Добавлен `GET /sessions` для восстановления состояния gateway и юнит-тесты на пустой и заполненный реестры.
+
