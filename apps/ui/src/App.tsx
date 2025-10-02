@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { useAuth } from './hooks/useAuth';
 import { useSessionEvents } from './hooks/useSessionEvents';
 import { useAppTheme } from './providers/ThemeProvider';
+import { useSessionEventConnection } from './store/sessionEvents';
 
 /**
  * Root application component that decides whether to render the dashboard or the login screen
@@ -12,8 +13,29 @@ import { useAppTheme } from './providers/ThemeProvider';
 export function App(): JSX.Element {
   const { isAuthenticated, isLoading, token } = useAuth();
   const { theme } = useAppTheme();
+  const retrySignal = useSessionEventConnection((state) => state.retrySignal);
+  const setConnectionError = useSessionEventConnection((state) => state.setError);
+  const resetConnectionState = useSessionEventConnection((state) => state.reset);
 
-  useSessionEvents({ enabled: isAuthenticated, token: token ?? undefined });
+  useEffect(() => {
+    if (!isAuthenticated) {
+      resetConnectionState();
+    }
+  }, [isAuthenticated, resetConnectionState]);
+
+  const handleStreamError = useCallback(
+    (error: Error | null) => {
+      setConnectionError(error ? error.message : null);
+    },
+    [setConnectionError],
+  );
+
+  useSessionEvents({
+    enabled: isAuthenticated,
+    token: token ?? undefined,
+    retrySignal,
+    onError: handleStreamError,
+  });
 
   const content = useMemo(() => {
     if (isLoading) {
