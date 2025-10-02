@@ -62,10 +62,11 @@
 - `Session.workstation` валидируется на совпадение с `workstation_id` и
   `workstation_fingerprint_id`, чтобы избежать рассинхронизации payload’ов.
 - `WorkstationEvent` требует `occurred_at` с tzinfo и непустую `reason` при наличии.
+- Нагрузочный тест подтверждает, что in-memory мост обрабатывает 5k событий со средней латентностью ≤ 60 мс и пиковым значением ≤ 250 мс (pytest `test_inmemory_bridge_handles_thousands_of_events`).
 
 ## Known Gaps / TODO
-- [ ] Провести нагрузочное тестирование in-memory моста под массовыми подписками,
-      когда появятся целевые SLO по задержкам от команды эксплуатации.
+- [x] Проведено нагрузочное тестирование in-memory моста на 5k событий;
+      thresholds: avg ≤ 60 ms, peak ≤ 250 ms, publish ≤ 2.5 s (см. `test_inmemory_bridge_handles_thousands_of_events`).
 
 ## How to Test
 - Установить зависимости: `poetry install --no-root` (в каталоге `packages/core`).
@@ -90,3 +91,5 @@
 - 2025-10-14 · gpt-5-codex — Расширен `Session` полем `ws_public_endpoint` и обновлены тесты сериализации.
 - 2025-10-15 · ChatGPT — Добавлены модели и события рабочей станции, расширен контракт `Session`
   workstation-полями, обновлены тесты сериализации/валидации.
+- 2025-10-24 · gpt-5-codex — Добавлен стресс-тест моста на 5k событий и задокументированы латентности/пороговые значения.
+
