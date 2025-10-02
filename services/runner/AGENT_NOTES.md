@@ -3,6 +3,8 @@
 ## Overview
 FastAPI-based service that manages browser sessions for Ghost Browsers. Provides in-memory lifecycle management, publishes session events, and exposes minimal HTTP endpoints for orchestration and health checks.
 
+Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` which provisions Camoufox instances ahead of time, keeps fingerprint affinity, and exposes explicit slot state transitions.
+
 ## Interfaces
 - **HTTP**
   - `GET /health` — возвращает `{status, runner_id, camoufox_path, slots, vnc, proxy, prewarm, ttl}`;
@@ -61,6 +63,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
   `BROWSER_PREFS_PATH`, `PREWARM_NAVIGATION`, `START_URL`, `START_URL_WAIT_MS`) разбираются в
   `RunnerSettings`. Отдельный JSON-файл описывает warm pool; при ошибках чтения/валидации
   старт завершается с развёрнутым сообщением, что упрощает операционную диагностику.
+- **Warm pool state machine**: ``WarmPoolManager`` использует явные состояния (`idle → reserved → busy → recycling`, а также `draining`/`error`) и индивидуальные ``asyncio.Lock`` для каждой рабочей станции. Это предотвращает гонки при параллельных резервациях и гарантирует, что recycle всегда закрывает процесс, чистит профили и перезапускает Camoufox с тем же fingerprint.
 
 ## Constraints & Invariants
 - `RunnerSettings.vnc_token_ttl_seconds` capped at 300 seconds to align with `SessionVncDetails` validation.
@@ -84,6 +87,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - `PYTHONPATH=. poetry run pytest -q` (anyio-powered unit tests)
 - `poetry run ruff check .`
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_config_warm_pool.py -q`
+- Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_warm_pool.py -q`
 
 ## Changelog (for agents)
 - 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
@@ -98,3 +102,4 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - 2025-10-13 · gpt-5-codex · Добавлены Prometheus-метрики, эндпоинт `/metrics` и тестовое покрытие на экспорт/счётчики.
 - 2025-10-14 · gpt-5-codex · Привели код и тесты к требованиям Ruff (импорт, длины строк, ошибки) и актуализировали конфигурацию линтера.
 - 2025-10-15 · gpt-5-codex · Добавлены warm pool-конфиги (JSON), загрузка при старте, новые настройки и модульные тесты на валидацию/парсинг.
+- 2025-10-16 · gpt-5-codex · Реализован ``WarmPoolManager`` с управлением состояниями, recycle, преднавигацией и юнит-тестами на ключевые сценарии.
