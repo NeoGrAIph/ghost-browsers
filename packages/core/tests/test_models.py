@@ -25,6 +25,10 @@ from core import (
     SessionStatus,
     SessionVncDetails,
     StartUrlWait,
+    WorkstationEvent,
+    WorkstationEventType,
+    WorkstationMeta,
+    WorkstationState,
 )
 from pydantic import ValidationError
 
@@ -164,12 +168,21 @@ def test_session_serialization_round_trip() -> None:
         token_ttl_seconds=60,
     )
     proxy = SessionProxySettings(http="http://proxy:3128")
+    workstation = WorkstationMeta(
+        id="ws-1",
+        fingerprint_id="fp-1",
+        state=WorkstationState.ASSIGNED,
+        metadata={"rack": "r1"},
+    )
     session = build_session(
         status=SessionStatus.READY,
         vnc=vnc,
         proxy=proxy,
         ws_endpoint="/sessions/runner-1/session/ws",
         ws_public_endpoint="wss://gateway/sessions/runner-1/session/ws",
+        workstation_id="ws-1",
+        workstation_fingerprint_id="fp-1",
+        workstation=workstation,
     )
 
     dumped = session.model_dump(mode="json")
@@ -198,6 +211,78 @@ def test_session_event_is_terminal_property() -> None:
 
     assert active_event.is_terminal is False
     assert finished_event.is_terminal is True
+
+
+def test_workstation_meta_validation() -> None:
+    """WorkstationMeta trims identifiers and rejects blank proxy summaries."""
+
+    meta = WorkstationMeta(
+        id=" ws-1 ",
+        fingerprint_id=" fp-1 ",
+        state=WorkstationState.AVAILABLE,
+        proxy_summary=" corp proxy ",
+        metadata={"owner": "qa"},
+    )
+    assert meta.id == "ws-1"
+    assert meta.proxy_summary == "corp proxy"
+
+    with pytest.raises(ValidationError):
+        WorkstationMeta(
+            id="ws-2",
+            fingerprint_id="fp-2",
+            state=WorkstationState.AVAILABLE,
+            proxy_summary="   ",
+        )
+
+
+def test_session_workstation_consistency_validation() -> None:
+    """Session enforces alignment between workstation ids and metadata."""
+
+    meta = WorkstationMeta(
+        id="ws-3",
+        fingerprint_id="fp-3",
+        state=WorkstationState.ASSIGNED,
+    )
+
+    session = build_session(
+        workstation_id="ws-3",
+        workstation_fingerprint_id="fp-3",
+        workstation=meta,
+    )
+    assert session.workstation_id == "ws-3"
+    assert session.workstation is meta
+
+    with pytest.raises(ValidationError):
+        build_session(
+            workstation_id="ws-4",
+            workstation=WorkstationMeta(
+                id="ws-other",
+                fingerprint_id="fp-4",
+                state=WorkstationState.ASSIGNED,
+            ),
+        )
+
+
+def test_workstation_event_enforces_timezone_and_reason() -> None:
+    """Workstation events require timezone-aware timestamps and trim reasons."""
+
+    occurred_at = datetime.now(tz=timezone.utc)
+    meta = WorkstationMeta(
+        id="ws-5",
+        fingerprint_id="fp-5",
+        state=WorkstationState.AVAILABLE,
+    )
+
+    event = WorkstationEvent(
+        workstation=meta,
+        occurred_at=occurred_at,
+        type=WorkstationEventType.CREATED,
+        reason="  initial sync  ",
+    )
+    assert event.reason == "initial sync"
+
+    with pytest.raises(ValidationError):
+        WorkstationEvent(workstation=meta, occurred_at=datetime.now())
 
 
 def test_inmemory_bridge_fanout() -> None:

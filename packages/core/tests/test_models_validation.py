@@ -18,6 +18,10 @@ from core.models import (
     SessionProxySettings,
     SessionStatus,
     SessionVncDetails,
+    WorkstationEvent,
+    WorkstationEventType,
+    WorkstationMeta,
+    WorkstationState,
 )
 
 
@@ -34,6 +38,17 @@ def _build_session(status: SessionStatus = SessionStatus.INIT) -> Session:
         headless=False,
         idle_ttl_seconds=300,
     )
+
+
+def _build_workstation_meta(
+    *,
+    workstation_id: str = "ws-1",
+    fingerprint_id: str = "fp-1",
+    state: WorkstationState = WorkstationState.AVAILABLE,
+) -> WorkstationMeta:
+    """Return workstation metadata for validation tests."""
+
+    return WorkstationMeta(id=workstation_id, fingerprint_id=fingerprint_id, state=state)
 
 
 def test_session_proxy_settings_requires_at_least_one_url() -> None:
@@ -115,3 +130,45 @@ def test_session_event_requires_timezone_and_status_alignment() -> None:
         type=SessionEventType.ENDED,
     )
     assert terminal_event.is_terminal is True
+
+
+def test_session_accepts_missing_workstation_fields_for_compatibility() -> None:
+    """Legacy payloads without workstation data remain valid."""
+
+    session = _build_session()
+    assert session.workstation is None
+    assert session.workstation_id is None
+
+
+def test_session_rejects_mismatched_workstation_metadata() -> None:
+    """Session validation fails when workstation identifiers are inconsistent."""
+
+    with pytest.raises(ValidationError):
+        Session(
+            id=uuid4(),
+            runner_id="runner-1",
+            status=SessionStatus.INIT,
+            created_at=datetime.now(UTC),
+            last_seen_at=datetime.now(UTC),
+            headless=False,
+            idle_ttl_seconds=300,
+            workstation_id="ws-expected",
+            workstation=_build_workstation_meta(workstation_id="ws-other"),
+        )
+
+
+def test_workstation_event_requires_timezone_and_trims_reason() -> None:
+    """Workstation events require timezone-aware timestamps and clean reasons."""
+
+    meta = _build_workstation_meta()
+    occurred_at = datetime.now(UTC)
+    event = WorkstationEvent(
+        workstation=meta,
+        occurred_at=occurred_at,
+        type=WorkstationEventType.RELEASED,
+        reason="  maintenance  ",
+    )
+    assert event.reason == "maintenance"
+
+    with pytest.raises(ValidationError):
+        WorkstationEvent(workstation=meta, occurred_at=datetime.now())

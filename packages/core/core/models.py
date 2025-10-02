@@ -1,9 +1,10 @@
 """Shared domain models for Camou Core.
 
 The models defined here capture the cross-service contract for Runner
-lifecycle, Session state, and Session event propagation. They are
-consumed by the Runner, Gateway, VNC Gateway, and UI components to
-exchange strongly-typed payloads via REST, SSE, and WebSocket channels.
+lifecycle, Workstation provisioning, Session state, and associated event
+propagation. They are consumed by the Runner, Gateway, VNC Gateway, and
+UI components to exchange strongly-typed payloads via REST, SSE, and
+WebSocket channels.
 """
 
 from __future__ import annotations
@@ -86,6 +87,27 @@ class StartUrlWait(str, Enum):
     NONE = "none"
     DOM_CONTENT_LOADED = "domcontentloaded"
     LOAD = "load"
+
+
+class WorkstationState(str, Enum):
+    """Provisioning and lifecycle state of a physical or virtual workstation.
+
+    The values mirror the expected orchestration phases for remote
+    workstations that provide durable browser environments. ``PROVISIONING``
+    marks a workstation that is being prepared, ``AVAILABLE`` identifies an
+    idle workstation ready for assignment, ``ASSIGNED`` indicates that it is
+    currently attached to a session, and ``UNAVAILABLE`` reflects hardware or
+    policy issues preventing new allocations.
+
+    Example:
+        >>> WorkstationState.ASSIGNED.value
+        'assigned'
+    """
+
+    PROVISIONING = "provisioning"
+    AVAILABLE = "available"
+    ASSIGNED = "assigned"
+    UNAVAILABLE = "unavailable"
 
 
 class SessionEventType(str, Enum):
@@ -345,6 +367,97 @@ class Runner(BaseModel):
         return self
 
 
+class WorkstationMeta(BaseModel):
+    """Public metadata describing a workstation linked to sessions.
+
+    Attributes:
+        id: Globally unique workstation identifier.
+        fingerprint_id: Stable fingerprint derived from hardware or browser
+            profile to support affinity routing.
+        state: Current provisioning state of the workstation.
+        proxy_summary: Optional human-readable summary of proxy settings
+            applied to the workstation.
+        metadata: Arbitrary user-provided metadata that can be rendered by
+            UI clients without revealing sensitive information.
+
+    Example:
+        >>> WorkstationMeta(
+        ...     id="ws-1",
+        ...     fingerprint_id="fp-1",
+        ...     state=WorkstationState.AVAILABLE,
+        ...     metadata={"location": "europe"},
+        ... ).metadata["location"]
+        'europe'
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1, description="Workstation identifier")
+    fingerprint_id: str = Field(
+        min_length=1,
+        description="Stable fingerprint used for routing affinity",
+    )
+    state: WorkstationState = Field(description="Lifecycle state of the workstation")
+    proxy_summary: str | None = Field(
+        default=None,
+        description="Short description of proxy configuration applied to the workstation",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Public workstation metadata propagated to UI clients",
+    )
+
+    @field_validator("id", "fingerprint_id")
+    @classmethod
+    def _trim_identifiers(cls, value: str) -> str:
+        """Trim workstation identifiers before validation.
+
+        Args:
+            value: Raw identifier string provided by upstream services.
+
+        Returns:
+            str: Normalised identifier string with surrounding whitespace removed.
+
+        Raises:
+            ValueError: If the identifier becomes empty after trimming.
+
+        Example:
+            >>> WorkstationMeta._trim_identifiers(" ws-1 ")
+            'ws-1'
+        """
+
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("workstation identifiers must not be blank")
+        return trimmed
+
+    @field_validator("proxy_summary")
+    @classmethod
+    def _trim_proxy_summary(cls, value: str | None) -> str | None:
+        """Trim optional proxy summaries and normalise empty values.
+
+        Args:
+            value: Free-form proxy summary string.
+
+        Returns:
+            str | None: Trimmed summary or ``None`` when not provided.
+
+        Raises:
+            ValueError: If a provided summary becomes empty after trimming.
+
+        Example:
+            >>> WorkstationMeta._trim_proxy_summary("  uses corp proxy  ")
+            'uses corp proxy'
+        """
+
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("proxy_summary must contain non-whitespace characters")
+        return trimmed
+
+
 class Session(BaseModel):
     """Aggregate representing a browser session lifecycle.
 
@@ -358,7 +471,7 @@ class Session(BaseModel):
         start_url: Optional URL loaded when the session starts.
         start_url_wait: How long the runner waits for the start URL to load.
         headless: Whether the browser runs without a VNC preview.
-        idle_ttl_seconds: Idle timeout for the session in seconds (30–3600).
+        idle_ttl_seconds: Idle timeout for the session in seconds (30-3600).
         browser: Browser engine backing the session (e.g. ``camoufox``).
         labels: User-provided labels propagated across services.
         ws_endpoint: Direct WebSocket endpoint reported by the runner.
@@ -368,6 +481,12 @@ class Session(BaseModel):
         vnc: Optional VNC connection details for the UI.
         vnc_enabled: Whether a VNC preview is currently available.
         metadata: Free-form metadata shared with the UI.
+        workstation_id: Optional identifier of the workstation that backs the
+            session.
+        workstation_fingerprint_id: Optional fingerprint identifier associated
+            with the workstation.
+        workstation: Optional public metadata about the workstation backing the
+            session.
 
     Example:
         >>> session = Session(
@@ -447,6 +566,20 @@ class Session(BaseModel):
         default_factory=dict,
         description="Arbitrary metadata replicated to UI/Gateway consumers",
     )
+    workstation_id: str | None = Field(
+        default=None,
+        description="Identifier of the workstation assigned to the session",
+        min_length=1,
+    )
+    workstation_fingerprint_id: str | None = Field(
+        default=None,
+        description="Fingerprint of the assigned workstation",
+        min_length=1,
+    )
+    workstation: WorkstationMeta | None = Field(
+        default=None,
+        description="Public metadata for the workstation backing the session",
+    )
 
     @field_validator("runner_id")
     @classmethod
@@ -522,6 +655,32 @@ class Session(BaseModel):
             raise ValueError("ws_endpoint must not be blank when provided")
         return trimmed
 
+    @field_validator("workstation_id", "workstation_fingerprint_id")
+    @classmethod
+    def _trim_workstation_identifiers(cls, value: str | None) -> str | None:
+        """Normalise optional workstation identifiers provided by services.
+
+        Args:
+            value: Raw identifier string or ``None`` if not assigned.
+
+        Returns:
+            str | None: Trimmed identifier or ``None`` when absent.
+
+        Raises:
+            ValueError: If the identifier is blank after trimming.
+
+        Example:
+            >>> Session._trim_workstation_identifiers(" ws-1 ")
+            'ws-1'
+        """
+
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("workstation identifiers must not be blank")
+        return trimmed
+
     @field_validator("labels")
     @classmethod
     def _validate_labels(cls, value: dict[str, str]) -> dict[str, str]:
@@ -577,6 +736,51 @@ class Session(BaseModel):
 
         if self.ended_at is not None and self.ended_at < self.created_at:
             raise ValueError("ended_at cannot be before created_at")
+
+        return self
+
+    @model_validator(mode="after")
+    def _validate_workstation_consistency(self) -> "Session":
+        """Ensure workstation identifiers align with attached metadata.
+
+        Returns:
+            Session: The validated session instance.
+
+        Raises:
+            ValueError: If workstation metadata conflicts with top-level
+                identifier fields.
+
+        Example:
+            >>> Session.model_validate({
+            ...     "id": uuid4(),
+            ...     "runner_id": "runner-1",
+            ...     "status": SessionStatus.INIT,
+            ...     "created_at": datetime.now(datetime.UTC),
+            ...     "last_seen_at": datetime.now(datetime.UTC),
+            ...     "headless": False,
+            ...     "idle_ttl_seconds": 300,
+            ...     "workstation": {
+            ...         "id": "ws-1",
+            ...         "fingerprint_id": "fp-1",
+            ...         "state": "available",
+            ...     },
+            ... })  # doctest: +SKIP
+            Session(...)
+        """
+
+        if self.workstation is None:
+            return self
+
+        if self.workstation_id is not None and self.workstation.id != self.workstation_id:
+            raise ValueError("workstation.id must match workstation_id when both are provided")
+
+        if (
+            self.workstation_fingerprint_id is not None
+            and self.workstation.fingerprint_id != self.workstation_fingerprint_id
+        ):
+            raise ValueError(
+                "workstation.fingerprint_id must match workstation_fingerprint_id when both are provided"
+            )
 
         return self
 
@@ -694,6 +898,113 @@ class SessionEvent(BaseModel):
         return self.session.status is SessionStatus.DEAD
 
 
+class WorkstationEventType(str, Enum):
+    """Event types describing workstation lifecycle transitions.
+
+    Example:
+        >>> WorkstationEventType.UPDATED.value
+        'workstation.updated'
+    """
+
+    CREATED = "workstation.created"
+    UPDATED = "workstation.updated"
+    RELEASED = "workstation.released"
+
+
+class WorkstationEvent(BaseModel):
+    """Event payload emitted when workstation state or metadata changes.
+
+    Attributes:
+        id: Unique identifier for the event.
+        type: Event type describing the change.
+        workstation: Metadata snapshot describing the workstation.
+        occurred_at: Timestamp when the event occurred.
+        reason: Optional human-readable reason for the change.
+
+    Example:
+        >>> event = WorkstationEvent(
+        ...     workstation=WorkstationMeta(
+        ...         id="ws-1",
+        ...         fingerprint_id="fp-1",
+        ...         state=WorkstationState.AVAILABLE,
+        ...     ),
+        ...     occurred_at=datetime.now(datetime.UTC),
+        ... )
+        >>> event.type.value
+        'workstation.updated'
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID = Field(default_factory=uuid4, description="Event identifier")
+    type: WorkstationEventType = Field(
+        default=WorkstationEventType.UPDATED,
+        description="Event type",
+    )
+    workstation: WorkstationMeta = Field(
+        description="Workstation metadata snapshot associated with the event",
+    )
+    occurred_at: datetime = Field(
+        description="Timestamp when the workstation event occurred (UTC)",
+    )
+    reason: str | None = Field(
+        default=None,
+        description="Optional human-readable reason for the event",
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def _trim_reason(cls, value: str | None) -> str | None:
+        """Trim optional human-readable reasons attached to events.
+
+        Args:
+            value: Raw reason string or ``None`` when omitted.
+
+        Returns:
+            str | None: Trimmed string or ``None`` when no reason is supplied.
+
+        Raises:
+            ValueError: If the reason becomes empty after trimming.
+
+        Example:
+            >>> WorkstationEvent._trim_reason("  maintenance  ")
+            'maintenance'
+        """
+
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("reason must contain non-whitespace characters")
+        return trimmed
+
+    @model_validator(mode="after")
+    def _validate_event(self) -> "WorkstationEvent":
+        """Validate workstation event invariants.
+
+        Returns:
+            WorkstationEvent: The validated workstation event instance.
+
+        Raises:
+            ValueError: If ``occurred_at`` lacks timezone information.
+
+        Example:
+            >>> WorkstationEvent(
+            ...     workstation=WorkstationMeta(
+            ...         id="ws-1",
+            ...         fingerprint_id="fp-1",
+            ...         state=WorkstationState.AVAILABLE,
+            ...     ),
+            ...     occurred_at=datetime.now(datetime.UTC),
+            ... )  # doctest: +SKIP
+            WorkstationEvent(...)
+        """
+
+        if self.occurred_at.tzinfo is None:
+            raise ValueError("occurred_at must be timezone-aware")
+        return self
+
+
 __all__ = [
     "Runner",
     "RunnerState",
@@ -704,4 +1015,8 @@ __all__ = [
     "SessionStatus",
     "StartUrlWait",
     "SessionVncDetails",
+    "WorkstationEvent",
+    "WorkstationEventType",
+    "WorkstationMeta",
+    "WorkstationState",
 ]
