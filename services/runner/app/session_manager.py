@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+import contextlib
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -24,6 +25,7 @@ from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 from .browser import BrowserSessionHandle, launch_browser
 from .config import RunnerSettings
 from .events import SessionEventPublisher
+from .vnc import VncController, VncSessionHandle
 
 
 class SessionCreatePayload(BaseModel):
@@ -31,8 +33,8 @@ class SessionCreatePayload(BaseModel):
 
     Attributes mirror :class:`core.models.Session` fields except for ``id`` and
     ``runner_id`` which are derived by the manager. Providing a ``vnc`` payload
-    is optional; when omitted the manager constructs a stub value based on
-    :class:`RunnerSettings`.
+    is optional; when omitted the manager provisions a local noVNC pipeline
+    using :class:`RunnerSettings` and advertises the generated connection data.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -134,6 +136,7 @@ class SessionManager:
         clock: Callable[[], datetime] | None = None,
         *,
         reaper_interval_seconds: float = 1.0,
+        vnc_controller: VncController | None = None,
     ) -> None:
         self._settings = settings
         self._publisher = event_publisher
@@ -146,6 +149,8 @@ class SessionManager:
         )
         self._last_prewarm_error: str | None = None
         self._browser_handles: dict[UUID, BrowserSessionHandle] = {}
+        self._vnc_controller = vnc_controller
+        self._vnc_handles: dict[UUID, VncSessionHandle] = {}
         self._next_idle_expiry_at: datetime | None = None
         self._reaper_total_runs = 0
         self._reaper_expired_sessions = 0
@@ -160,8 +165,10 @@ class SessionManager:
             session_id = uuid4()
             now = self._clock()
             sanitized_vnc = self._sanitize_vnc_payload(payload.vnc)
-            vnc_details = self._resolve_vnc(
-                payload, session_id, sanitized_vnc=sanitized_vnc
+            vnc_details, vnc_handle = await self._resolve_vnc(
+                payload,
+                session_id,
+                sanitized_vnc=sanitized_vnc,
             )
             browser_handle: BrowserSessionHandle | None = None
             metadata = dict(payload.metadata)
@@ -170,10 +177,16 @@ class SessionManager:
                     self._settings,
                     browser=payload.browser,
                     headless=payload.headless,
+                    env=(
+                        vnc_handle.browser_environment()
+                        if vnc_handle is not None
+                        else None
+                    ),
                 )
             except Exception:
                 if browser_handle is not None:
                     await browser_handle.shutdown(force=True)
+                await self._discard_vnc_handle(session_id, vnc_handle)
                 raise
             if browser_handle.pid is not None:
                 metadata.setdefault("runner_browser_pid", browser_handle.pid)
@@ -203,9 +216,12 @@ class SessionManager:
                 )
             except Exception:
                 await browser_handle.shutdown(force=True)
+                await self._discard_vnc_handle(session_id, vnc_handle)
                 raise
             self._sessions[session_id] = session
             self._browser_handles[session_id] = browser_handle
+            if vnc_handle is not None:
+                self._vnc_handles[session_id] = vnc_handle
             self._recalculate_next_idle_expiry_locked()
             if session.status is not SessionStatus.DEAD:
                 self._active_sessions += 1
@@ -249,6 +265,8 @@ class SessionManager:
                 await self._shutdown_browser(
                     session_id, force=session.status is SessionStatus.DEAD
                 )
+            if self._should_cleanup_vnc(existing, session):
+                await self._release_vnc_handle(session_id)
             event_type = (
                 SessionEventType.ENDED
                 if session.status is SessionStatus.DEAD
@@ -413,26 +431,25 @@ class SessionManager:
             self._reaper_task_group = None
         if task_group is not None:
             await task_group.__aexit__(None, None, None)
+        await self._shutdown_all_vnc()
 
-    def _resolve_vnc(
+    async def _resolve_vnc(
         self,
         payload: SessionCreatePayload,
         session_id: UUID,
         *,
         sanitized_vnc: SessionVncDetails | None,
-    ) -> SessionVncDetails | None:
-        """Return VNC details honouring payload overrides and settings defaults."""
+    ) -> tuple[SessionVncDetails | None, VncSessionHandle | None]:
+        """Resolve VNC details and, if necessary, provision helper processes."""
 
         if payload.headless or not self._settings.vnc_enabled:
-            return None
+            return None, None
         if sanitized_vnc is not None:
-            return sanitized_vnc
-        return SessionVncDetails(
-            http_url=f"{self._settings.vnc_http_base_url}/{session_id}",
-            websocket_url=f"{self._settings.vnc_ws_base_url}/{session_id}",
-            token=None,
-            token_ttl_seconds=None,
-        )
+            return sanitized_vnc, None
+        if self._vnc_controller is None:
+            return None, None
+        handle = await self._vnc_controller.allocate(str(session_id))
+        return handle.details, handle
 
     def _sanitize_vnc_payload(
         self, details: SessionVncDetails | None
@@ -552,6 +569,54 @@ class SessionManager:
         if handle is None:
             return
         await handle.shutdown(force=force)
+
+    async def _release_vnc_handle(self, session_id: UUID) -> None:
+        """Stop helper processes backing the VNC session for ``session_id``."""
+
+        handle = self._vnc_handles.pop(session_id, None)
+        if handle is None or self._vnc_controller is None:
+            return
+        await self._vnc_controller.release(handle)
+
+    async def _discard_vnc_handle(
+        self, session_id: UUID, handle: VncSessionHandle | None
+    ) -> None:
+        """Release ``handle`` regardless of whether it was persisted."""
+
+        if handle is None:
+            return
+        if session_id in self._vnc_handles:
+            await self._release_vnc_handle(session_id)
+            return
+        if self._vnc_controller is not None:
+            await self._vnc_controller.release(handle)
+
+    async def _shutdown_all_vnc(self) -> None:
+        """Terminate every tracked VNC handle during service shutdown."""
+
+        if self._vnc_controller is None:
+            self._vnc_handles.clear()
+            return
+        handles = list(self._vnc_handles.items())
+        self._vnc_handles.clear()
+        for _session_id, handle in handles:
+            with contextlib.suppress(Exception):
+                await self._vnc_controller.release(handle)
+
+    def _should_cleanup_vnc(self, previous: Session, current: Session) -> bool:
+        """Determine whether the stored VNC handle should be released."""
+
+        if previous.id != current.id:
+            return False
+        if previous.id not in self._vnc_handles:
+            return False
+        if current.status is SessionStatus.DEAD:
+            return True
+        if current.headless:
+            return True
+        if current.vnc is None or not current.vnc_enabled:
+            return True
+        return False
 
 
     async def _reaper_loop(self) -> None:

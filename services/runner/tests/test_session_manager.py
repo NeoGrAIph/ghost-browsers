@@ -28,28 +28,43 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture
-def stub_launch_browser(monkeypatch: pytest.MonkeyPatch) -> list["_StubBrowserHandle"]:
+def stub_launch_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list["_StubBrowserHandle"]:
     """Patch ``launch_browser`` to return deterministic stub handles."""
 
     handles: list[_StubBrowserHandle] = []
 
     async def _fake_launch(
-        settings: RunnerSettings, *, browser: str, headless: bool
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str] | None = None,
     ) -> "_StubBrowserHandle":
         handle = _StubBrowserHandle(
             ws_endpoint=f"ws://stub/{browser}/{len(handles)}",
             pid=4300 + len(handles),
         )
         handles.append(handle)
+        handle.launch_env = env or {}
         return handle
 
     monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
     return handles
 
 
+@pytest.fixture
+def stub_vnc_controller() -> _StubVncController:
+    """Provide a fake VNC controller for tests that expect noVNC support."""
+
+    return _StubVncController()
+
+
 @pytest.mark.anyio("asyncio")
 async def test_create_session_emits_event_and_vnc_stub(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """``create_session`` should store the session and publish a CREATED event."""
 
@@ -62,7 +77,12 @@ async def test_create_session_emits_event_and_vnc_stub(
         vnc_token_ttl_seconds=60,
     )
     publisher = InMemorySessionEventPublisher()
-    manager = SessionManager(settings, publisher, clock=lambda: clock_now)
+    manager = SessionManager(
+        settings,
+        publisher,
+        clock=lambda: clock_now,
+        vnc_controller=stub_vnc_controller,
+    )
 
     payload = SessionCreatePayload(
         start_url="https://example.test",
@@ -78,7 +98,7 @@ async def test_create_session_emits_event_and_vnc_stub(
     assert session.vnc is not None
     assert session.vnc.token is None
     assert session.vnc.token_ttl_seconds is None
-    assert str(session.vnc.http_url).endswith(str(session.id))
+    assert str(session.vnc.http_url).startswith("http://stub-vnc/")
     events = await publisher.drain()
     assert len(events) == 1
     assert events[0].type is SessionEventType.CREATED
@@ -89,6 +109,7 @@ async def test_create_session_emits_event_and_vnc_stub(
 @pytest.mark.anyio("asyncio")
 async def test_update_session_merges_labels_and_publishes_update(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """Updates should merge labels and emit ``session.updated`` events."""
 
@@ -98,6 +119,7 @@ async def test_update_session_merges_labels_and_publishes_update(
         RunnerSettings(runner_id="runner-test", camoufox_path="/usr/bin/camoufox"),
         publisher,
         clock=lambda: clock_now,
+        vnc_controller=stub_vnc_controller,
     )
     session = await manager.create_session(SessionCreatePayload(headless=True))
 
@@ -121,6 +143,7 @@ async def test_update_session_merges_labels_and_publishes_update(
 @pytest.mark.anyio("asyncio")
 async def test_create_session_strips_user_vnc_token(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """User-supplied VNC tokens must be removed before persisting sessions."""
 
@@ -132,6 +155,7 @@ async def test_create_session_strips_user_vnc_token(
         ),
         publisher,
         clock=lambda: clock_now,
+        vnc_controller=stub_vnc_controller,
     )
     payload = SessionCreatePayload(
         headless=False,
@@ -152,6 +176,7 @@ async def test_create_session_strips_user_vnc_token(
 @pytest.mark.anyio("asyncio")
 async def test_update_session_strips_user_vnc_token(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """Updates attempting to inject VNC tokens are sanitised."""
 
@@ -163,6 +188,7 @@ async def test_update_session_strips_user_vnc_token(
         ),
         publisher,
         clock=lambda: clock_now,
+        vnc_controller=stub_vnc_controller,
     )
     session = await manager.create_session(
         SessionCreatePayload(headless=False)
@@ -187,6 +213,7 @@ async def test_update_session_strips_user_vnc_token(
 @pytest.mark.anyio("asyncio")
 async def test_end_session_sets_terminal_state_and_event(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """``end_session`` should mark the session as DEAD and send ENDED event."""
 
@@ -196,6 +223,7 @@ async def test_end_session_sets_terminal_state_and_event(
         RunnerSettings(runner_id="runner-test", camoufox_path="/usr/bin/camoufox"),
         publisher,
         clock=lambda: clock_now,
+        vnc_controller=stub_vnc_controller,
     )
     session = await manager.create_session(SessionCreatePayload())
 
@@ -211,6 +239,7 @@ async def test_end_session_sets_terminal_state_and_event(
 @pytest.mark.anyio("asyncio")
 async def test_metrics_track_active_sessions_and_prewarm_failures(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """Metrics should reflect active sessions and retain bounded prewarm errors."""
 
@@ -223,6 +252,7 @@ async def test_metrics_track_active_sessions_and_prewarm_failures(
             prewarm_failure_history_size=2,
         ),
         publisher,
+        vnc_controller=stub_vnc_controller,
     )
 
     first = await manager.create_session(SessionCreatePayload())
@@ -239,6 +269,7 @@ async def test_metrics_track_active_sessions_and_prewarm_failures(
 @pytest.mark.anyio("asyncio")
 async def test_touch_session_updates_last_seen_and_publishes_update(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """``touch_session`` should extend TTL and emit a heartbeat update."""
 
@@ -248,6 +279,7 @@ async def test_touch_session_updates_last_seen_and_publishes_update(
         RunnerSettings(runner_id="runner-touch", camoufox_path="/usr/bin/camoufox"),
         publisher,
         clock=clock,
+        vnc_controller=stub_vnc_controller,
     )
     session = await manager.create_session(
         SessionCreatePayload(idle_ttl_seconds=60)
@@ -268,6 +300,7 @@ async def test_touch_session_updates_last_seen_and_publishes_update(
 @pytest.mark.anyio("asyncio")
 async def test_reap_expired_sessions_marks_session_dead_and_records_metrics(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """Idle sessions should transition to DEAD with an ``idle-timeout`` reason."""
 
@@ -277,6 +310,7 @@ async def test_reap_expired_sessions_marks_session_dead_and_records_metrics(
         RunnerSettings(runner_id="runner-reap", camoufox_path="/usr/bin/camoufox"),
         publisher,
         clock=clock,
+        vnc_controller=stub_vnc_controller,
     )
     session = await manager.create_session(
         SessionCreatePayload(idle_ttl_seconds=30)
@@ -303,6 +337,7 @@ async def test_reap_expired_sessions_marks_session_dead_and_records_metrics(
 @pytest.mark.anyio("asyncio")
 async def test_reap_skips_recently_touched_session(
     stub_launch_browser: list["_StubBrowserHandle"],
+    stub_vnc_controller: _StubVncController,
 ) -> None:
     """Touching a session should postpone its idle deadline for reaper runs."""
 
@@ -312,6 +347,7 @@ async def test_reap_skips_recently_touched_session(
         RunnerSettings(runner_id="runner-skip", camoufox_path="/usr/bin/camoufox"),
         publisher,
         clock=clock,
+        vnc_controller=stub_vnc_controller,
     )
     session = await manager.create_session(
         SessionCreatePayload(idle_ttl_seconds=40)
@@ -343,6 +379,7 @@ class _StubBrowserHandle:
         self.ws_endpoint = ws_endpoint
         self.pid = pid
         self.shutdown_calls: list[dict[str, object]] = []
+        self.launch_env: dict[str, str] = {}
 
     async def shutdown(self, *, force: bool, timeout: float = 5.0) -> None:
         """Record shutdown invocations for assertions."""
@@ -367,6 +404,47 @@ class _StubClock:
         return self._now
 
 
+class _StubVncHandle:
+    """Lightweight handle representing a fake VNC allocation."""
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        self.details = SessionVncDetails(
+            http_url=f"http://stub-vnc/{session_id}",
+            websocket_url=f"ws://stub-vnc/{session_id}",
+            token=None,
+            token_ttl_seconds=None,
+        )
+        self.browser_env = {"DISPLAY": ":stub"}
+        self.released = False
+
+    def browser_environment(self) -> dict[str, str]:
+        """Expose environment variables expected by the runner."""
+
+        return dict(self.browser_env)
+
+
+class _StubVncController:
+    """Test double implementing the VNC controller protocol."""
+
+    def __init__(self) -> None:
+        self.handles: dict[str, _StubVncHandle] = {}
+
+    async def allocate(self, session_id: str) -> _StubVncHandle:
+        """Return a predictable handle keyed by ``session_id``."""
+
+        handle = _StubVncHandle(session_id)
+        self.handles[session_id] = handle
+        return handle
+
+    async def release(self, handle: _StubVncHandle | None) -> None:
+        """Mark the handle as released to assert cleanup paths."""
+
+        if handle is None:
+            return
+        handle.released = True
+
+
 @pytest.mark.anyio("asyncio")
 async def test_create_session_launches_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     """Browser launch helper should provide the ws endpoint and metadata."""
@@ -374,15 +452,24 @@ async def test_create_session_launches_browser(monkeypatch: pytest.MonkeyPatch) 
     stub_handle = _StubBrowserHandle(ws_endpoint="ws://playwright.test/session")
     launch_calls: list[tuple[str, bool]] = []
 
-    async def _fake_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+    async def _fake_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str] | None = None,
+    ):
         launch_calls.append((browser, headless))
+        stub_handle.launch_env = env or {}
         return stub_handle
 
     monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
     publisher = InMemorySessionEventPublisher()
+    stub_vnc = _StubVncController()
     manager = SessionManager(
         RunnerSettings(runner_id="runner-browser", camoufox_path="/usr/bin/camoufox"),
         publisher,
+        vnc_controller=stub_vnc,
     )
 
     session = await manager.create_session(
@@ -405,14 +492,23 @@ async def test_update_session_cleans_up_browser(monkeypatch: pytest.MonkeyPatch)
 
     stub_handle = _StubBrowserHandle(ws_endpoint="ws://playwright.test/cleanup")
 
-    async def _fake_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+    async def _fake_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str] | None = None,
+    ):
+        stub_handle.launch_env = env or {}
         return stub_handle
 
     monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
     publisher = InMemorySessionEventPublisher()
+    stub_vnc = _StubVncController()
     manager = SessionManager(
         RunnerSettings(runner_id="runner-cleanup", camoufox_path="/usr/bin/camoufox"),
         publisher,
+        vnc_controller=stub_vnc,
     )
     session = await manager.create_session(SessionCreatePayload())
 
@@ -439,14 +535,22 @@ async def test_create_session_rolls_back_on_launch_failure(
 ) -> None:
     """Session creation should not persist state when browser launch fails."""
 
-    async def _failing_launch(settings: RunnerSettings, *, browser: str, headless: bool):
+    async def _failing_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str] | None = None,
+    ):
         raise RuntimeError("launch boom")
 
     monkeypatch.setattr("app.session_manager.launch_browser", _failing_launch)
     publisher = InMemorySessionEventPublisher()
+    stub_vnc = _StubVncController()
     manager = SessionManager(
         RunnerSettings(runner_id="runner-fail", camoufox_path="/usr/bin/camoufox"),
         publisher,
+        vnc_controller=stub_vnc,
     )
 
     with pytest.raises(RuntimeError):
