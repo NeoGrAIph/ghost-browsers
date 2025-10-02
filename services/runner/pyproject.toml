@@ -13,6 +13,7 @@ httpx = "^0.27.2"
 anyio = "^4.4.0"
 camoufox = {path = "../../packages/camoufox", develop = true}
 "camou-core" = {path = "../../packages/core", develop = true}
+prometheus-client = "^0.20.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"

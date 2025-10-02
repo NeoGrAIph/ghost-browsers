@@ -14,6 +14,10 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
   - `PATCH /sessions/{id}` — accepts `SessionUpdatePayload`, merges labels/metadata, returns updated `core.Session`.
   - `POST /sessions/{id}/touch` — обновляет `last_seen_at`, продлевая TTL и публикуя heartbeat-событие.
   - `DELETE /sessions/{id}` — marks session as `DEAD`, returns terminal snapshot.
+  - `GET /metrics` — Prometheus endpoint (``text/plain; version=0.0.4``) с gauge/counter-метриками
+    runner-а: `runner_active_sessions`, `runner_reaper_runs_total`,
+    `runner_reaper_expired_sessions_total`, `runner_reaper_last_run_timestamp`,
+    `runner_vnc_allocations`, `runner_vnc_allocation_requests_total`.
 - **Event transport**
   - `SessionEventPublisher.publish(SessionEvent)` — protocol for pushing lifecycle events downstream. Default implementation stores events in memory (`InMemorySessionEventPublisher`) but can be swapped for HTTP/SSE bridges via `CallbackSessionEventPublisher`.
   - `HttpSessionEventPublisher` — при наличии `RunnerSettings.event_endpoint` POST-ит события на `gateway /events`.
@@ -25,6 +29,9 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - `SessionManagerMetrics` агрегирует счётчик активных сессий и историю ошибок прогрева (bounded deque по
   `RunnerSettings.prewarm_failure_history_size`), ближайшее истечение TTL и статистику
   фонового reaper-а (кол-во запусков, количество завершённых сессий и отметку последнего запуска).
+- Prometheus-инструментация живёт в `app.metrics` и использует отдельный `CollectorRegistry`;
+  `SessionManager` синхронизирует gauge/counter-метрики при создании/завершении сессий,
+  аллокации VNC и работе idle-reaper-а.
 
 ## Decisions
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
@@ -41,6 +48,9 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
   `reap_expired_sessions`, завершает истёкшие по `idle_ttl_seconds` сессии и публикует события
   `session.ended` с reason=`idle-timeout`. Запускается/останавливается через `start()`/`stop()` и
   lifecycle-хуки FastAPI.
+- **Prometheus registry**: Runner экспортирует `/metrics`, используя
+  `prometheus_client.CollectorRegistry`; значения обновляются в момент изменения состояния
+  (`active_sessions`, VNC аллокации, пробеги reaper-а) вместо ленивой агрегации на запрос.
 
 ## Constraints & Invariants
 - `RunnerSettings.vnc_token_ttl_seconds` capped at 300 seconds to align with `SessionVncDetails` validation.
@@ -74,3 +84,5 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - 2025-10-10 · gpt-5-codex · Добавлен модуль `app.browser` с управлением процессом Playwright/Camoufox и интеграционными тестами на создание/завершение сессий.
 - 2025-10-11 · gpt-5-codex · Добавлены фоновые reaper-задачи, TTL-метрики в `/health`, эндпоинт `POST /sessions/{id}/touch` и покрытие тестами.
 - 2025-10-12 · gpt-5-codex · Интегрирован процессный noVNC-контроллер, расширены настройки VNC и обновлены unit-тесты с заглушками.
+- 2025-10-13 · gpt-5-codex · Добавлены Prometheus-метрики, эндпоинт `/metrics` и тестовое покрытие на экспорт/счётчики.
+- 2025-10-14 · gpt-5-codex · Привели код и тесты к требованиям Ruff (импорт, длины строк, ошибки) и актуализировали конфигурацию линтера.

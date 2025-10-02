@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-
 from app.dependencies.session_manager import (
     get_event_publisher,
     get_runner_settings,
