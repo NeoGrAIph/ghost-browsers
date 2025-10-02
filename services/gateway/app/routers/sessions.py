@@ -100,7 +100,7 @@ async def execute_create_command(
     sanitized = (
         session
         if public_ws is None
-        else session.model_copy(update={"ws_endpoint": public_ws})
+        else session.model_copy(update={"ws_public_endpoint": public_ws})
     )
     enriched = _enrich_session(sanitized, runner, token_service, user)
     await registry.upsert(enriched)
@@ -148,7 +148,7 @@ async def execute_update_command(
     sanitized = (
         session
         if public_ws is None
-        else session.model_copy(update={"ws_endpoint": public_ws})
+        else session.model_copy(update={"ws_public_endpoint": public_ws})
     )
     enriched = _enrich_session(sanitized, runner, token_service, user)
     await registry.upsert(enriched)
@@ -200,7 +200,7 @@ async def execute_delete_command(
     sanitized = (
         session
         if public_ws is None
-        else session.model_copy(update={"ws_endpoint": public_ws})
+        else session.model_copy(update={"ws_public_endpoint": public_ws})
     )
     enriched = _enrich_session(sanitized, runner, token_service, user)
     await registry.delete(session_id)
@@ -238,7 +238,11 @@ async def create_session(
     """Register a new session emitted by a runner."""
 
     public_ws = await _assign_public_ws_endpoint(session, runners)
-    sanitized = session if public_ws is None else session.model_copy(update={"ws_endpoint": public_ws})
+    sanitized = (
+        session
+        if public_ws is None
+        else session.model_copy(update={"ws_public_endpoint": public_ws})
+    )
     runner = await runners.get(session.runner_id)
     enriched = _enrich_session(sanitized, runner, token_service, user)
     try:
@@ -456,11 +460,10 @@ async def _enrich_registry_sessions(
                 runner = await runners.get(runner_id)
                 runner_cache[runner_id] = runner
         public_ws = await runners.resolve_session_ws_public(snapshot.id)
-        hydrated = (
-            snapshot
-            if public_ws is None or snapshot.ws_endpoint == public_ws
-            else snapshot.model_copy(update={"ws_endpoint": public_ws})
-        )
+        if public_ws is None or snapshot.ws_public_endpoint == public_ws:
+            hydrated = snapshot
+        else:
+            hydrated = snapshot.model_copy(update={"ws_public_endpoint": public_ws})
         enriched.append(_enrich_session(hydrated, runner, token_service, user))
     return enriched
 

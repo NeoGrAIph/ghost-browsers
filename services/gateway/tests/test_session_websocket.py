@@ -181,7 +181,9 @@ async def test_session_websocket_proxy_roundtrip(
     }
     response = gateway_client.post("/sessions", json=session_body)
     assert response.status_code == 201
-    assert response.json()["ws_endpoint"] == f"/sessions/{session_id}/ws"
+    body = response.json()
+    assert body["ws_endpoint"] == websocket_echo_server
+    assert body["ws_public_endpoint"] == f"/sessions/{session_id}/ws"
 
     resolved = await gateway_app.state.runner_registry.resolve_session_ws_target(UUID(session_id))
     assert resolved == websocket_echo_server

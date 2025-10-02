@@ -28,6 +28,8 @@
 
 ## Data & Models
 - Переиспользуются модели из `packages/core`: `Session`, `SessionEvent`, `Runner`, `SessionProxySettings`, `SessionVncDetails` и др.
+- `Session` теперь хранит прямой `ws_endpoint` от runner'а и проксируемый `ws_public_endpoint`; Gateway больше не перезаписывает
+  прямой URL в REST-ответах, чтобы внутренние клиенты могли подключаться без прокси.
 - `SessionRegistry`/`RunnerRegistry` — простые in-memory контейнеры с `asyncio.Lock` для потокобезопасности.
 - `InMemorySessionEventBridge` (из core) хранит последнее событие и раздаёт подписчикам.
 
@@ -41,8 +43,9 @@
   после успешного завершения формируют `SessionEvent` и отправляют его в bridge, чтобы UI обновлялся даже при изменениях,
   инициированных самим Gateway.
 - Авторизация завершается до открытия WebSocket, при ошибках соединение закрывается кодом `1008`.
-- Для `WS /sessions/{id}/ws` хранится привязка `session_id`→частный Runner `ws_endpoint` внутри `RunnerRegistry`; наружным клиентам
-  выдаётся стабильный публичный путь `/sessions/{id}/ws`, а прокси использует `websockets` для двунаправленной ретрансляции.
+- Для `WS /sessions/{id}/ws` хранится привязка `session_id`→частный Runner `ws_endpoint` внутри `RunnerRegistry`; наружным клиен
+  там выдаётся стабильный публичный путь `/sessions/{id}/ws`, публикуемый теперь как поле `ws_public_endpoint`, а прокси исполь
+  зует `websockets` для двунаправленной ретрансляции без изменения прямого URL.
 - Командные эндпоинты используют `RunnerCommandClient` (httpx + MockTransport в тестах) и на стороне Gateway трансформируют упрощённый DTO (`browser_name`, `region`, `proxy_id`) в Runner API. При отсутствии `runner_id` выбирается первый доступный раннер из регистра.
 - Для предотвращения рассинхронизации контрактов с Runner добавлены unit-тесты, которые валидируют DTO команд Gateway через `SessionCreatePayload`/`SessionUpdatePayload` из Runner и проверяют поддержку алиаса `updated_at` в `core.Session`.
 - Health-чек раннеров выполняется через `RunnerHealthClient` (httpx) и сохраняет результат в `RunnerRegistry`. Селектор `select_next` использует круговой обход и фильтрует по признаку здоровья и поддержке VNC, чтобы избежать ручного выбора в роутерах.
@@ -97,3 +100,5 @@
   `DISCOVERY_ENDPOINT`/`DISCOVERY_POLL_INTERVAL_SEC` и покрывающие unit-тесты.
 - 2025-10-13 · gpt-5-codex · Настроен httpx.MockTransport для тестов JWKS и покрыто кеширование/обработка ошибок
   `KeycloakAuthenticator`.
+- 2025-10-14 · gpt-5-codex · Gateway сохраняет прямой `ws_endpoint` и публикует отдельный `ws_public_endpoint`; обновлены роутеры,
+  RunnerRegistry и UI/тесты.

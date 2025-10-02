@@ -19,7 +19,8 @@ describe('session adapters', () => {
       proxy_id: 'proxy-1',
       proxy_label: 'Proxy One',
     },
-    ws_endpoint: '/sessions/00000000-0000-0000-0000-000000000001/ws',
+    ws_endpoint: null,
+    ws_public_endpoint: '/sessions/00000000-0000-0000-0000-000000000001/ws',
     proxy: {
       http: 'http://proxy.local:3128',
       https: null,
@@ -62,6 +63,8 @@ describe('session adapters', () => {
       token: 'opaque-token',
       tokenTtlSeconds: 60,
     });
+    expect(session.wsEndpoint).toBe('/sessions/00000000-0000-0000-0000-000000000001/ws');
+    expect(session.publicWsEndpoint).toBe('/sessions/00000000-0000-0000-0000-000000000001/ws');
   });
 
   it('derives event metadata and terminal flag', () => {

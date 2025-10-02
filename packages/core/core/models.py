@@ -361,7 +361,9 @@ class Session(BaseModel):
         idle_ttl_seconds: Idle timeout for the session in seconds (30–3600).
         browser: Browser engine backing the session (e.g. ``camoufox``).
         labels: User-provided labels propagated across services.
-        ws_endpoint: Public WebSocket endpoint for controlling the session.
+        ws_endpoint: Direct WebSocket endpoint reported by the runner.
+        ws_public_endpoint: Optional proxied WebSocket endpoint exposed by the
+            gateway/worker when the direct URL is not reachable.
         proxy: Optional proxy settings that apply to the session.
         vnc: Optional VNC connection details for the UI.
         vnc_enabled: Whether a VNC preview is currently available.
@@ -422,7 +424,12 @@ class Session(BaseModel):
     )
     ws_endpoint: str | None = Field(
         default=None,
-        description="Public WebSocket endpoint for control traffic",
+        description="Direct WebSocket endpoint for control traffic",
+        min_length=1,
+    )
+    ws_public_endpoint: str | None = Field(
+        default=None,
+        description="Proxied WebSocket endpoint exposed by the control plane",
         min_length=1,
     )
     proxy: SessionProxySettings | None = Field(
@@ -489,7 +496,7 @@ class Session(BaseModel):
             raise ValueError("browser must not be empty")
         return trimmed
 
-    @field_validator("ws_endpoint")
+    @field_validator("ws_endpoint", "ws_public_endpoint")
     @classmethod
     def _clean_ws_endpoint(cls, value: str | None) -> str | None:
         """Normalise optional WebSocket endpoints prior to validation.

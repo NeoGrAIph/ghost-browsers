@@ -21,7 +21,7 @@
 - `Session`: UUID, `runner_id`, статус (`INIT→DEAD`), `created_at`, `last_seen_at`
   (alias `updated_at`), опциональный `ended_at`, флаги `headless`, `idle_ttl_seconds`
   (30–3600), `browser`, `labels`, `start_url`, `start_url_wait`, `ws_endpoint`,
-  `vnc_enabled`, `proxy`, `vnc`, произвольная метадата.
+  `ws_public_endpoint`, `vnc_enabled`, `proxy`, `vnc`, произвольная метадата.
 - `SessionEvent`: уникальный `id`, тип (`created|updated|ended`), snapshot сессии,
   время возникновения, опциональная причина, удобный флаг `is_terminal` (TRUE только
   для `SessionStatus.DEAD`).
@@ -76,3 +76,4 @@
 - 2025-02-21 · ChatGPT — Добавлены регрессионные тесты валидации моделей (Runner/SessionEvent/VNC/Proxy) и pytest-конфигурация с покрытием.
 - 2025-02-23 · gpt-5-codex — Удалены `pytest.importorskip`; тесты требуют установки зависимостей,
   добавлена документация по запуску без пропусков.
+- 2025-10-14 · gpt-5-codex — Расширен `Session` полем `ws_public_endpoint` и обновлены тесты сериализации.
