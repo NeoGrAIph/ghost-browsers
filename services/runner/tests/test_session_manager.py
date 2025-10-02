@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Callable
 
 import pytest
-from app.config import RunnerSettings
+from app.config import RunnerSettings, WarmPoolMode
 from app.events import InMemorySessionEventPublisher
 from app.metrics import METRICS_REGISTRY
 from app.session_manager import (
@@ -200,18 +200,21 @@ def _build_manager(
     clock: Callable[[], datetime] | None = None,
     vnc_controller: "_StubVncController" | None = None,
     warm_pool: _StubWarmPoolManager | None = None,
-) -> tuple[SessionManager, _StubWarmPoolManager]:
-    """Instantiate a session manager backed by the warm pool stub."""
+    use_warm_pool: bool = True,
+) -> tuple[SessionManager, _StubWarmPoolManager | None]:
+    """Instantiate a session manager with optional warm pool support."""
 
-    warm_pool = warm_pool or _StubWarmPoolManager()
+    warm_pool_manager = warm_pool
+    if warm_pool_manager is None and use_warm_pool:
+        warm_pool_manager = _StubWarmPoolManager()
     manager = SessionManager(
         settings,
         publisher,
         clock=clock,
         vnc_controller=vnc_controller,
-        warm_pool_manager=warm_pool,
+        warm_pool_manager=warm_pool_manager,
     )
-    return manager, warm_pool
+    return manager, warm_pool_manager
 
 
 @pytest.fixture
@@ -251,6 +254,7 @@ async def test_create_session_emits_event_and_vnc_stub(
     )
 
     session = await manager.create_session(payload)
+    assert warm_pool is not None
 
     assert session.runner_id == "runner-test"
     assert session.proxy is not None
@@ -261,6 +265,10 @@ async def test_create_session_emits_event_and_vnc_stub(
     warm_meta = session.metadata.get("warm_pool", {})
     assert warm_meta["workstation_id"] == warm_pool.reservations[0]
     assert warm_meta["fingerprint_id"].startswith("fp-")
+    origin = session.metadata["browser_origin"]
+    assert origin["kind"] == "warm_pool"
+    assert origin["mode"] == settings.warm_pool_mode.value
+    assert origin["workstation_id"] == warm_pool.reservations[0]
     events = await publisher.drain()
     assert len(events) == 1
     assert events[0].type is SessionEventType.CREATED
@@ -278,8 +286,13 @@ async def test_create_session_raises_when_warm_pool_exhausted(
     warm_pool = _StubWarmPoolManager(workstations=["ws-only"])
     await warm_pool.reserve_slot("ws-only")
     await warm_pool.mark_busy("ws-only")
+    settings = RunnerSettings(
+        runner_id="runner-capacity",
+        camoufox_path="/usr/bin/camoufox",
+        warm_pool_mode=WarmPoolMode.WARM_ONLY,
+    )
     manager, _ = _build_manager(
-        RunnerSettings(runner_id="runner-capacity", camoufox_path="/usr/bin/camoufox"),
+        settings,
         publisher,
         vnc_controller=stub_vnc_controller,
         warm_pool=warm_pool,
@@ -287,6 +300,126 @@ async def test_create_session_raises_when_warm_pool_exhausted(
 
     with pytest.raises(SessionCapacityError):
         await manager.create_session(SessionCreatePayload())
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_cold_only_launches_new_browser(
+    monkeypatch: pytest.MonkeyPatch, stub_vnc_controller: _StubVncController
+) -> None:
+    """Cold-only mode should bypass the warm pool and spawn a fresh browser."""
+
+    calls: list[dict[str, object]] = []
+
+    async def _fake_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        command: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        read_timeout: float = 10.0,
+    ) -> _StubBrowserHandle:
+        handle = _StubBrowserHandle(ws_endpoint="ws://cold/0", pid=8800)
+        calls.append(
+            {
+                "browser": browser,
+                "headless": headless,
+                "env": dict(env or {}),
+                "timeout": read_timeout,
+            }
+        )
+        return handle
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+
+    settings = RunnerSettings(
+        runner_id="runner-cold",
+        camoufox_path="/usr/bin/camoufox",
+        warm_pool_mode=WarmPoolMode.COLD_ONLY,
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager, warm_pool = _build_manager(
+        settings,
+        publisher,
+        vnc_controller=stub_vnc_controller,
+        use_warm_pool=False,
+    )
+
+    session = await manager.create_session(SessionCreatePayload(headless=False))
+
+    assert warm_pool is None
+    assert calls
+    launch_call = calls[0]
+    assert launch_call["browser"] == "camoufox"
+    assert launch_call["headless"] is False
+    assert launch_call["env"] == {"DISPLAY": ":stub"}
+    origin = session.metadata["browser_origin"]
+    assert origin["kind"] == "cold_launch"
+    assert origin["mode"] == settings.warm_pool_mode.value
+    assert origin["reason"] == "mode-cold-only"
+    assert "warm_pool" not in session.metadata
+    assert session.metadata["runner_browser_pid"] == 8800
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_hybrid_falls_back_when_warm_pool_busy(
+    monkeypatch: pytest.MonkeyPatch, stub_vnc_controller: _StubVncController
+) -> None:
+    """Hybrid mode should fall back to cold launches when the pool is exhausted."""
+
+    calls: list[dict[str, object]] = []
+
+    async def _fake_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        command: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        read_timeout: float = 10.0,
+    ) -> _StubBrowserHandle:
+        handle = _StubBrowserHandle(ws_endpoint="ws://cold/fallback", pid=9900)
+        calls.append(
+            {
+                "browser": browser,
+                "headless": headless,
+                "env": dict(env or {}),
+                "timeout": read_timeout,
+            }
+        )
+        return handle
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+
+    warm_pool = _StubWarmPoolManager(workstations=["ws-only"])
+    await warm_pool.reserve_slot("ws-only")
+    await warm_pool.mark_busy("ws-only")
+
+    settings = RunnerSettings(
+        runner_id="runner-hybrid",
+        camoufox_path="/usr/bin/camoufox",
+        warm_pool_mode=WarmPoolMode.HYBRID,
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager, _ = _build_manager(
+        settings,
+        publisher,
+        vnc_controller=stub_vnc_controller,
+        warm_pool=warm_pool,
+    )
+
+    session = await manager.create_session(SessionCreatePayload(headless=False))
+
+    assert calls
+    launch_call = calls[0]
+    assert launch_call["headless"] is False
+    assert launch_call["env"] == {"DISPLAY": ":stub"}
+    origin = session.metadata["browser_origin"]
+    assert origin["kind"] == "cold_launch"
+    assert origin["mode"] == settings.warm_pool_mode.value
+    assert origin["reason"] == "warm-pool-unavailable"
+    assert "warm_pool" not in session.metadata
+    assert session.metadata["runner_browser_pid"] == 9900
 
 
 @pytest.mark.anyio("asyncio")
@@ -656,8 +789,11 @@ async def test_create_session_uses_warm_pool_handle() -> None:
 
     publisher = InMemorySessionEventPublisher()
     warm_pool = _StubWarmPoolManager(workstations=["ws-meta"])
+    settings = RunnerSettings(
+        runner_id="runner-browser", camoufox_path="/usr/bin/camoufox"
+    )
     manager, warm_pool = _build_manager(
-        RunnerSettings(runner_id="runner-browser", camoufox_path="/usr/bin/camoufox"),
+        settings,
         publisher,
         warm_pool=warm_pool,
     )
@@ -666,8 +802,13 @@ async def test_create_session_uses_warm_pool_handle() -> None:
         SessionCreatePayload(headless=True, metadata={"flow": "launch-test"})
     )
 
+    assert warm_pool is not None
     warm_info = session.metadata["warm_pool"]
     assert warm_info["workstation_id"] == "ws-meta"
+    origin = session.metadata["browser_origin"]
+    assert origin["kind"] == "warm_pool"
+    assert origin["mode"] == settings.warm_pool_mode.value
+    assert origin["workstation_id"] == "ws-meta"
     assert warm_pool.busy == ["ws-meta"]
     stored_handle = manager._browser_handles[session.id]
     assert stored_handle.ws_endpoint.startswith("ws://warm/ws-meta/")

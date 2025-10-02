@@ -1,6 +1,6 @@
 """Configuration helpers for the Runner service."""
 
-from .settings import RunnerSettings
+from .settings import RunnerSettings, WarmPoolMode
 from .warm_pool import (
     WarmPoolConfig,
     WarmPoolConfigError,
@@ -10,6 +10,7 @@ from .warm_pool import (
 
 __all__ = [
     "RunnerSettings",
+    "WarmPoolMode",
     "WarmPoolConfig",
     "WarmPoolConfigError",
     "WorkstationConfigEntry",

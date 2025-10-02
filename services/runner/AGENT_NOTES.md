@@ -70,6 +70,10 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   показывать последние сбои без риска утечки памяти.
 - **Warm pool-backed sessions**: `SessionManager` теперь зависит от `WarmPoolManager`, резервирует слот до создания сессии и
   рециклирует его при завершении. В случае исчерпания слотов API возвращает 429.
+- **Warm pool strategy modes**: `RunnerSettings.warm_pool_mode` позволяет выбирать между
+  тёплыми слотами, холодными запусками и гибридом; `SessionManager` автоматически
+  переключается на `launch_browser`, если гибридный режим не находит idle-слота, и
+  добавляет в метаданные `browser_origin` с деталями источника.
 - **Gateway proxy compatibility**: `SessionCreatePayload` остаётся публичным контрактом, но теперь вызывается через Gateway, потому важна обратная совместимость и строгая валидация.
 - **Playwright launch lifecycle**: `app.browser.launch_browser` стартует Playwright в режиме `launch-server`, сохраняет `wsEndpoint`/PID в метаданных и позволяет `SessionManager` останавливать процесс при переходе в `DEAD` или очистке endpoint. Исключения при старте выполняют откат без публикации событий.
 - **Idle TTL reaper**: `SessionManager` содержит AnyIO-based reaper, который вызывает
@@ -131,3 +135,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-18 · gpt-5-codex · Добавлены REST-эндпоинты `/workstations*`, in-memory издатель `WorkstationEvent` и интеграционные тесты API.
 - 2025-10-19 · gpt-5-codex · Вынесены маршруты `/workstations` в отдельный роутер с Pydantic-моделями, WarmPoolManager публикует события state/error/recycled, добавлены SSE/WS-обёртки и интеграционные тесты.
 - 2025-10-20 · gpt-5-codex · Добавлены warm-pool метрики/таймеры, расширен `/health` данными пула и настроен формат логов с идентификаторами; обновлены тесты `/metrics` и `/health`.
+- 2025-10-21 · gpt-5-codex · Реализованы режимы warm pool (warm-only/cold-only/hybrid), гибридный fallback на `launch_browser`, расширение метаданных `browser_origin` и покрытие тестами.
