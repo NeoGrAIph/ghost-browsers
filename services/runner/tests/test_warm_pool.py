@@ -122,8 +122,43 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
     assert nav_calls[0][2] == str(settings.start_url)
     assert sleep_calls == [1.5]
 
-    reserved = await manager.reserve_slot()
-    assert reserved.state is WarmPoolState.RESERVED
+    reservation = await manager.reserve_slot()
+    assert reservation.snapshot.state is WarmPoolState.RESERVED
+    assert reservation.environment["CAMOUFOX_WORKSTATION_ID"] == "ws-1"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_cancel_reservation_returns_slot_to_idle(tmp_path: Path) -> None:
+    """Cancelling a reservation should return the workstation to idle."""
+
+    settings = RunnerSettings(runner_id="runner", camoufox_path="/usr/bin/camoufox")
+    config = WarmPoolConfig(workstations=[WorkstationConfigEntry(id="ws-1")])
+
+    async def launcher(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str],
+    ) -> _StubHandle:
+        del settings, browser, headless
+        handle = _StubHandle(0)
+        handle.launch_env = dict(env)
+        return handle
+
+    manager = WarmPoolManager(
+        settings,
+        warm_pool_config=config,
+        launcher=launcher,  # type: ignore[arg-type]
+    )
+
+    await manager.start()
+    reservation = await manager.reserve_slot("ws-1")
+    assert reservation.snapshot.state is WarmPoolState.RESERVED
+    snapshot = await manager.cancel_reservation("ws-1")
+    assert snapshot.state is WarmPoolState.IDLE
+    follow_up = await manager.reserve_slot("ws-1")
+    assert follow_up.snapshot.state is WarmPoolState.RESERVED
 
 
 @pytest.mark.anyio("asyncio")

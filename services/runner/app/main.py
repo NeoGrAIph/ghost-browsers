@@ -15,6 +15,7 @@ from .dependencies import get_runner_settings, get_session_manager
 from .metrics import METRICS_REGISTRY
 from .session_manager import (
     SessionCreatePayload,
+    SessionCapacityError,
     SessionManager,
     SessionNotFoundError,
     SessionUpdatePayload,
@@ -132,7 +133,13 @@ async def create_session(
 ) -> Session:
     """Create a session and emit a ``session.created`` event."""
 
-    return await manager.create_session(payload)
+    try:
+        return await manager.create_session(payload)
+    except SessionCapacityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="no warm workstations available",
+        ) from exc
 
 
 @app.patch("/sessions/{session_id}", response_model=Session, summary="Update a session")

@@ -22,7 +22,7 @@ from core.models import (
 )
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 
-from .browser import BrowserSessionHandle, launch_browser
+from .browser import BrowserSessionHandle
 from .config import RunnerSettings
 from .events import SessionEventPublisher
 from .metrics import (
@@ -34,6 +34,12 @@ from .metrics import (
     VNC_ALLOCATIONS_GAUGE,
 )
 from .vnc import VncController, VncSessionHandle
+from .warm_pool import (
+    WarmPoolManager,
+    WarmPoolProvisioningError,
+    WarmPoolReservation,
+    WarmPoolStateError,
+)
 
 
 class SessionCreatePayload(BaseModel):
@@ -85,6 +91,10 @@ class SessionUpdatePayload(BaseModel):
 
 class SessionNotFoundError(KeyError):
     """Raised when attempting to operate on an unknown session identifier."""
+
+
+class SessionCapacityError(RuntimeError):
+    """Raised when the runner cannot honour a session request due to capacity."""
 
 
 class SessionManagerMetrics(BaseModel):
@@ -146,6 +156,7 @@ class SessionManager:
         *,
         reaper_interval_seconds: float = 1.0,
         vnc_controller: VncController | None = None,
+        warm_pool_manager: WarmPoolManager | None = None,
     ) -> None:
         self._settings = settings
         self._publisher = event_publisher
@@ -160,6 +171,9 @@ class SessionManager:
         self._browser_handles: dict[UUID, BrowserSessionHandle] = {}
         self._vnc_controller = vnc_controller
         self._vnc_handles: dict[UUID, VncSessionHandle] = {}
+        self._warm_pool = warm_pool_manager
+        self._warm_pool_started = False
+        self._warm_sessions: dict[UUID, str] = {}
         self._next_idle_expiry_at: datetime | None = None
         self._reaper_total_runs = 0
         self._reaper_expired_sessions = 0
@@ -185,24 +199,16 @@ class SessionManager:
                 session_id,
                 sanitized_vnc=sanitized_vnc,
             )
-            browser_handle: BrowserSessionHandle | None = None
-            metadata = dict(payload.metadata)
             try:
-                browser_handle = await launch_browser(
-                    self._settings,
-                    browser=payload.browser,
-                    headless=payload.headless,
-                    env=(
-                        vnc_handle.browser_environment()
-                        if vnc_handle is not None
-                        else None
-                    ),
-                )
+                reservation = await self._reserve_warm_slot(payload.metadata)
             except Exception:
-                if browser_handle is not None:
-                    await browser_handle.shutdown(force=True)
                 await self._discard_vnc_handle(session_id, vnc_handle)
                 raise
+            workstation_id = reservation.snapshot.workstation_id
+            browser_handle = reservation.handle
+            metadata = self._merge_warm_pool_metadata(
+                dict(payload.metadata), reservation
+            )
             if browser_handle.pid is not None:
                 metadata.setdefault("runner_browser_pid", browser_handle.pid)
             vnc_enabled = (
@@ -230,11 +236,18 @@ class SessionManager:
                     metadata=metadata,
                 )
             except Exception:
-                await browser_handle.shutdown(force=True)
+                await self._cancel_warm_reservation(workstation_id)
+                await self._discard_vnc_handle(session_id, vnc_handle)
+                raise
+            try:
+                await self._mark_warm_slot_busy(workstation_id)
+            except SessionCapacityError:
+                await self._cancel_warm_reservation(workstation_id)
                 await self._discard_vnc_handle(session_id, vnc_handle)
                 raise
             self._sessions[session_id] = session
             self._browser_handles[session_id] = browser_handle
+            self._warm_sessions[session_id] = workstation_id
             if vnc_handle is not None:
                 self._vnc_handles[session_id] = vnc_handle
             VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
@@ -284,6 +297,13 @@ class SessionManager:
                 )
             if self._should_cleanup_vnc(existing, session):
                 await self._release_vnc_handle(session_id)
+            release_warm = (
+                existing.status is not SessionStatus.DEAD
+                and session.status is SessionStatus.DEAD
+                and session_id in self._warm_sessions
+            )
+            if release_warm:
+                await self._release_warm_slot(session_id)
             event_type = (
                 SessionEventType.ENDED
                 if session.status is SessionStatus.DEAD
@@ -431,6 +451,9 @@ class SessionManager:
             >>> await manager.start()  # doctest: +SKIP
         """
 
+        if self._warm_pool is not None and not self._warm_pool_started:
+            await self._warm_pool.start()
+            self._warm_pool_started = True
         async with self._lock:
             if self._reaper_task_group is not None:
                 return
@@ -497,6 +520,160 @@ class SessionManager:
         if details.token is None and details.token_ttl_seconds is None:
             return details
         return details.model_copy(update={"token": None, "token_ttl_seconds": None})
+
+    async def _reserve_warm_slot(
+        self, metadata: dict[str, Any]
+    ) -> WarmPoolReservation:
+        """Reserve a warm workstation slot for a new session.
+
+        Args:
+            metadata: Metadata dictionary supplied during session creation.
+
+        Returns:
+            WarmPoolReservation: Snapshot and handle representing the reserved
+            workstation.
+
+        Raises:
+            SessionCapacityError: If warm pool support is disabled or no idle
+                slots are available.
+
+        Example:
+            >>> await manager._reserve_warm_slot({})  # doctest: +SKIP
+        """
+
+        if self._warm_pool is None:
+            raise SessionCapacityError("warm pool is not configured")
+        if not self._warm_pool_started:
+            await self._warm_pool.start()
+            self._warm_pool_started = True
+        requested = self._extract_requested_workstation(metadata)
+        try:
+            return await self._warm_pool.reserve_slot(requested)
+        except WarmPoolStateError as exc:  # pragma: no cover - defensive guard
+            raise SessionCapacityError("no warm workstations available") from exc
+
+    def _extract_requested_workstation(self, metadata: dict[str, Any]) -> str | None:
+        """Return a workstation identifier requested via metadata.
+
+        Args:
+            metadata: Metadata payload supplied by the API caller.
+
+        Returns:
+            str | None: Identifier of the requested workstation when provided,
+            otherwise ``None``.
+
+        Example:
+            >>> manager._extract_requested_workstation(  # doctest: +SKIP
+            ...     {"warm_pool": {"workstation_id": "ws-1"}}
+            ... )
+            'ws-1'
+        """
+
+        warm_hint = metadata.get("warm_pool")
+        if isinstance(warm_hint, dict):
+            value = warm_hint.get("workstation_id")
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped:
+                    return stripped
+        return None
+
+    def _merge_warm_pool_metadata(
+        self, metadata: dict[str, Any], reservation: WarmPoolReservation
+    ) -> dict[str, Any]:
+        """Return ``metadata`` augmented with warm pool descriptors.
+
+        Args:
+            metadata: Base metadata cloned from the create payload.
+            reservation: Reservation carrying snapshot and launch environment
+                for the warm workstation.
+
+        Returns:
+            dict[str, Any]: Metadata dictionary enriched with a ``warm_pool``
+            section describing the allocated workstation.
+
+        Example:
+            >>> manager._merge_warm_pool_metadata({}, reservation)  # doctest: +SKIP
+        """
+
+        warm_metadata = {
+            "workstation_id": reservation.snapshot.workstation_id,
+            "fingerprint_id": reservation.snapshot.fingerprint_id,
+            "proxy_url": reservation.snapshot.proxy_url,
+            "launch_env": dict(reservation.environment),
+        }
+        existing = metadata.get("warm_pool")
+        if isinstance(existing, dict):
+            metadata["warm_pool"] = {**existing, **warm_metadata}
+        else:
+            metadata["warm_pool"] = warm_metadata
+        return metadata
+
+    async def _cancel_warm_reservation(self, workstation_id: str) -> None:
+        """Rollback a reserved warm slot back to ``idle`` state.
+
+        Args:
+            workstation_id: Identifier of the reserved workstation to release.
+
+        Example:
+            >>> await manager._cancel_warm_reservation("ws-1")  # doctest: +SKIP
+        """
+
+        if self._warm_pool is None:
+            return
+        with contextlib.suppress(WarmPoolStateError):
+            await self._warm_pool.cancel_reservation(workstation_id)
+
+    async def _mark_warm_slot_busy(self, workstation_id: str) -> None:
+        """Transition a reserved warm slot into the ``busy`` state.
+
+        Args:
+            workstation_id: Identifier of the reserved workstation.
+
+        Raises:
+            SessionCapacityError: If the reservation vanished before it could be
+                marked busy.
+
+        Example:
+            >>> await manager._mark_warm_slot_busy("ws-1")  # doctest: +SKIP
+        """
+
+        if self._warm_pool is None:
+            raise SessionCapacityError("warm pool is not configured")
+        try:
+            await self._warm_pool.mark_busy(workstation_id)
+        except WarmPoolStateError as exc:
+            raise SessionCapacityError(
+                f"warm workstation '{workstation_id}' is no longer reserved"
+            ) from exc
+
+    async def _release_warm_slot(self, session_id: UUID) -> None:
+        """Recycle the warm slot associated with ``session_id``.
+
+        Args:
+            session_id: Identifier of the session whose workstation should be
+                recycled.
+
+        Raises:
+            WarmPoolProvisioningError: Propagated when the recycle process fails
+                to provision a fresh workstation.
+
+        Example:
+            >>> await manager._release_warm_slot(session_id)  # doctest: +SKIP
+        """
+
+        if self._warm_pool is None:
+            return
+        workstation_id = self._warm_sessions.pop(session_id, None)
+        if workstation_id is None:
+            return
+        try:
+            await self._warm_pool.release_slot(workstation_id)
+        except WarmPoolProvisioningError as exc:
+            message = str(exc)
+            self._prewarm_failures.append(message)
+            self._last_prewarm_error = message
+            raise
 
     def _recalculate_active_sessions(
         self, previous_status: SessionStatus, current_status: SessionStatus
@@ -587,8 +764,11 @@ class SessionManager:
             >>> await manager._shutdown_browser(session_id, force=True)  # doctest: +SKIP
         """
 
+        warm_managed = session_id in self._warm_sessions
         handle = self._browser_handles.pop(session_id, None)
         if handle is None:
+            return
+        if warm_managed:
             return
         await handle.shutdown(force=force)
 
@@ -663,6 +843,7 @@ class SessionManager:
 __all__ = [
     "SessionCreatePayload",
     "SessionManager",
+    "SessionCapacityError",
     "SessionNotFoundError",
     "SessionManagerMetrics",
     "SessionUpdatePayload",

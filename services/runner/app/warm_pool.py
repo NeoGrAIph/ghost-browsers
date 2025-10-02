@@ -44,6 +44,7 @@ __all__ = [
     "WarmPoolError",
     "WarmPoolManager",
     "WarmPoolProvisioningError",
+    "WarmPoolReservation",
     "WarmPoolSnapshot",
     "WarmPoolState",
     "WarmPoolStateError",
@@ -110,6 +111,15 @@ class WarmPoolSnapshot:
     fingerprint_id: str | None
     proxy_url: str | None
     state: WarmPoolState
+
+
+@dataclass(frozen=True)
+class WarmPoolReservation:
+    """Snapshot and browser handle returned when reserving a warm slot."""
+
+    snapshot: WarmPoolSnapshot
+    handle: BrowserSessionHandle
+    environment: dict[str, str]
 
 
 class WarmPoolManager:
@@ -202,7 +212,9 @@ class WarmPoolManager:
                     },
                 )
 
-    async def reserve_slot(self, workstation_id: str | None = None) -> WarmPoolSnapshot:
+    async def reserve_slot(
+        self, workstation_id: str | None = None
+    ) -> WarmPoolReservation:
         """Move a slot from ``idle`` to ``reserved`` for assignment.
 
         Args:
@@ -210,7 +222,8 @@ class WarmPoolManager:
                 omitted the first available idle slot is used.
 
         Returns:
-            WarmPoolSnapshot: Snapshot reflecting the ``reserved`` state.
+            WarmPoolReservation: Snapshot and handle reflecting the ``reserved``
+                state ready to be attached to a session.
 
         Raises:
             WarmPoolStateError: If the pool is draining, no idle slots exist, or
@@ -225,8 +238,17 @@ class WarmPoolManager:
                 raise WarmPoolStateError(
                     f"workstation '{slot.workstation.id}' is not idle"
                 )
+            if slot.handle is None:
+                raise WarmPoolStateError(
+                    f"workstation '{slot.workstation.id}' is not provisioned"
+                )
             slot.state = WarmPoolState.RESERVED
-            return slot.snapshot()
+            snapshot = slot.snapshot()
+            return WarmPoolReservation(
+                snapshot=snapshot,
+                handle=slot.handle,
+                environment=dict(slot.last_launch_env),
+            )
 
     async def mark_busy(self, workstation_id: str) -> WarmPoolSnapshot:
         """Transition a ``reserved`` slot into the ``busy`` state."""
@@ -238,6 +260,18 @@ class WarmPoolManager:
                     f"workstation '{workstation_id}' is not reserved"
                 )
             slot.state = WarmPoolState.BUSY
+            return slot.snapshot()
+
+    async def cancel_reservation(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Return a ``reserved`` slot back to ``idle`` without recycling."""
+
+        slot = self._require_slot(workstation_id)
+        async with slot.lock:
+            if slot.state is not WarmPoolState.RESERVED:
+                raise WarmPoolStateError(
+                    f"workstation '{workstation_id}' is not reserved"
+                )
+            slot.state = WarmPoolState.IDLE
             return slot.snapshot()
 
     async def release_slot(self, workstation_id: str) -> WarmPoolSnapshot:
