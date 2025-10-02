@@ -24,6 +24,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Event transport**
   - `SessionEventPublisher.publish(SessionEvent)` — protocol for pushing lifecycle events downstream. Default implementation stores events in memory (`InMemorySessionEventPublisher`) but can be swapped for HTTP/SSE bridges via `CallbackSessionEventPublisher`.
   - `HttpSessionEventPublisher` — при наличии `RunnerSettings.event_endpoint` POST-ит события на `gateway /events`.
+  - `WorkstationEventPublisher.publish(WorkstationEvent)` — отдельный транспорт для событий прогретых рабочих станций. In-memory реализация используется по умолчанию, HTTP-вариант активируется настройкой `WORKSTATION_EVENT_ENDPOINT`.
 
 ## Data & Models
 - Uses `core.Session`, `SessionEvent`, `SessionProxySettings`, `SessionVncDetails`, and related enums.
@@ -45,6 +46,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 ## Decisions
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
+- **Workstation event transport**: `WarmPoolManager` эмитирует `WorkstationEvent` при старте, резервации, занятии, рециклинге, ошибках и drain. Транспорт подменяется через `get_workstation_event_publisher` (in-memory по умолчанию, HTTP — при `WORKSTATION_EVENT_ENDPOINT`).
 - **Camoufox stub dependency**: Для unit-тестов в CI runner использует локальный путь-зависимость `packages/camoufox`, реализующую CLI/API-совместимый stub. Это позволяет выполнять `poetry install` без доступа к проприетарному пакету.
 - **Process-backed VNC controller**: Non-headless sessions allocate Xvfb/x11vnc/websockify helpers via `ProcessVncController`. The controller maintains a bounded pool of displays and ports, composes public HTTP/WS URLs from `RunnerSettings`, and tears down helpers whenever sessions terminate or switch to headless mode.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
@@ -107,3 +109,5 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-15 · gpt-5-codex · Добавлены warm pool-конфиги (JSON), загрузка при старте, новые настройки и модульные тесты на валидацию/парсинг.
 - 2025-10-16 · gpt-5-codex · Реализован ``WarmPoolManager`` с управлением состояниями, recycle, преднавигацией и юнит-тестами на ключевые сценарии.
 - 2025-10-17 · gpt-5-codex · Интегрирован warm pool в `SessionManager`/API, добавлен отклик 429 при нехватке слотов и покрытие тестами.
+- 2025-10-18 · gpt-5-codex · Добавлена публикация событий рабочих станций (WarmPoolManager → WorkstationEventPublisher),
+  новые настройки и тесты на фан-аут/ошибки/HTTP транспорт.

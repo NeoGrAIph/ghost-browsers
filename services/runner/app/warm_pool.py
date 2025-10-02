@@ -4,14 +4,23 @@ The runner keeps a dedicated pool of pre-warmed Camoufox instances so that
 interactive workloads can be attached with minimal latency.  The
 ``WarmPoolManager`` coordinates lifecycle transitions, isolates state between
 workstations, and optionally performs a navigation step so that browser tabs
-are primed before sessions are assigned.
+are primed before sessions are assigned.  Each lifecycle transition produces a
+``WorkstationEvent`` so downstream services receive timely updates.
 
 Example:
     >>> from app.config import RunnerSettings, WarmPoolConfig, WorkstationConfigEntry
+    >>> from app.workstation_events import InMemoryWorkstationEventPublisher
     >>> settings = RunnerSettings(runner_id="runner", camoufox_path="/usr/bin/camoufox")
-    >>> config = WarmPoolConfig(workstations=[WorkstationConfigEntry(id="ws-1")])
+    >>> config = WarmPoolConfig(
+    ...     workstations=[WorkstationConfigEntry(id="ws-1", fingerprint_id="fp-1")]
+    ... )
     >>> async def main() -> None:
-    ...     manager = WarmPoolManager(settings, warm_pool_config=config)
+    ...     publisher = InMemoryWorkstationEventPublisher()
+    ...     manager = WarmPoolManager(
+    ...         settings,
+    ...         warm_pool_config=config,
+    ...         workstation_event_publisher=publisher,
+    ...     )
     ...     await manager.start()
     ...     slot = await manager.reserve_slot()
     ...     await manager.mark_busy(slot.workstation_id)
@@ -29,8 +38,12 @@ import tempfile
 from asyncio import Lock
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
+
+from core import WorkstationEvent, WorkstationEventType, WorkstationMeta, WorkstationState
 
 from .browser import BrowserLaunchError, BrowserSessionHandle, launch_browser
 from .config import (
@@ -38,6 +51,10 @@ from .config import (
     WarmPoolConfig,
     WorkstationConfigEntry,
     load_warm_pool_config,
+)
+from .workstation_events import (
+    InMemoryWorkstationEventPublisher,
+    WorkstationEventPublisher,
 )
 
 __all__ = [
@@ -168,6 +185,7 @@ class WarmPoolManager:
         temp_dir_factory: Callable[[str], Path] | None = None,
         max_retries: int = 3,
         retry_base_delay: float = 0.5,
+        workstation_event_publisher: WorkstationEventPublisher | None = None,
     ) -> None:
         self._settings = settings
         self._launcher = launcher
@@ -180,6 +198,9 @@ class WarmPoolManager:
         self._config = warm_pool_config
         self._slots: dict[str, _WarmSlot] = {}
         self._draining = False
+        self._event_publisher = (
+            workstation_event_publisher or InMemoryWorkstationEventPublisher()
+        )
 
     async def start(self) -> None:
         """Load configuration and provision all workstations in the pool."""
@@ -203,6 +224,13 @@ class WarmPoolManager:
                         "state": slot.state.value,
                     },
                 )
+                await self._publish_workstation_event(
+                    self._create_workstation_event(
+                        slot,
+                        event_type=WorkstationEventType.CREATED,
+                        reason="provisioned",
+                    )
+                )
             except WarmPoolProvisioningError:
                 LOGGER.exception(
                     "Failed to provision warm pool slot",
@@ -210,6 +238,13 @@ class WarmPoolManager:
                         "workstation_id": entry.id,
                         "fingerprint_id": slot.fingerprint_id,
                     },
+                )
+                await self._publish_workstation_event(
+                    self._create_workstation_event(
+                        slot,
+                        event_type=WorkstationEventType.UPDATED,
+                        reason=self._format_last_error(slot),
+                    )
                 )
 
     async def reserve_slot(
@@ -244,11 +279,17 @@ class WarmPoolManager:
                 )
             slot.state = WarmPoolState.RESERVED
             snapshot = slot.snapshot()
-            return WarmPoolReservation(
-                snapshot=snapshot,
-                handle=slot.handle,
-                environment=dict(slot.last_launch_env),
+            event = self._create_workstation_event(
+                slot,
+                event_type=WorkstationEventType.UPDATED,
+                reason="reserved",
             )
+        await self._publish_workstation_event(event)
+        return WarmPoolReservation(
+            snapshot=snapshot,
+            handle=slot.handle,
+            environment=dict(slot.last_launch_env),
+        )
 
     async def mark_busy(self, workstation_id: str) -> WarmPoolSnapshot:
         """Transition a ``reserved`` slot into the ``busy`` state."""
@@ -260,7 +301,14 @@ class WarmPoolManager:
                     f"workstation '{workstation_id}' is not reserved"
                 )
             slot.state = WarmPoolState.BUSY
-            return slot.snapshot()
+            snapshot = slot.snapshot()
+            event = self._create_workstation_event(
+                slot,
+                event_type=WorkstationEventType.UPDATED,
+                reason="marked busy",
+            )
+        await self._publish_workstation_event(event)
+        return snapshot
 
     async def cancel_reservation(self, workstation_id: str) -> WarmPoolSnapshot:
         """Return a ``reserved`` slot back to ``idle`` without recycling."""
@@ -272,7 +320,14 @@ class WarmPoolManager:
                     f"workstation '{workstation_id}' is not reserved"
                 )
             slot.state = WarmPoolState.IDLE
-            return slot.snapshot()
+            snapshot = slot.snapshot()
+            event = self._create_workstation_event(
+                slot,
+                event_type=WorkstationEventType.UPDATED,
+                reason="reservation cancelled",
+            )
+        await self._publish_workstation_event(event)
+        return snapshot
 
     async def release_slot(self, workstation_id: str) -> WarmPoolSnapshot:
         """Recycle a slot after a busy session finishes."""
@@ -284,21 +339,39 @@ class WarmPoolManager:
                     f"workstation '{workstation_id}' cannot be recycled from {slot.state.value}"
                 )
             slot.state = WarmPoolState.RECYCLING
-            await self._teardown_slot(slot)
-            slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
-            try:
-                await self._provision_slot(slot)
-            except WarmPoolProvisioningError:
-                LOGGER.exception(
-                    "Warm pool slot recycle failed",
-                    extra={
-                        "workstation_id": slot.workstation.id,
-                        "fingerprint_id": slot.fingerprint_id,
-                    },
-                )
-                slot.state = WarmPoolState.ERROR
-                raise
-            return slot.snapshot()
+            event = self._create_workstation_event(
+                slot,
+                event_type=WorkstationEventType.UPDATED,
+                reason="recycling",
+            )
+        await self._publish_workstation_event(event)
+        await self._teardown_slot(slot)
+        slot.temp_dir = self._temp_dir_factory(slot.workstation.id)
+        try:
+            await self._provision_slot(slot)
+        except WarmPoolProvisioningError:
+            LOGGER.exception(
+                "Warm pool slot recycle failed",
+                extra={
+                    "workstation_id": slot.workstation.id,
+                    "fingerprint_id": slot.fingerprint_id,
+                },
+            )
+            slot.state = WarmPoolState.ERROR
+            failure_event = self._create_workstation_event(
+                slot,
+                event_type=WorkstationEventType.UPDATED,
+                reason=self._format_last_error(slot),
+            )
+            await self._publish_workstation_event(failure_event)
+            raise
+        success_event = self._create_workstation_event(
+            slot,
+            event_type=WorkstationEventType.UPDATED,
+            reason="recycled",
+        )
+        await self._publish_workstation_event(success_event)
+        return slot.snapshot()
 
     async def drain(self) -> list[WarmPoolSnapshot]:
         """Stop accepting new reservations and tear down all slots."""
@@ -308,8 +381,14 @@ class WarmPoolManager:
         for slot in self._slots.values():
             async with slot.lock:
                 slot.state = WarmPoolState.DRAINING
+                event = self._create_workstation_event(
+                    slot,
+                    event_type=WorkstationEventType.RELEASED,
+                    reason="drain requested",
+                )
                 await self._teardown_slot(slot)
                 snapshots.append(slot.snapshot())
+            await self._publish_workstation_event(event)
         return snapshots
 
     def list_slots(self) -> list[WarmPoolSnapshot]:
@@ -505,4 +584,74 @@ class WarmPoolManager:
         """Allocate a dedicated temporary directory for ``workstation_id``."""
 
         return Path(tempfile.mkdtemp(prefix=f"warm-pool-{workstation_id}-"))
+
+    def _create_workstation_event(
+        self,
+        slot: _WarmSlot,
+        *,
+        event_type: WorkstationEventType,
+        reason: str | None = None,
+    ) -> WorkstationEvent:
+        """Build a :class:`WorkstationEvent` reflecting the slot state."""
+
+        metadata = self._build_workstation_metadata(slot)
+        meta = WorkstationMeta(
+            id=slot.workstation.id,
+            fingerprint_id=slot.fingerprint_id or slot.workstation.id,
+            state=self._map_state(slot.state),
+            proxy_summary=slot.proxy_url,
+            metadata=metadata,
+        )
+        return WorkstationEvent(
+            workstation=meta,
+            occurred_at=datetime.now(tz=UTC),
+            type=event_type,
+            reason=reason,
+        )
+
+    async def _publish_workstation_event(self, event: WorkstationEvent) -> None:
+        """Publish ``event`` via the configured workstation event transport."""
+
+        await self._event_publisher.publish(event)
+
+    @staticmethod
+    def _map_state(state: WarmPoolState) -> WorkstationState:
+        """Translate internal warm pool states to public workstation states."""
+
+        if state is WarmPoolState.IDLE:
+            return WorkstationState.AVAILABLE
+        if state in {WarmPoolState.RESERVED, WarmPoolState.BUSY}:
+            return WorkstationState.ASSIGNED
+        if state is WarmPoolState.RECYCLING:
+            return WorkstationState.PROVISIONING
+        return WorkstationState.UNAVAILABLE
+
+    def _build_workstation_metadata(self, slot: _WarmSlot) -> dict[str, Any]:
+        """Compose metadata payload shared with workstation events."""
+
+        metadata: dict[str, Any] = {}
+        if slot.workstation.label is not None:
+            metadata["label"] = slot.workstation.label
+        if slot.workstation.tags:
+            metadata["tags"] = list(slot.workstation.tags)
+        extras = {
+            key: value
+            for key, value in slot.workstation.model_extra.items()
+            if key not in {"fingerprint_id", "proxy", "proxy_url", "prefs_rel_path"}
+        }
+        if extras:
+            metadata.update(extras)
+        if slot.handle is not None:
+            metadata["ws_endpoint"] = slot.handle.ws_endpoint
+        if slot.last_error is not None:
+            metadata["last_error"] = self._format_last_error(slot)
+        return metadata
+
+    @staticmethod
+    def _format_last_error(slot: _WarmSlot) -> str:
+        """Return a stable description for the most recent slot error."""
+
+        if slot.last_error is None:
+            return "warm pool provisioning failed"
+        return str(slot.last_error)
 

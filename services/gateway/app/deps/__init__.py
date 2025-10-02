@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import Request, WebSocket
 
-from core import AbstractSessionEventBridge
+from core import AbstractSessionEventBridge, AbstractWorkstationEventBridge
 
 from ..security import VncTokenService
 from ..services.runner_client import RunnerCommandClient
@@ -30,6 +30,12 @@ def get_event_bridge(request: Request) -> AbstractSessionEventBridge:
     """Return the event bridge shared across routers."""
 
     return request.app.state.event_bridge  # type: ignore[attr-defined]
+
+
+def get_workstation_event_bridge(request: Request) -> AbstractWorkstationEventBridge:
+    """Return the workstation event bridge shared across routers."""
+
+    return request.app.state.workstation_event_bridge  # type: ignore[attr-defined]
 
 
 def get_vnc_token_service(request: Request) -> VncTokenService:
@@ -74,10 +80,19 @@ def get_runner_ws_proxy_ws(websocket: WebSocket) -> RunnerWebSocketProxy:
     return websocket.app.state.runner_ws_proxy  # type: ignore[attr-defined]
 
 
+def get_workstation_event_bridge_ws(
+    websocket: WebSocket,
+) -> AbstractWorkstationEventBridge:
+    """Return the workstation bridge for WebSocket dependency injection."""
+
+    return websocket.app.state.workstation_event_bridge  # type: ignore[attr-defined]
+
+
 __all__ = [
     "get_session_registry",
     "get_runner_registry",
     "get_event_bridge",
+    "get_workstation_event_bridge",
     "get_vnc_token_service",
     "get_runner_command_client",
     "get_runner_health_client",
@@ -85,4 +100,5 @@ __all__ = [
     "get_session_registry_ws",
     "get_runner_registry_ws",
     "get_runner_ws_proxy_ws",
+    "get_workstation_event_bridge_ws",
 ]

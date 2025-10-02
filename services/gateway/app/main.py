@@ -1,4 +1,9 @@
-"""Application factory for the Camou Gateway service."""
+"""Application factory and lifespan management for the Camou Gateway service.
+
+The module exposes :func:`create_app` which constructs the FastAPI
+application, wires dependency singletons into ``app.state`` and configures the
+lifespan context responsible for runner discovery and health polling.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +11,16 @@ import logging
 from contextlib import asynccontextmanager
 
 import anyio
-from core import InMemorySessionEventBridge
+from core import InMemorySessionEventBridge, InMemoryWorkstationEventBridge
 from fastapi import FastAPI
 
 from .config import GatewaySettings
-from .routers import events_router, runners_router, sessions_router
+from .routers import (
+    events_router,
+    runners_router,
+    sessions_router,
+    workstation_events_router,
+)
 from .security import KeycloakAuthenticator, VncTokenService
 from .services.discovery import (
     RunnerDiscoveryService,
@@ -34,6 +44,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.state.session_registry = SessionRegistry()
     app.state.runner_registry = RunnerRegistry(config.runners)
     app.state.event_bridge = InMemorySessionEventBridge()
+    app.state.workstation_event_bridge = InMemoryWorkstationEventBridge()
     app.state.vnc_tokens = VncTokenService(
         secret=config.vnc_token_secret,
         ttl_seconds=config.vnc_token_ttl_seconds,
@@ -51,6 +62,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(runners_router)
     app.include_router(events_router)
+    app.include_router(workstation_events_router)
 
     _LOGGER.debug(
         "Gateway application initialised",

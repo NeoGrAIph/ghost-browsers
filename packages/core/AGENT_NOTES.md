@@ -8,7 +8,8 @@
 ## Interfaces
 - Python API (`core.__all__`): `Runner`, `Session`, `SessionEvent`, перечисления
   состояний, настройки прокси/VNC, `AbstractSessionEventBridge`,
-  `InMemorySessionEventBridge`.
+  `InMemorySessionEventBridge`, а также `AbstractWorkstationEventBridge` и
+  `InMemoryWorkstationEventBridge`.
 - Событийный мост: абстрактные методы `publish(event)` и `subscribe()` возвращают
   асинхронный итератор событий, повторяя будущий контракт Gateway ↔ UI.
 - Поддерживается опция `subscribe(replay_latest=True)` для мгновенного
@@ -64,7 +65,7 @@
 - `WorkstationEvent` требует `occurred_at` с tzinfo и непустую `reason` при наличии.
 
 ## Known Gaps / TODO
-- [ ] Провести нагрузочное тестирование in-memory моста под массовыми подписками,
+- [ ] Провести нагрузочное тестирование in-memory мостов под массовыми подписками,
       когда появятся целевые SLO по задержкам от команды эксплуатации.
 
 ## How to Test
@@ -90,3 +91,5 @@
 - 2025-10-14 · gpt-5-codex — Расширен `Session` полем `ws_public_endpoint` и обновлены тесты сериализации.
 - 2025-10-15 · ChatGPT — Добавлены модели и события рабочей станции, расширен контракт `Session`
   workstation-полями, обновлены тесты сериализации/валидации.
+- 2025-10-18 · gpt-5-codex — Добавлены мосты событий рабочих станций и экспорт в `core.__all__`,
+  обновлены тесты фан-аута и документация.

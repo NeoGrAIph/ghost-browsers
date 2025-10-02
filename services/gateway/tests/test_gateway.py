@@ -36,6 +36,10 @@ from core import (
     SessionEventType,
     SessionStatus,
     SessionVncDetails,
+    WorkstationEvent,
+    WorkstationEventType,
+    WorkstationMeta,
+    WorkstationState,
 )  # noqa: E402
 
 
@@ -528,6 +532,43 @@ async def test_sse_event_forwarding(gateway_app: FastAPI) -> None:
 
 
 @pytest.mark.anyio("asyncio")
+async def test_workstation_sse_event_forwarding(gateway_app: FastAPI) -> None:
+    """Workstation bridge events should be exposed via SSE."""
+
+    from app.routers.events import publish_workstation_event, stream_workstation_events
+
+    bridge = gateway_app.state.workstation_event_bridge
+    now = datetime.now(tz=UTC)
+    event = WorkstationEvent(
+        workstation=WorkstationMeta(
+            id="ws-1",
+            fingerprint_id="fp-1",
+            state=WorkstationState.AVAILABLE,
+        ),
+        occurred_at=now,
+        type=WorkstationEventType.UPDATED,
+        reason="reserved",
+    )
+
+    response = await stream_workstation_events(
+        bridge=bridge,
+        user=AuthenticatedUser(subject="tester", email="tester@example.com"),
+    )
+    assert isinstance(response, StreamingResponse)
+
+    iterator = response.body_iterator
+    consumer = asyncio.create_task(iterator.__anext__())
+    await asyncio.sleep(0)
+    result = await publish_workstation_event(event=event, bridge=bridge)
+    assert result.status_code == 202
+    chunk = await asyncio.wait_for(consumer, timeout=1)
+    text = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
+    payload = json.loads(text.removeprefix("data:").strip())
+    assert payload["workstation"]["id"] == "ws-1"
+    await iterator.aclose()
+
+
+@pytest.mark.anyio("asyncio")
 async def test_mutation_endpoints_emit_session_events(gateway_app: FastAPI) -> None:
     """Gateway-managed mutations should notify subscribers via the bridge."""
 
@@ -598,6 +639,30 @@ def test_websocket_event_forwarding(gateway_client: TestClient) -> None:
         assert response.status_code == 202
         message = websocket.receive_json()
         assert message["session"]["id"] == str(session.id)
+
+
+def test_workstation_websocket_forwarding(gateway_client: TestClient) -> None:
+    """Workstation events should be delivered over the WebSocket bridge."""
+
+    now = datetime.now(tz=UTC)
+    event = WorkstationEvent(
+        workstation=WorkstationMeta(
+            id="ws-99",
+            fingerprint_id="fp-99",
+            state=WorkstationState.AVAILABLE,
+        ),
+        occurred_at=now,
+        type=WorkstationEventType.UPDATED,
+    )
+
+    with gateway_client.websocket_connect("/workstations/events/ws?token=stub") as websocket:
+        response = gateway_client.post(
+            "/workstations/events",
+            json=event.model_dump(mode="json", by_alias=True),
+        )
+        assert response.status_code == 202
+        message = websocket.receive_json()
+        assert message["workstation"]["id"] == "ws-99"
 
 
 @pytest.mark.anyio

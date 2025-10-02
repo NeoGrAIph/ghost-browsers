@@ -16,6 +16,7 @@ import pytest
 
 from core import (
     InMemorySessionEventBridge,
+    InMemoryWorkstationEventBridge,
     Runner,
     RunnerState,
     Session,
@@ -318,6 +319,64 @@ def test_inmemory_bridge_replay_latest_on_subscribe() -> None:
         event = SessionEvent(
             session=build_session(status=SessionStatus.READY),
             occurred_at=datetime.now(tz=timezone.utc),
+        )
+
+        await bridge.publish(event)
+        stream = await bridge.subscribe(replay_latest=True)
+
+        replayed = await stream.__anext__()
+        assert replayed is event
+
+        await stream.aclose()
+
+    asyncio.run(run())
+
+
+def test_inmemory_workstation_bridge_fanout() -> None:
+    """Workstation events should be delivered to all subscribers."""
+
+    async def run() -> None:
+        bridge = InMemoryWorkstationEventBridge()
+        event = WorkstationEvent(
+            workstation=WorkstationMeta(
+                id="ws-1",
+                fingerprint_id="fp-1",
+                state=WorkstationState.AVAILABLE,
+            ),
+            occurred_at=datetime.now(tz=timezone.utc),
+            type=WorkstationEventType.UPDATED,
+        )
+
+        stream_one = await bridge.subscribe()
+        stream_two = await bridge.subscribe()
+
+        task_one = asyncio.create_task(stream_one.__anext__())
+        task_two = asyncio.create_task(stream_two.__anext__())
+
+        await bridge.publish(event)
+
+        assert await task_one is event
+        assert await task_two is event
+
+        await stream_one.aclose()
+        await stream_two.aclose()
+
+    asyncio.run(run())
+
+
+def test_inmemory_workstation_bridge_replay_latest() -> None:
+    """Replaying the latest workstation event should be supported."""
+
+    async def run() -> None:
+        bridge = InMemoryWorkstationEventBridge()
+        event = WorkstationEvent(
+            workstation=WorkstationMeta(
+                id="ws-2",
+                fingerprint_id="fp-2",
+                state=WorkstationState.ASSIGNED,
+            ),
+            occurred_at=datetime.now(tz=timezone.utc),
+            type=WorkstationEventType.UPDATED,
         )
 
         await bridge.publish(event)

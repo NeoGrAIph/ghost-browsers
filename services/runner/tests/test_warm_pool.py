@@ -9,6 +9,8 @@ import pytest
 from app.browser import BrowserLaunchError
 from app.config import RunnerSettings, WarmPoolConfig, WorkstationConfigEntry
 from app.warm_pool import WarmPoolManager, WarmPoolSnapshot, WarmPoolState, WarmPoolStateError
+from app.workstation_events import InMemoryWorkstationEventPublisher
+from core import WorkstationEventType, WorkstationState
 
 
 class _StubHandle:
@@ -93,6 +95,7 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
         path.mkdir()
         return path
 
+    publisher = InMemoryWorkstationEventPublisher()
     manager = WarmPoolManager(
         settings,
         warm_pool_config=config,
@@ -100,9 +103,17 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
         navigator=navigator,
         sleep=sleep,
         temp_dir_factory=temp_dir_factory,
+        workstation_event_publisher=publisher,
     )
 
     await manager.start()
+
+    created_events = await publisher.drain()
+    assert len(created_events) == 1
+    created = created_events[0]
+    assert created.type is WorkstationEventType.CREATED
+    assert created.workstation.state is WorkstationState.AVAILABLE
+    assert created.reason == "provisioned"
 
     slots = manager.list_slots()
     assert len(slots) == 1
@@ -126,6 +137,12 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
     assert reservation.snapshot.state is WarmPoolState.RESERVED
     assert reservation.environment["CAMOUFOX_WORKSTATION_ID"] == "ws-1"
 
+    reserved_events = await publisher.drain()
+    assert len(reserved_events) == 1
+    reserved = reserved_events[0]
+    assert reserved.reason == "reserved"
+    assert reserved.workstation.state is WorkstationState.ASSIGNED
+
 
 @pytest.mark.anyio("asyncio")
 async def test_cancel_reservation_returns_slot_to_idle(tmp_path: Path) -> None:
@@ -146,19 +163,27 @@ async def test_cancel_reservation_returns_slot_to_idle(tmp_path: Path) -> None:
         handle.launch_env = dict(env)
         return handle
 
+    publisher = InMemoryWorkstationEventPublisher()
     manager = WarmPoolManager(
         settings,
         warm_pool_config=config,
         launcher=launcher,  # type: ignore[arg-type]
+        workstation_event_publisher=publisher,
     )
 
     await manager.start()
+    await publisher.drain()
     reservation = await manager.reserve_slot("ws-1")
     assert reservation.snapshot.state is WarmPoolState.RESERVED
+    await publisher.drain()
     snapshot = await manager.cancel_reservation("ws-1")
     assert snapshot.state is WarmPoolState.IDLE
+    cancel_events = await publisher.drain()
+    assert cancel_events[-1].reason == "reservation cancelled"
+    assert cancel_events[-1].workstation.state is WorkstationState.AVAILABLE
     follow_up = await manager.reserve_slot("ws-1")
     assert follow_up.snapshot.state is WarmPoolState.RESERVED
+    await publisher.drain()
 
 
 @pytest.mark.anyio("asyncio")
@@ -185,6 +210,7 @@ async def test_launch_failures_trigger_retries(tmp_path: Path) -> None:
     async def sleep(delay: float) -> None:
         sleep_calls.append(delay)
 
+    publisher = InMemoryWorkstationEventPublisher()
     manager = WarmPoolManager(
         settings,
         warm_pool_config=config,
@@ -192,9 +218,16 @@ async def test_launch_failures_trigger_retries(tmp_path: Path) -> None:
         sleep=sleep,
         max_retries=3,
         retry_base_delay=0.1,
+        workstation_event_publisher=publisher,
     )
 
     await manager.start()
+    failure_events = await publisher.drain()
+    assert failure_events
+    failed = failure_events[0]
+    assert failed.type is WorkstationEventType.UPDATED
+    assert failed.workstation.state is WorkstationState.UNAVAILABLE
+    assert failed.reason == "boom"
 
     slots = manager.list_slots()
     assert slots[0].state is WarmPoolState.ERROR
@@ -243,18 +276,23 @@ async def test_recycle_relaunches_with_same_fingerprint(tmp_path: Path) -> None:
         temp_roots.append(path)
         return path
 
+    publisher = InMemoryWorkstationEventPublisher()
     manager = WarmPoolManager(
         settings,
         warm_pool_config=config,
         launcher=launcher,  # type: ignore[arg-type]
         temp_dir_factory=temp_dir_factory,
+        workstation_event_publisher=publisher,
     )
 
     await manager.start()
+    await publisher.drain()
     assert handles
 
     await manager.reserve_slot("ws-1")
+    await publisher.drain()
     await manager.mark_busy("ws-1")
+    await publisher.drain()
     recycled = await manager.release_slot("ws-1")
 
     assert recycled.state is WarmPoolState.IDLE
@@ -264,6 +302,11 @@ async def test_recycle_relaunches_with_same_fingerprint(tmp_path: Path) -> None:
     assert env_history[1]["CAMOUFOX_FINGERPRINT_ID"] == "fp-keep"
     assert not temp_roots[0].exists()
     assert temp_roots[1].exists()
+
+    recycle_events = await publisher.drain()
+    assert [event.reason for event in recycle_events] == ["recycling", "recycled"]
+    assert recycle_events[0].workstation.state is WorkstationState.PROVISIONING
+    assert recycle_events[1].workstation.state is WorkstationState.AVAILABLE
 
 
 @pytest.mark.anyio("asyncio")
@@ -291,13 +334,16 @@ async def test_drain_transitions_slots_and_prevents_reservations(tmp_path: Path)
         handles.append(handle)
         return handle
 
+    publisher = InMemoryWorkstationEventPublisher()
     manager = WarmPoolManager(
         settings,
         warm_pool_config=config,
         launcher=launcher,  # type: ignore[arg-type]
+        workstation_event_publisher=publisher,
     )
 
     await manager.start()
+    await publisher.drain()
     drain_snapshots = await manager.drain()
 
     assert all(snapshot.state is WarmPoolState.DRAINING for snapshot in drain_snapshots)
@@ -306,4 +352,9 @@ async def test_drain_transitions_slots_and_prevents_reservations(tmp_path: Path)
 
     with pytest.raises(WarmPoolStateError):
         await manager.reserve_slot()
+
+    drain_events = await publisher.drain()
+    assert all(event.type is WorkstationEventType.RELEASED for event in drain_events)
+    assert {event.workstation.id for event in drain_events} == {"ws-1", "ws-2"}
+    assert all(event.workstation.state is WorkstationState.UNAVAILABLE for event in drain_events)
 

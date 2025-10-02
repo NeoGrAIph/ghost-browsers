@@ -24,6 +24,10 @@
   - `WS /events/ws` — WebSocket с тем же потоком событий.
   - `WS /sessions/{id}/ws` — прокси Playwright WebSocket каналов; требует Bearer токен в заголовке или параметре `token`.
   - `POST /events` — приём `SessionEvent` от Runner (HTTP transport) с публикацией через общий bridge.
+  - `POST /workstations/events` — приём `WorkstationEvent` от Runner; ретранслируется в SSE/WS-каналы рабочих станций.
+  - `GET /workstations/events` — SSE-канал `WorkstationEvent` (replay последнего события);
+    авторизация идентична `/events`.
+  - `WS /workstations/events/ws` — WebSocket-поток событий рабочих станций.
 - «Внутренние» HTTP/WS запросы могут авторизоваться по источнику IP: CIDR из `GATEWAY_TRUSTED_CIDRS` и (опционально)
   заголовок `GATEWAY_TRUSTED_HEADER` с оригинальным клиентским IP. Совпадение выдаёт синтетического пользователя
   `internal:<ip>` и логирует стратегию `auth_strategy=internal-bypass`.
@@ -35,6 +39,7 @@
   прямой URL в REST-ответах, чтобы внутренние клиенты могли подключаться без прокси.
 - `SessionRegistry`/`RunnerRegistry` — простые in-memory контейнеры с `asyncio.Lock` для потокобезопасности.
 - `InMemorySessionEventBridge` (из core) хранит последнее событие и раздаёт подписчикам.
+- `InMemoryWorkstationEventBridge` обслуживает поток `WorkstationEvent` для UI/интеграций.
 
 ## Decisions
 - JWKS кэшируется в памяти и повторно запрашивается при отсутствии нужного `kid` (устойчивость к ротации ключей).
@@ -42,6 +47,7 @@
 - Runner-инстансы больше не присылают пред-выданные VNC токены; `VncTokenService.enrich_vnc_details` всегда монтирует подпись, если поле `token` отсутствует, перезаписывая TTL на конфигурационный.
 - Переиспользуем подход из beta-контроллера: для каждого раннера можно настроить шаблоны публичных VNC-URL (HTTP/WS) и при регистрации сессии мы переписываем внутренние адреса на общую точку входа, что позволяет использовать ограниченное число наружных портов.
 - SSE реализовано через `StreamingResponse`, WebSocket — нативный FastAPI роутер; для обоих каналов используется единый event bridge.
+- Отдельный in-memory bridge обслуживает события рабочих станций (`WorkstationEvent`), маршруты `/workstations/events*` используют тот же подход replay_latest и авторизацию, что и сессионные каналы.
 - Эндпоинты мутаций (`POST /sessions`, `/sessions/{id}/proxy`, `/sessions/{id}/touch`, `DELETE /sessions/{id}`)
   после успешного завершения формируют `SessionEvent` и отправляют его в bridge, чтобы UI обновлялся даже при изменениях,
   инициированных самим Gateway.
@@ -108,3 +114,5 @@
 - 2025-10-15 · gpt-5-codex · Добавлена конфигурация доверенных CIDR/заголовков, обход аутентификации для внутренних вызовов
   и покрывающие unit-тесты HTTP/SSE/WS.
 - 2025-10-16 · gpt-5-codex · Уточнена документация зависимостей безопасности и обработка пустых env-карт для доверенных CIDR.
+- 2025-10-18 · gpt-5-codex · Добавлены HTTP/SSE/WS эндпоинты `workstations/events*`, второй bridge для
+  `WorkstationEvent` и покрывающие тесты доставки/аутентификации.

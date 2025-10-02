@@ -1,10 +1,9 @@
-"""Asynchronous utilities for propagating session events via WebSockets.
+"""Asynchronous utilities for propagating session and workstation events.
 
-Ghost Browsers standardises on an in-memory fan-out bridge for session
-events. The bridge is production-backed by `asyncio` primitives and does
-not depend on external brokers, which keeps local development and
-container deployments self-contained. This module defines the abstract
-API and exposes the in-memory implementation that all services share.
+Ghost Browsers standardises on in-memory fan-out bridges backed by
+``asyncio`` primitives rather than external brokers. The same pattern is
+reused for session and workstation events so downstream services can
+subscribe using a consistent API regardless of event type.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import AsyncGenerator
 
-from .models import SessionEvent
+from .models import SessionEvent, WorkstationEvent
 
 
 class AbstractSessionEventBridge(ABC):
@@ -102,6 +101,63 @@ class InMemorySessionEventBridge(AbstractSessionEventBridge):
             await queue.put(latest)
 
         async def iterator() -> AsyncGenerator[SessionEvent, None]:
+            try:
+                while True:
+                    yield await queue.get()
+            finally:
+                async with self._lock:
+                    self._subscribers.discard(queue)
+
+        return iterator()
+
+
+class AbstractWorkstationEventBridge(ABC):
+    """Common interface for broadcasting workstation events to subscribers."""
+
+    @abstractmethod
+    async def publish(self, event: WorkstationEvent) -> None:
+        """Publish a workstation event to all subscribers."""
+
+    @abstractmethod
+    async def subscribe(
+        self, *, replay_latest: bool = False
+    ) -> AsyncIterator[WorkstationEvent]:
+        """Return an async iterator yielding workstation events."""
+
+
+class InMemoryWorkstationEventBridge(AbstractWorkstationEventBridge):
+    """In-memory bridge that fans out workstation events to subscribers."""
+
+    def __init__(self) -> None:
+        """Initialise the bridge with no subscribers."""
+
+        self._subscribers: set[asyncio.Queue[WorkstationEvent]] = set()
+        self._lock = asyncio.Lock()
+        self._latest_event: WorkstationEvent | None = None
+
+    async def publish(self, event: WorkstationEvent) -> None:
+        """Broadcast ``event`` to all currently subscribed consumers."""
+
+        async with self._lock:
+            queues = list(self._subscribers)
+            self._latest_event = event
+        for queue in queues:
+            await queue.put(event)
+
+    async def subscribe(
+        self, *, replay_latest: bool = False
+    ) -> AsyncIterator[WorkstationEvent]:
+        """Register a subscriber and return an iterator of workstation events."""
+
+        queue: asyncio.Queue[WorkstationEvent] = asyncio.Queue()
+        async with self._lock:
+            self._subscribers.add(queue)
+            latest = self._latest_event
+
+        if replay_latest and latest is not None:
+            await queue.put(latest)
+
+        async def iterator() -> AsyncGenerator[WorkstationEvent, None]:
             try:
                 while True:
                     yield await queue.get()

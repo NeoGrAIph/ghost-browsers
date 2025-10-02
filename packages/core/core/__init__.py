@@ -32,7 +32,9 @@ from .models import (
 )
 from .websocket_bridge import (
     AbstractSessionEventBridge,
+    AbstractWorkstationEventBridge,
     InMemorySessionEventBridge,
+    InMemoryWorkstationEventBridge,
 )
 
 __all__ = [
@@ -46,7 +48,9 @@ __all__ = [
     "StartUrlWait",
     "SessionVncDetails",
     "AbstractSessionEventBridge",
+    "AbstractWorkstationEventBridge",
     "InMemorySessionEventBridge",
+    "InMemoryWorkstationEventBridge",
     "WorkstationEvent",
     "WorkstationEventType",
     "WorkstationMeta",

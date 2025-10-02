@@ -1,4 +1,4 @@
-"""Dependency wiring for the session manager and publishers."""
+"""Dependency wiring for session management and event publishers."""
 
 from __future__ import annotations
 
@@ -12,8 +12,13 @@ from ..events import (
     SessionEventPublisher,
 )
 from ..session_manager import SessionManager
-from ..warm_pool import WarmPoolManager
 from ..vnc import ProcessVncController, VncController, VncUnavailableError
+from ..warm_pool import WarmPoolManager
+from ..workstation_events import (
+    HttpWorkstationEventPublisher,
+    InMemoryWorkstationEventPublisher,
+    WorkstationEventPublisher,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +38,16 @@ def get_event_publisher() -> SessionEventPublisher:
     if settings.event_endpoint is not None:
         return HttpSessionEventPublisher(str(settings.event_endpoint))
     return InMemorySessionEventPublisher()
+
+
+@lru_cache
+def get_workstation_event_publisher() -> WorkstationEventPublisher:
+    """Return the workstation event publisher configured for the runner."""
+
+    settings = get_runner_settings()
+    if settings.workstation_event_endpoint is not None:
+        return HttpWorkstationEventPublisher(str(settings.workstation_event_endpoint))
+    return InMemoryWorkstationEventPublisher()
 
 
 @lru_cache
@@ -65,12 +80,16 @@ def get_session_manager() -> SessionManager:
 def get_warm_pool_manager() -> WarmPoolManager:
     """Return a cached :class:`WarmPoolManager` built from runner settings."""
 
-    return WarmPoolManager(get_runner_settings())
+    return WarmPoolManager(
+        get_runner_settings(),
+        workstation_event_publisher=get_workstation_event_publisher(),
+    )
 
 
 __all__ = [
     "get_event_publisher",
     "get_runner_settings",
+    "get_workstation_event_publisher",
     "get_warm_pool_manager",
     "get_session_manager",
     "get_vnc_controller",
