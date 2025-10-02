@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from dataclasses import dataclass, field
@@ -24,6 +25,10 @@ class GatewaySettings:
         jwt_jwks_url: HTTP URL pointing to the Keycloak JWKS document.
         vnc_token_ttl_seconds: Lifetime of the issued VNC tokens in seconds.
         vnc_token_secret: Shared HMAC secret used for signing VNC JWT tokens.
+        trusted_cidrs: Networks whose traffic is considered internal and bypasses
+            bearer authentication.
+        trusted_header: Optional header carrying the original caller IP placed by
+            upstream ingress/sidecars.
 
     Example:
         >>> settings = GatewaySettings.from_env({
@@ -44,6 +49,8 @@ class GatewaySettings:
     jwt_jwks_url: str = "http://localhost/.well-known/jwks.json"
     vnc_token_ttl_seconds: int = 300
     vnc_token_secret: str = "dev-secret"
+    trusted_cidrs: list[ipaddress._BaseNetwork] = field(default_factory=list)
+    trusted_header: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "GatewaySettings":
@@ -56,26 +63,32 @@ class GatewaySettings:
             GatewaySettings: Populated settings instance.
 
         Raises:
-            ValueError: If ``VNC_TOKEN_TTL_SEC`` exceeds 300 seconds or a runner
-                definition cannot be parsed.
+            ValueError: If ``VNC_TOKEN_TTL_SEC`` exceeds 300 seconds, a runner
+                definition cannot be parsed, or trusted CIDR/header variables
+                contain invalid values.
         """
 
-        env_map = env or os.environ
-        discovery_mode = env_map.get("DISCOVERY_MODE", cls.discovery_mode)
-        discovery_endpoint = env_map.get("DISCOVERY_ENDPOINT", cls.discovery_endpoint)
-        jwt_jwks_url = env_map.get("JWT_JWKS_URL", cls.jwt_jwks_url)
-        ttl_raw = env_map.get("VNC_TOKEN_TTL_SEC", str(cls.vnc_token_ttl_seconds))
+        env_map: Mapping[str, str] = os.environ if env is None else env
+        defaults = cls()
+        discovery_mode = env_map.get("DISCOVERY_MODE", defaults.discovery_mode)
+        discovery_endpoint = env_map.get("DISCOVERY_ENDPOINT", defaults.discovery_endpoint)
+        jwt_jwks_url = env_map.get("JWT_JWKS_URL", defaults.jwt_jwks_url)
+        ttl_raw = env_map.get("VNC_TOKEN_TTL_SEC", str(defaults.vnc_token_ttl_seconds))
         ttl = int(ttl_raw)
         if ttl > 300:
             raise ValueError("VNC_TOKEN_TTL_SEC must be <= 300 seconds")
         poll_interval_raw = env_map.get(
             "DISCOVERY_POLL_INTERVAL_SEC",
-            str(cls.discovery_poll_interval_seconds),
+            str(defaults.discovery_poll_interval_seconds),
         )
         poll_interval = float(poll_interval_raw)
         if poll_interval <= 0:
             raise ValueError("DISCOVERY_POLL_INTERVAL_SEC must be a positive number")
         runners = list(_parse_runners(env_map.get("RUNNERS")))
+        trusted_cidrs = _parse_trusted_cidrs(env_map.get("GATEWAY_TRUSTED_CIDRS"))
+        trusted_header = env_map.get("GATEWAY_TRUSTED_HEADER", cls.trusted_header)
+        if trusted_header is not None:
+            trusted_header = trusted_header.strip() or None
         return cls(
             discovery_mode=discovery_mode,
             discovery_endpoint=discovery_endpoint,
@@ -83,7 +96,9 @@ class GatewaySettings:
             runners=runners,
             jwt_jwks_url=jwt_jwks_url,
             vnc_token_ttl_seconds=ttl,
-            vnc_token_secret=env_map.get("VNC_TOKEN_SECRET", cls.vnc_token_secret),
+            vnc_token_secret=env_map.get("VNC_TOKEN_SECRET", defaults.vnc_token_secret),
+            trusted_cidrs=trusted_cidrs,
+            trusted_header=trusted_header,
         )
 
 
@@ -114,3 +129,38 @@ def _parse_runners(raw: str | None) -> Iterable[Runner]:
         if not isinstance(item, Mapping):
             raise ValueError("Runner definitions must be JSON objects")
         yield Runner.model_validate(item)
+
+
+def _parse_trusted_cidrs(raw: str | None) -> list[ipaddress._BaseNetwork]:
+    """Parse ``GATEWAY_TRUSTED_CIDRS`` into a list of IP networks.
+
+    Args:
+        raw: Comma-separated CIDR ranges to trust. Individual entries may contain
+            whitespace which is ignored.
+
+    Returns:
+        list[ipaddress._BaseNetwork]: Networks parsed using :func:`ipaddress.ip_network`.
+
+    Raises:
+        ValueError: If an entry is empty or cannot be parsed as an IP network.
+
+    Example:
+        >>> _parse_trusted_cidrs("10.0.0.0/8, fd00::/64")
+        [IPv4Network('10.0.0.0/8'), IPv6Network('fd00::/64')]
+    """
+
+    if raw is None or raw.strip() == "":
+        return []
+    networks: list[ipaddress._BaseNetwork] = []
+    for entry in raw.split(","):
+        candidate = entry.strip()
+        if not candidate:
+            raise ValueError("GATEWAY_TRUSTED_CIDRS must not contain empty entries")
+        try:
+            network = ipaddress.ip_network(candidate, strict=False)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid CIDR entry in GATEWAY_TRUSTED_CIDRS: {candidate}"
+            ) from exc
+        networks.append(network)
+    return networks

@@ -24,6 +24,9 @@
   - `WS /events/ws` — WebSocket с тем же потоком событий.
   - `WS /sessions/{id}/ws` — прокси Playwright WebSocket каналов; требует Bearer токен в заголовке или параметре `token`.
   - `POST /events` — приём `SessionEvent` от Runner (HTTP transport) с публикацией через общий bridge.
+- «Внутренние» HTTP/WS запросы могут авторизоваться по источнику IP: CIDR из `GATEWAY_TRUSTED_CIDRS` и (опционально)
+  заголовок `GATEWAY_TRUSTED_HEADER` с оригинальным клиентским IP. Совпадение выдаёт синтетического пользователя
+  `internal:<ip>` и логирует стратегию `auth_strategy=internal-bypass`.
 - Аутентификация: Bearer JWT (Keycloak). Для WebSocket токен передаётся в заголовке `Authorization: Bearer` или параметре `token`.
 
 ## Data & Models
@@ -43,6 +46,8 @@
   после успешного завершения формируют `SessionEvent` и отправляют его в bridge, чтобы UI обновлялся даже при изменениях,
   инициированных самим Gateway.
 - Авторизация завершается до открытия WebSocket, при ошибках соединение закрывается кодом `1008`.
+- Реализована внутренняя аутентификация по доверенным сетям: CIDR списки валидируются через `ipaddress`, а WebSocket/HTTP
+  зависимости фиксируют стратегию в аудит-логах. Заголовок доверенного IP разбирает список значений (`X-Forwarded-For`).
 - Для `WS /sessions/{id}/ws` хранится привязка `session_id`→частный Runner `ws_endpoint` внутри `RunnerRegistry`; наружным клиен
   там выдаётся стабильный публичный путь `/sessions/{id}/ws`, публикуемый теперь как поле `ws_public_endpoint`, а прокси исполь
   зует `websockets` для двунаправленной ретрансляции без изменения прямого URL.
@@ -59,11 +64,9 @@
 - In-memory хранилища не предназначены для горизонтального масштабирования; восстановление состояния из Runner discovery пока не реализовано.
 
 ## Known Gaps / TODO
-- [ ] Реализовать конфигурируемый обход Keycloak для доверенных внутренних сетей
-      (CIDR + опциональный заголовок из `GATEWAY_TRUSTED_HEADER`). Необходимо:
-      обновить `GatewaySettings` (`GATEWAY_TRUSTED_CIDRS` → список `ip_network`),
-      расширить `get_current_user`/`authenticate_websocket`, добавить unit-тесты на
-      HTTP/SSE/WS сценарии и метки аудита (`auth_strategy=internal-bypass`).
+- [x] Реализовать конфигурируемый обход Keycloak для доверенных внутренних сетей
+      (CIDR + опциональный заголовок из `GATEWAY_TRUSTED_HEADER`). Покрыто unit-тестами
+      HTTP/SSE/WS (`tests/test_security.py`) и обновлёнными логами `auth_strategy`.
 - [x] Реализовать реальные механизмы discovery и синхронизации раннеров/сессий (сейчас только in-memory конфиг). Покрыто
       модулем `app.services.discovery` с поддержкой `static`/`http`, unit-тестами и очисткой веб-сокетных биндингов.
 - [x] Вынести секрет для VNC-токенов в конфигурацию и синхронизировать с VNC Gateway. (см. текущий PR)
@@ -102,3 +105,6 @@
   `KeycloakAuthenticator`.
 - 2025-10-14 · gpt-5-codex · Gateway сохраняет прямой `ws_endpoint` и публикует отдельный `ws_public_endpoint`; обновлены роутеры,
   RunnerRegistry и UI/тесты.
+- 2025-10-15 · gpt-5-codex · Добавлена конфигурация доверенных CIDR/заголовков, обход аутентификации для внутренних вызовов
+  и покрывающие unit-тесты HTTP/SSE/WS.
+- 2025-10-16 · gpt-5-codex · Уточнена документация зависимостей безопасности и обработка пустых env-карт для доверенных CIDR.
