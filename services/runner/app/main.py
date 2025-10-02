@@ -160,6 +160,24 @@ async def create_session(
         ) from exc
 
 
+@app.get("/sessions", response_model=list[Session], summary="List sessions")
+async def list_sessions(manager: SessionManagerDep) -> list[Session]:
+    """Return all active sessions tracked by the runner.
+
+    Args:
+        manager: Session manager responsible for storing active sessions.
+
+    Returns:
+        list[Session]: Ordered collection of active sessions managed by the
+        runner.
+
+    Example:
+        >>> await list_sessions(manager)  # doctest: +SKIP
+    """
+
+    return await manager.list_sessions()
+
+
 @app.patch("/sessions/{session_id}", response_model=Session, summary="Update a session")
 async def update_session(
     session_id: UUID,

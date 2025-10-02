@@ -63,6 +63,7 @@
 - Health-чек раннеров выполняется через `RunnerHealthClient` (httpx) и сохраняет результат в `RunnerRegistry`. Селектор `select_next` использует круговой обход и фильтрует по признаку здоровья и поддержке VNC, чтобы избежать ручного выбора в роутерах.
 - Тесты аутентификатора Keycloak используют `httpx.MockTransport`, чтобы прогонять полный цикл `_fetch_jwks` без прямых правок кэша
   и проверять повторные запросы при смене `kid`, HTTP-ошибки и сбои декодирования JSON.
+- Lifespan-хук после discovery обходит только здоровых раннеров, вызывает `GET /sessions` через `RunnerCommandClient.list_sessions` и восстанавливает `SessionRegistry` вместе с веб-сокетными биндингами `RunnerRegistry`. Поток проверен тестом `test_lifespan_restores_sessions_from_healthy_runners`.
 
 ## Constraints & Invariants
 - `VNC_TOKEN_TTL_SEC` всегда ≤300; нарушение приводит к `ValueError` на старте.
@@ -83,6 +84,7 @@
 - [x] Реализовать стратегию выбора раннера (учитывать слоты/регион) вместо текущего «первый в списке». Добавлен круговой селектор, отфильтровывающий по здоровью и поддержке VNC.
 - [x] Настроить фонового воркера, который периодически опрашивает `/health` у всех раннеров и заполняет реестр. Выполнено через
       lifespan-хук FastAPI (`_runner_maintenance_loop`) с очисткой сессий и health-probe.
+- [x] Зафиксирован поток восстановления после рестартов: lifespan делает `GET /sessions`, покрыто тестами `test_list_sessions_returns_*` (runner) и `test_lifespan_restores_sessions_from_healthy_runners` (gateway).
 
 ## How to Test
 - Локально:
@@ -116,3 +118,5 @@
   и покрывающие unit-тесты HTTP/SSE/WS.
 - 2025-10-16 · gpt-5-codex · Уточнена документация зависимостей безопасности и обработка пустых env-карт для доверенных CIDR.
 - 2025-10-17 · gpt-5-codex · Добавлены registry/роуты для рабочих станций, модели `WorkstationRecord`/`WorkstationUpsertPayload` и unit-тесты API контрактов.
+- 2025-10-18 · gpt-5-codex · Восстановление сессий при рестарте через `GET /sessions`, расширенный RunnerCommandClient и новые unit-тесты bootstrap.
+

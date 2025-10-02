@@ -218,6 +218,72 @@ class _MainStubWarmPool:
             if slot["state"] is WarmPoolState.IDLE:
                 return workstation_id
         raise WarmPoolStateError("no idle warm workstations available")
+
+
+@pytest.mark.anyio("asyncio")
+async def test_list_sessions_returns_empty_collection() -> None:
+    """``GET /sessions`` should return an empty list when no sessions exist."""
+
+    clock = _ApiStubClock(datetime(2024, 2, 1, 8, 0, 0, tzinfo=UTC))
+    settings = RunnerSettings(runner_id="runner-list", camoufox_path="/usr/bin/camoufox")
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        settings,
+        publisher,
+        clock=clock,
+        reaper_interval_seconds=5.0,
+        vnc_controller=_MainStubVncController(),
+        warm_pool_manager=_MainStubWarmPool(),
+    )
+
+    app.dependency_overrides[get_runner_settings] = lambda: settings
+    app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get("/sessions")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.anyio("asyncio")
+async def test_list_sessions_returns_active_sessions() -> None:
+    """``GET /sessions`` should mirror the sessions maintained in memory."""
+
+    clock = _ApiStubClock(datetime(2024, 2, 1, 8, 30, 0, tzinfo=UTC))
+    settings = RunnerSettings(runner_id="runner-list", camoufox_path="/usr/bin/camoufox")
+    publisher = InMemorySessionEventPublisher()
+    warm_pool = _MainStubWarmPool()
+    manager = SessionManager(
+        settings,
+        publisher,
+        clock=clock,
+        reaper_interval_seconds=5.0,
+        vnc_controller=_MainStubVncController(),
+        warm_pool_manager=warm_pool,
+    )
+
+    first = await manager.create_session(SessionCreatePayload(headless=False))
+    second = await manager.create_session(SessionCreatePayload(headless=True))
+
+    app.dependency_overrides[get_runner_settings] = lambda: settings
+    app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get("/sessions")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {item["id"] for item in payload} == {str(first.id), str(second.id)}
+
 @pytest.mark.anyio("asyncio")
 async def test_health_endpoint_reports_extended_metrics() -> None:
     """``GET /health`` should expose slots, proxy, VNC, and prewarm diagnostics."""

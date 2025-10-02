@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import anyio
-from core import InMemorySessionEventBridge
+from core import InMemorySessionEventBridge, Runner
 from fastapi import FastAPI
 
 from .config import GatewaySettings
@@ -16,7 +16,7 @@ from .services.discovery import (
     RunnerDiscoveryService,
     purge_sessions_for_missing_runners,
 )
-from .services.runner_client import RunnerCommandClient
+from .services.runner_client import RunnerCommandClient, RunnerCommandError
 from .services.runner_health import RunnerHealthClient
 from .services.runner_registry import RunnerRegistry
 from .services.runner_ws_proxy import RunnerWebSocketProxy
@@ -77,6 +77,8 @@ def _lifespan(app: FastAPI):
             registry,
             initial.removed,
         )
+        runners = await registry.list()
+        await _restore_runner_sessions(app, runners)
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(_runner_maintenance_loop, app)
             try:
@@ -85,6 +87,62 @@ def _lifespan(app: FastAPI):
                 task_group.cancel_scope.cancel()
 
     return _context
+
+
+async def _restore_runner_sessions(app: FastAPI, runners: list[Runner]) -> None:
+    """Repopulate session registries from healthy runner snapshots.
+
+    Args:
+        app: FastAPI application exposing stateful registries and clients.
+        runners: Collection of runners observed during discovery.
+
+    Returns:
+        None. The coroutine updates the in-memory registries in place.
+
+    Example:
+        >>> await _restore_runner_sessions(app, await registry.list())  # doctest: +SKIP
+    """
+
+    if not runners:
+        return
+
+    session_registry: SessionRegistry = app.state.session_registry
+    runner_registry: RunnerRegistry = app.state.runner_registry
+    runner_client: RunnerCommandClient = app.state.runner_client
+
+    restored = 0
+    for runner in runners:
+        if not runner.healthy:
+            continue
+        try:
+            sessions = await runner_client.list_sessions(runner)
+        except RunnerCommandError as exc:
+            _LOGGER.warning(
+                "Failed to recover sessions from runner %s: %s",
+                runner.id,
+                exc,
+            )
+            continue
+
+        for session in sessions:
+            if session.runner_id and session.runner_id != runner.id:
+                _LOGGER.warning(
+                    "Skipping session %s reported by runner %s due to mismatched owner %s",
+                    session.id,
+                    runner.id,
+                    session.runner_id,
+                )
+                continue
+            await session_registry.upsert(session)
+            await runner_registry.register_session_ws_endpoint(
+                session.id,
+                runner_id=runner.id,
+                target=session.ws_endpoint,
+            )
+            restored += 1
+
+    if restored:
+        _LOGGER.info("Recovered %s session(s) from healthy runners", restored)
 
 
 async def _runner_maintenance_loop(app: FastAPI) -> None:

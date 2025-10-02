@@ -8,7 +8,7 @@ from uuid import UUID
 
 import httpx
 from core import Runner, Session, SessionStatus
-from pydantic import AnyUrl, BaseModel, ConfigDict, Field
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field, ValidationError
 
 
 class RunnerCommandError(RuntimeError):
@@ -139,6 +139,47 @@ class RunnerCommandClient:
 
         return await self._request(runner, "DELETE", f"/sessions/{session_id}")
 
+    async def list_sessions(self, runner: Runner) -> list[Session]:
+        """Return the collection of active sessions stored on ``runner``.
+
+        Args:
+            runner: Runner descriptor identifying the HTTP base URL that should
+                be queried.
+
+        Returns:
+            list[Session]: Validated session models returned by the runner. The
+            order mirrors the payload received from the service.
+
+        Raises:
+            RunnerCommandError: If the runner responds with a non-array JSON
+                payload or individual entries cannot be parsed as
+                :class:`core.Session` objects.
+
+        Example:
+            >>> client = RunnerCommandClient()  # doctest: +SKIP
+            >>> await client.list_sessions(runner)  # doctest: +SKIP
+        """
+
+        payload = await self._request_payload(runner, "GET", "/sessions")
+        if not isinstance(payload, list):
+            raise RunnerCommandError(
+                f"Runner {runner.id} responded with non-array payload for GET /sessions"
+            )
+
+        sessions: list[Session] = []
+        for index, item in enumerate(payload):
+            if not isinstance(item, Mapping):
+                raise RunnerCommandError(
+                    f"Runner {runner.id} returned a non-object entry at index {index}"
+                )
+            try:
+                sessions.append(Session.model_validate(item))
+            except ValidationError as exc:  # pragma: no cover - validation guard
+                raise RunnerCommandError(
+                    f"Runner {runner.id} returned an invalid session at index {index}"
+                ) from exc
+        return sessions
+
     async def _request(
         self,
         runner: Runner,
@@ -148,7 +189,74 @@ class RunnerCommandClient:
         json: Mapping[str, Any] | None = None,
         expected_status: int = 200,
     ) -> Session:
-        """Execute a Runner API call and parse the ``Session`` response."""
+        """Execute a Runner API call and parse the ``Session`` response.
+
+        Args:
+            runner: Runner descriptor identifying the API endpoint.
+            method: HTTP verb issued against the runner.
+            path: Path relative to the runner base URL.
+            json: Optional JSON body sent with the request.
+            expected_status: HTTP status code considered successful.
+
+        Returns:
+            Session: Validated session snapshot returned by the runner.
+
+        Raises:
+            RunnerCommandError: If the request fails, the status code differs
+                from ``expected_status`` or the payload cannot be validated.
+
+        Example:
+            >>> client = RunnerCommandClient()  # doctest: +SKIP
+            >>> await client._request(runner, "DELETE", "/sessions/1")  # doctest: +SKIP
+        """
+
+        payload = await self._request_payload(
+            runner,
+            method,
+            path,
+            json=json,
+            expected_status=expected_status,
+        )
+        if not isinstance(payload, Mapping):
+            raise RunnerCommandError(
+                f"Runner {runner.id} returned an unexpected payload for {method} {path}"
+            )
+        try:
+            return Session.model_validate(payload)
+        except ValidationError as exc:  # pragma: no cover - validation guard
+            raise RunnerCommandError(
+                f"Runner {runner.id} returned an invalid session payload"
+            ) from exc
+
+    async def _request_payload(
+        self,
+        runner: Runner,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        expected_status: int = 200,
+    ) -> Any:
+        """Execute a Runner API call and return the parsed JSON body.
+
+        Args:
+            runner: Runner descriptor identifying the API endpoint.
+            method: HTTP verb issued against the runner.
+            path: Relative path requested on the runner.
+            json: Optional JSON payload included in the request.
+            expected_status: HTTP status code considered successful.
+
+        Returns:
+            Any: Parsed JSON payload from the runner response.
+
+        Raises:
+            RunnerCommandError: If the HTTP request fails, returns an
+                unexpected status code or the body is not valid JSON.
+
+        Example:
+            >>> client = RunnerCommandClient()  # doctest: +SKIP
+            >>> await client._request_payload(runner, "GET", "/sessions")  # doctest: +SKIP
+        """
 
         try:
             async with httpx.AsyncClient(
@@ -172,8 +280,12 @@ class RunnerCommandClient:
                 f"Runner {runner.id} responded with unexpected status {response.status_code}"
             )
 
-        payload = response.json()
-        return Session.model_validate(payload)
+        try:
+            return response.json()
+        except ValueError as exc:  # pragma: no cover - defensive guard
+            raise RunnerCommandError(
+                f"Runner {runner.id} returned non-JSON payload for {method} {path}"
+            ) from exc
 
 
 __all__ = [
