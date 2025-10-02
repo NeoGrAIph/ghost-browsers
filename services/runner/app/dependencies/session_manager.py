@@ -12,6 +12,7 @@ from ..events import (
     SessionEventPublisher,
 )
 from ..session_manager import SessionManager
+from ..warm_pool import WarmPoolManager
 from ..vnc import ProcessVncController, VncController, VncUnavailableError
 
 LOGGER = logging.getLogger(__name__)
@@ -56,12 +57,21 @@ def get_session_manager() -> SessionManager:
         get_runner_settings(),
         get_event_publisher(),
         vnc_controller=get_vnc_controller(),
+        warm_pool_manager=get_warm_pool_manager(),
     )
+
+
+@lru_cache
+def get_warm_pool_manager() -> WarmPoolManager:
+    """Return a cached :class:`WarmPoolManager` built from runner settings."""
+
+    return WarmPoolManager(get_runner_settings())
 
 
 __all__ = [
     "get_event_publisher",
     "get_runner_settings",
+    "get_warm_pool_manager",
     "get_session_manager",
     "get_vnc_controller",
 ]

@@ -12,7 +12,8 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
     не-`DEAD` сессий; `prewarm` включает счётчик и последнюю ошибку прогрева;
     `ttl` содержит ближайшее истечение (`next_expiry_at`) и счетчики работы
     фонового reaper-а (`total_runs`, `expired_sessions`, `last_run_at`).
-  - `POST /sessions` — accepts `SessionCreatePayload`, returns created `core.Session` snapshot.
+  - `POST /sessions` — accepts `SessionCreatePayload`, возвращает созданный `core.Session`.
+    При отсутствии свободных warm-слотов возвращает HTTP 429 (`no warm workstations available`).
   - `PATCH /sessions/{id}` — accepts `SessionUpdatePayload`, merges labels/metadata, returns updated `core.Session`.
   - `POST /sessions/{id}/touch` — обновляет `last_seen_at`, продлевая TTL и публикуя heartbeat-событие.
   - `DELETE /sessions/{id}` — marks session as `DEAD`, returns terminal snapshot.
@@ -50,6 +51,8 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
   показывать последние сбои без риска утечки памяти.
+- **Warm pool-backed sessions**: `SessionManager` теперь зависит от `WarmPoolManager`, резервирует слот до создания сессии и
+  рециклирует его при завершении. В случае исчерпания слотов API возвращает 429.
 - **Gateway proxy compatibility**: `SessionCreatePayload` остаётся публичным контрактом, но теперь вызывается через Gateway, потому важна обратная совместимость и строгая валидация.
 - **Playwright launch lifecycle**: `app.browser.launch_browser` стартует Playwright в режиме `launch-server`, сохраняет `wsEndpoint`/PID в метаданных и позволяет `SessionManager` останавливать процесс при переходе в `DEAD` или очистке endpoint. Исключения при старте выполняют откат без публикации событий.
 - **Idle TTL reaper**: `SessionManager` содержит AnyIO-based reaper, который вызывает
@@ -103,3 +106,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-14 · gpt-5-codex · Привели код и тесты к требованиям Ruff (импорт, длины строк, ошибки) и актуализировали конфигурацию линтера.
 - 2025-10-15 · gpt-5-codex · Добавлены warm pool-конфиги (JSON), загрузка при старте, новые настройки и модульные тесты на валидацию/парсинг.
 - 2025-10-16 · gpt-5-codex · Реализован ``WarmPoolManager`` с управлением состояниями, recycle, преднавигацией и юнит-тестами на ключевые сценарии.
+- 2025-10-17 · gpt-5-codex · Интегрирован warm pool в `SessionManager`/API, добавлен отклик 429 при нехватке слотов и покрытие тестами.

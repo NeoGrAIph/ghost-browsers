@@ -14,6 +14,7 @@ from app.dependencies.session_manager import (
 from app.events import InMemorySessionEventPublisher
 from app.main import app
 from app.session_manager import SessionCreatePayload, SessionManager
+from app.warm_pool import WarmPoolReservation, WarmPoolSnapshot, WarmPoolState, WarmPoolStateError
 from core.models import SessionVncDetails
 from httpx import AsyncClient
 
@@ -23,19 +24,6 @@ def anyio_backend() -> str:
     """Force the anyio plugin to use the asyncio backend."""
 
     return "asyncio"
-
-
-class _MainStubHandle:
-    """Minimal stub mirroring :class:`BrowserSessionHandle` for API tests."""
-
-    def __init__(self, endpoint: str, pid: int) -> None:
-        self.ws_endpoint = endpoint
-        self.pid = pid
-
-    async def shutdown(self, *, force: bool, timeout: float = 5.0) -> None:
-        """Pretend to terminate the Playwright subprocess."""
-
-        return None
 
 
 class _MainStubVncHandle:
@@ -86,30 +74,127 @@ class _ApiStubClock:
         return self._now
 
 
-@pytest.fixture
-def stub_launch_browser(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch session manager browser launch to avoid spawning Playwright."""
+class _MainStubBrowserHandle:
+    """Minimal stub mirroring :class:`BrowserSessionHandle` for API tests."""
 
-    counter = 0
+    def __init__(self, endpoint: str, pid: int) -> None:
+        self.ws_endpoint = endpoint
+        self.pid = pid
+        self.shutdown_calls: list[dict[str, object]] = []
 
-    async def _fake_launch(
-        settings: RunnerSettings,
-        *,
-        browser: str,
-        headless: bool,
-        env: dict[str, str] | None = None,
-    ) -> _MainStubHandle:
-        nonlocal counter
-        counter += 1
-        return _MainStubHandle(f"ws://health/{counter}", pid=4500 + counter)
+    async def shutdown(self, *, force: bool, timeout: float = 5.0) -> None:
+        """Pretend to terminate the Playwright subprocess."""
 
-    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+        self.shutdown_calls.append({"force": force, "timeout": timeout})
 
 
+class _MainStubWarmPool:
+    """Warm pool stub exposing idle/reserved/busy transitions."""
+
+    def __init__(self, *, workstations: list[str] | None = None) -> None:
+        self._workstations = workstations or ["ws-1", "ws-2", "ws-3"]
+        self._slots: dict[str, dict[str, object]] = {
+            workstation: {
+                "state": WarmPoolState.IDLE,
+                "fingerprint": f"fp-{workstation}",
+                "handle": _MainStubBrowserHandle(
+                    f"ws://warm/{workstation}/0", pid=5000 + idx
+                ),
+            }
+            for idx, workstation in enumerate(self._workstations)
+        }
+        self.reservations: list[str] = []
+        self.busy: list[str] = []
+        self.releases: list[str] = []
+
+    async def start(self) -> None:
+        """Warm pool stubs start instantly."""
+
+        return None
+
+    async def reserve_slot(self, workstation_id: str | None = None) -> WarmPoolReservation:
+        """Reserve the first idle slot or a specific workstation."""
+
+        if workstation_id is None:
+            workstation_id = self._first_idle()
+        slot = self._require_slot(workstation_id)
+        if slot["state"] is not WarmPoolState.IDLE:
+            raise WarmPoolStateError(f"workstation '{workstation_id}' is not idle")
+        slot["state"] = WarmPoolState.RESERVED
+        self.reservations.append(workstation_id)
+        snapshot = WarmPoolSnapshot(
+            workstation_id=workstation_id,
+            fingerprint_id=slot["fingerprint"],
+            proxy_url=None,
+            state=WarmPoolState.RESERVED,
+        )
+        env = {
+            "CAMOUFOX_WORKSTATION_ID": workstation_id,
+            "CAMOUFOX_FINGERPRINT_ID": slot["fingerprint"],
+        }
+        handle = slot["handle"]
+        assert isinstance(handle, _MainStubBrowserHandle)
+        return WarmPoolReservation(snapshot=snapshot, handle=handle, environment=env)
+
+    async def mark_busy(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Mark a reserved slot as busy."""
+
+        slot = self._require_slot(workstation_id)
+        if slot["state"] is not WarmPoolState.RESERVED:
+            raise WarmPoolStateError(f"workstation '{workstation_id}' is not reserved")
+        slot["state"] = WarmPoolState.BUSY
+        self.busy.append(workstation_id)
+        return WarmPoolSnapshot(
+            workstation_id=workstation_id,
+            fingerprint_id=slot["fingerprint"],
+            proxy_url=None,
+            state=WarmPoolState.BUSY,
+        )
+
+    async def cancel_reservation(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Return a reserved slot to idle when session setup fails."""
+
+        slot = self._require_slot(workstation_id)
+        if slot["state"] is not WarmPoolState.RESERVED:
+            raise WarmPoolStateError(f"workstation '{workstation_id}' is not reserved")
+        slot["state"] = WarmPoolState.IDLE
+        return WarmPoolSnapshot(
+            workstation_id=workstation_id,
+            fingerprint_id=slot["fingerprint"],
+            proxy_url=None,
+            state=WarmPoolState.IDLE,
+        )
+
+    async def release_slot(self, workstation_id: str) -> WarmPoolSnapshot:
+        """Recycle a busy slot back to idle."""
+
+        slot = self._require_slot(workstation_id)
+        if slot["state"] not in {WarmPoolState.BUSY, WarmPoolState.RESERVED}:
+            raise WarmPoolStateError(
+                f"workstation '{workstation_id}' cannot be recycled from {slot['state'].value}"
+            )
+        slot["state"] = WarmPoolState.IDLE
+        self.releases.append(workstation_id)
+        return WarmPoolSnapshot(
+            workstation_id=workstation_id,
+            fingerprint_id=slot["fingerprint"],
+            proxy_url=None,
+            state=WarmPoolState.IDLE,
+        )
+
+    def _require_slot(self, workstation_id: str) -> dict[str, object]:
+        try:
+            return self._slots[workstation_id]
+        except KeyError as exc:  # pragma: no cover - configuration guard
+            raise WarmPoolStateError(f"unknown workstation '{workstation_id}'") from exc
+
+    def _first_idle(self) -> str:
+        for workstation_id, slot in self._slots.items():
+            if slot["state"] is WarmPoolState.IDLE:
+                return workstation_id
+        raise WarmPoolStateError("no idle warm workstations available")
 @pytest.mark.anyio("asyncio")
-async def test_health_endpoint_reports_extended_metrics(
-    stub_launch_browser: None,
-) -> None:
+async def test_health_endpoint_reports_extended_metrics() -> None:
     """``GET /health`` should expose slots, proxy, VNC, and prewarm diagnostics."""
 
     clock = _ApiStubClock(datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC))
@@ -125,12 +210,14 @@ async def test_health_endpoint_reports_extended_metrics(
         prewarm_failure_history_size=5,
     )
     publisher = InMemorySessionEventPublisher()
+    warm_pool = _MainStubWarmPool()
     manager = SessionManager(
         settings,
         publisher,
         clock=clock,
         reaper_interval_seconds=5.0,
         vnc_controller=_MainStubVncController(),
+        warm_pool_manager=warm_pool,
     )
 
     await manager.create_session(SessionCreatePayload(headless=False))
@@ -181,9 +268,7 @@ async def test_health_endpoint_reports_extended_metrics(
 
 
 @pytest.mark.anyio("asyncio")
-async def test_metrics_endpoint_exposes_prometheus_payload(
-    stub_launch_browser: None,
-) -> None:
+async def test_metrics_endpoint_exposes_prometheus_payload() -> None:
     """``GET /metrics`` should serve Prometheus-formatted metrics."""
 
     clock = _ApiStubClock(datetime(2024, 3, 3, 12, 0, 0, tzinfo=UTC))
@@ -199,6 +284,7 @@ async def test_metrics_endpoint_exposes_prometheus_payload(
         clock=clock,
         reaper_interval_seconds=5.0,
         vnc_controller=_MainStubVncController(),
+        warm_pool_manager=_MainStubWarmPool(),
     )
 
     await manager.create_session(SessionCreatePayload(headless=False))
@@ -222,9 +308,7 @@ async def test_metrics_endpoint_exposes_prometheus_payload(
 
 
 @pytest.mark.anyio("asyncio")
-async def test_touch_endpoint_extends_idle_deadline(
-    stub_launch_browser: None,
-) -> None:
+async def test_touch_endpoint_extends_idle_deadline() -> None:
     """``POST /sessions/{id}/touch`` should refresh ``last_seen_at``."""
 
     clock = _ApiStubClock(datetime(2024, 2, 2, 10, 0, 0, tzinfo=UTC))
@@ -239,6 +323,7 @@ async def test_touch_endpoint_extends_idle_deadline(
         clock=clock,
         reaper_interval_seconds=5.0,
         vnc_controller=_MainStubVncController(),
+        warm_pool_manager=_MainStubWarmPool(),
     )
     session = await manager.create_session(
         SessionCreatePayload(idle_ttl_seconds=45, headless=False)
@@ -262,3 +347,33 @@ async def test_touch_endpoint_extends_idle_deadline(
     assert body["last_seen_at"] == expected_last_seen
     metrics = await manager.get_metrics()
     assert metrics.next_idle_expiry_at == clock() + timedelta(seconds=45)
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_returns_429_when_capacity_exhausted() -> None:
+    """API should respond with 429 when the warm pool has no idle slots."""
+
+    settings = RunnerSettings(runner_id="runner-cap", camoufox_path="/usr/bin/camoufox")
+    publisher = InMemorySessionEventPublisher()
+    warm_pool = _MainStubWarmPool(workstations=["ws-exhausted"])
+    await warm_pool.reserve_slot("ws-exhausted")
+    await warm_pool.mark_busy("ws-exhausted")
+    manager = SessionManager(
+        settings,
+        publisher,
+        vnc_controller=_MainStubVncController(),
+        warm_pool_manager=warm_pool,
+    )
+
+    app.dependency_overrides[get_runner_settings] = lambda: settings
+    app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.post("/sessions", json={})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "no warm workstations available"
