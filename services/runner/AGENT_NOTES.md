@@ -32,6 +32,12 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - Prometheus-инструментация живёт в `app.metrics` и использует отдельный `CollectorRegistry`;
   `SessionManager` синхронизирует gauge/counter-метрики при создании/завершении сессий,
   аллокации VNC и работе idle-reaper-а.
+- Конфигурация пула прогретых рабочих станций описывается `WarmPoolConfig`
+  (`app.config.warm_pool`). Запись (`WorkstationConfigEntry`) содержит хотя бы `id`
+  (строгая уникальность, проверяется валидатором) и произвольные дополнительные поля
+  (разрешены `extra`, чтобы операторы могли добавлять свои атрибуты). JSON-файл читается
+  при старте через `load_warm_pool_config`, I/O и ошибки сериализации/валидации оборачиваются
+  в `WarmPoolConfigError`.
 
 ## Decisions
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
@@ -51,6 +57,10 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - **Prometheus registry**: Runner экспортирует `/metrics`, используя
   `prometheus_client.CollectorRegistry`; значения обновляются в момент изменения состояния
   (`active_sessions`, VNC аллокации, пробеги reaper-а) вместо ленивой агрегации на запрос.
+- **JSON-конфиг пула прогрева**: Дополнительные параметры окружения (`WARM_POOL_CONFIG_PATH`,
+  `BROWSER_PREFS_PATH`, `PREWARM_NAVIGATION`, `START_URL`, `START_URL_WAIT_MS`) разбираются в
+  `RunnerSettings`. Отдельный JSON-файл описывает warm pool; при ошибках чтения/валидации
+  старт завершается с развёрнутым сообщением, что упрощает операционную диагностику.
 
 ## Constraints & Invariants
 - `RunnerSettings.vnc_token_ttl_seconds` capped at 300 seconds to align with `SessionVncDetails` validation.
@@ -73,6 +83,7 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - `poetry install --no-root`
 - `PYTHONPATH=. poetry run pytest -q` (anyio-powered unit tests)
 - `poetry run ruff check .`
+- Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_config_warm_pool.py -q`
 
 ## Changelog (for agents)
 - 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
@@ -86,3 +97,4 @@ FastAPI-based service that manages browser sessions for Ghost Browsers. Provides
 - 2025-10-12 · gpt-5-codex · Интегрирован процессный noVNC-контроллер, расширены настройки VNC и обновлены unit-тесты с заглушками.
 - 2025-10-13 · gpt-5-codex · Добавлены Prometheus-метрики, эндпоинт `/metrics` и тестовое покрытие на экспорт/счётчики.
 - 2025-10-14 · gpt-5-codex · Привели код и тесты к требованиям Ruff (импорт, длины строк, ошибки) и актуализировали конфигурацию линтера.
+- 2025-10-15 · gpt-5-codex · Добавлены warm pool-конфиги (JSON), загрузка при старте, новые настройки и модульные тесты на валидацию/парсинг.
