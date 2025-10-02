@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { QueryKey, UseQueryResult } from '@tanstack/react-query';
 
 import { DashboardPage } from '../pages/DashboardPage';
+import { App } from '../App';
+import { ThemeProvider } from '../providers/ThemeProvider';
 import { useSessionFilters } from '../store/sessionFilters';
+import { useSessionEventConnection } from '../store/sessionEvents';
 import { queryKeys } from '../utils/queryKeys';
 import type { Session } from '../types/session';
 import type { RunnerStatus } from '../types/runner';
@@ -28,6 +31,7 @@ type MutationResult = {
 
 const useMutationMock = vi.fn<(options: MutationOptions) => MutationResult>();
 const invalidateQueriesMock = vi.fn<(options: { queryKey: QueryKey }) => void>();
+const setQueryDataMock = vi.fn<(key: QueryKey, data: unknown) => void>();
 
 vi.mock('@tanstack/react-query', () => {
   const module: {
@@ -35,14 +39,39 @@ vi.mock('@tanstack/react-query', () => {
     useMutation: (options: MutationOptions) => MutationResult;
     useQueryClient: () => {
       invalidateQueries: (options: { queryKey: QueryKey }) => void;
+      setQueryData: (key: QueryKey, data: unknown) => void;
     };
   } = {
     useQuery: (options: { queryKey: QueryKey }) => useQueryMock(options),
     useMutation: (options: MutationOptions) => useMutationMock(options),
-    useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
+    useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock, setQueryData: setQueryDataMock }),
   };
   return module;
 });
+
+// Sensible defaults so tests that don't override still work
+useQueryMock.mockImplementation(() => ({
+  data: [],
+  isLoading: false,
+  isFetching: false,
+  error: null,
+}));
+useMutationMock.mockImplementation(({ mutationFn, onSuccess }: MutationOptions) => ({
+  mutate: (value?: unknown) => {
+    const result = mutationFn(value);
+    void Promise.resolve(result).then(() => {
+      onSuccess?.();
+    });
+  },
+  mutateAsync: async (value?: unknown) => {
+    const result = await Promise.resolve(mutationFn(value));
+    onSuccess?.();
+    return result;
+  },
+  isPending: false,
+}));
+invalidateQueriesMock.mockImplementation(() => {});
+setQueryDataMock.mockImplementation(() => {});
 
 const {
   fetchSessionsMock,
@@ -65,9 +94,15 @@ vi.mock('../api/client', () => ({
 
 vi.mock('../hooks/useAuth', () => ({
   useAuth: () => ({
+    isAuthenticated: true,
+    isLoading: false,
     token: 'token-123',
+    parsedToken: undefined,
     profile: { firstName: 'Tester' },
+    keycloak: null,
+    login: vi.fn(),
     logout: vi.fn(),
+    refreshToken: vi.fn(),
   }),
 }));
 
@@ -297,3 +332,102 @@ describe('DashboardPage', () => {
   });
 });
 
+// ---- SSE failure banner tests ----
+
+class MockEventSource {
+  public static instances: MockEventSource[] = [];
+
+  public onopen: ((event: Event) => void) | null = null;
+
+  public onmessage: ((event: MessageEvent<string>) => void) | null = null;
+
+  public onerror: ((event: Event) => void) | null = null;
+
+  public readonly close = vi.fn();
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public constructor(_url: string) {
+    MockEventSource.instances.push(this);
+    queueMicrotask(() => {
+      this.onerror?.(new Event('error'));
+    });
+  }
+
+  public addEventListener(): void {}
+
+  public removeEventListener(): void {}
+}
+
+const originalEventSource = globalThis.EventSource;
+const originalSetTimeout = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
+
+const renderApp = () =>
+  render(
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>,
+  );
+
+describe('DashboardPage SSE failure banner', () => {
+  beforeEach(() => {
+    // default empty data for queries in App/Dashboard
+    useQueryMock.mockReset();
+    useQueryMock.mockImplementation(({ queryKey }: { queryKey: QueryKey }) => {
+      if (queryKey === queryKeys.sessions) {
+        return { data: [], isLoading: false, isFetching: false, error: null };
+      }
+      if (queryKey === queryKeys.runners) {
+        return { data: [], isLoading: false, isFetching: false, error: null };
+      }
+      return { data: [], isLoading: false, isFetching: false, error: null };
+    });
+
+    fetchSessionsMock.mockResolvedValue([]);
+    fetchRunnersMock.mockResolvedValue([]);
+
+    MockEventSource.instances = [];
+    globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
+    globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (typeof callback === 'function' && typeof delay === 'number' && delay >= 2_000) {
+        (callback as (...cbArgs: unknown[]) => void)(...args);
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return originalSetTimeout(callback, delay as number, ...args);
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+      return originalClearTimeout(handle);
+    }) as typeof clearTimeout;
+    useSessionEventConnection.getState().reset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.EventSource = originalEventSource;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  });
+
+  it('displays reconnect banner after exceeding SSE retry limit', async () => {
+    renderApp();
+
+    const banner = await screen.findByRole('alert');
+    expect(banner.textContent ?? '').toContain('Не удалось подключиться к потоку событий');
+    expect(useSessionEventConnection.getState().error).not.toBeNull();
+
+    const previousAttempts = MockEventSource.instances.length;
+    expect(previousAttempts).toBeGreaterThanOrEqual(6);
+    const retryButton = within(banner).getByRole('button', { name: 'Повторить' });
+
+    act(() => {
+      retryButton.click();
+    });
+
+    expect(MockEventSource.instances.length).toBeGreaterThan(previousAttempts);
+
+    const bannerAfterRetry = await screen.findByRole('alert');
+    expect(bannerAfterRetry.textContent ?? '').toContain(
+      'Не удалось подключиться к потоку событий после 5 попыток.',
+    );
+  });
+});

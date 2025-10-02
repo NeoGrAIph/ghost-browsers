@@ -86,7 +86,9 @@ def test_token_validator_success(validator: TokenValidator, token_service: VncTo
     validator.validate(session_id, token)
 
 
-def test_token_validator_rejects_replay(validator: TokenValidator, token_service: VncTokenService) -> None:
+def test_token_validator_rejects_replay(
+    validator: TokenValidator, token_service: VncTokenService
+) -> None:
     """Validator refuses to accept the same token twice."""
 
     session_id = "replay"

@@ -13,6 +13,7 @@ import { queryKeys } from '../utils/queryKeys';
 import { useSessionFilters, type SessionStatusFilter } from '../store/sessionFilters';
 import { Session } from '../types/session';
 import { buildSessionComposerData } from '../utils/composer';
+import { useSessionEventConnection } from '../store/sessionEvents';
 
 const filterSessions = (
   sessions: Session[],
@@ -59,6 +60,8 @@ export function DashboardPage(): JSX.Element {
   const { search, status, region, proxyId } = useSessionFilters();
   const [isComposerOpen, setComposerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const connectionError = useSessionEventConnection((state) => state.error);
+  const requestConnectionRetry = useSessionEventConnection((state) => state.requestRetry);
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: queryKeys.sessions,
@@ -118,6 +121,14 @@ export function DashboardPage(): JSX.Element {
   return (
     <div className="dashboard">
       <Topbar />
+      {connectionError && (
+        <div className="dashboard__banner" role="alert">
+          <span>{connectionError}</span>
+          <button type="button" onClick={requestConnectionRetry}>
+            Повторить
+          </button>
+        </div>
+      )}
       <main className="dashboard__content">
         <div className="dashboard__left">
           <SessionToolbar sessions={sessions} onCreate={() => setComposerOpen(true)} />

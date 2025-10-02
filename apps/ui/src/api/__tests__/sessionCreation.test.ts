@@ -7,6 +7,7 @@ describe('session creation adapter', () => {
     browserName: 'Camoufox',
     region: 'eu-central',
     proxyId: 'proxy-1',
+    runnerId: null,
     headless: false,
     idleTtlSeconds: 300,
     startUrl: '',

@@ -17,6 +17,8 @@
   `proxyId`, `proxyLabel`, `snapshotUrl`). `adaptSession` теперь выбирает прямой
   `wsEndpoint` при наличии и прокидывает fallback `publicWsEndpoint` для случаев,
   когда до runner'а нет прямого доступа.
+- Обновление прокси использует `SessionProxyUpdateSchema`, валидирующий наличие хотя бы одного URL
+  перед вызовом `updateSessionProxy`.
 - Состояние фильтров в `store/sessionFilters.ts` (Zustand).
 
 ## Decisions
@@ -26,6 +28,7 @@
 - Локальная тема (light/dark) через `ThemeProvider` с `localStorage`.
 - Команда создания формирует payload (`browserName`, `region`, `proxyId`, `runnerId?`) на базе выбранных справочников; при отсутствии явного `runnerId` подбор выполняет Gateway.
 - Worker статус-панель повторно использует те же данные `/runners`, что и composer, для единого источника правды.
+- Состояние `SessionComposerValues` хранит дополнительные поля (`headless`, `idleTtlSeconds`, `startUrl*`, `proxy*`), чтобы API-адаптер мог формировать полный payload Runner даже до появления соответствующего UI.
 
 ## Constraints & Invariants
 - Все сетевые вызовы через `ApiClient` (`fetch` + Zod валидация).
@@ -35,9 +38,9 @@
 
 ## Known Gaps / TODO
 - [x] Реальные справочники браузеров/регионов/прокси брать с backend вместо захардкоженных значений (через `/runners` + агрегацию `buildSessionComposerData`).
-- [ ] Поддержать обновление прокси существующей сессии (UI + endpoint).
+- [x] Поддержать обновление прокси существующей сессии (UI + endpoint).
 - [x] Покрыть компонентные сценарии (SessionToolbar/Dashboard) тестами RTL (см. `SessionToolbar.test.tsx`, `DashboardPage.test.tsx`).
-- [ ] Реализовать обработку ошибок SSE (баннер, кнопка повторного подключения).
+- [x] Реализовать обработку ошибок SSE (баннер, кнопка повторного подключения).
 - [ ] Визуализировать выбор раннера в composer, когда на бэке появится стратегия балансировки.
 
 ## How to Test
@@ -55,5 +58,9 @@
 - 2025-03-17 · gpt-5-codex · Интегрированы `/runners` в UI: динамический SessionComposer, статус-панель воркеров, тесты на загрузку/ошибки и фильтрацию раннеров.
 - 2025-10-02 · gpt-5-codex · Добавлены UI-тесты для SessionToolbar/Dashboard с моками React Query/API, обновлены скрипты и CI.
 - 2025-10-14 · gpt-5-codex · UI принимает `ws_public_endpoint`, хранит обе ссылки на WebSocket и по умолчанию использует прямой `wsEndpoint`.
+- 2025-10-20 · gpt-5-codex · Добавлена форма редактирования прокси сессии, клиент `updateSessionProxy`, локальная валидация и RTL-тесты кеширования.
+- 2025-10-21 · gpt-5-codex · Расширены `SessionComposerValues` и дефолтные значения для поддержки адаптера создания сессии и строгих правил ESLint.
+- 2025-10-02 · gpt-5-codex · Добавлен стор для отслеживания SSE, обработка превышения ретраев и баннер повторного подключения.
+- 2025-10-15 · gpt-5-codex · Синхронизировали модель `SessionComposerValues` с адаптером создания сессий, устранив lint-ошибки по небезопасным полям.
 - 2025-10-15 · gpt-5-codex · Уточнены моки React Query/API в тестах DashboardPage для строгой типизации ESLint; адаптер
   `buildSessionCreatePayload` теперь использует явный тип `SessionComposerSubmission`.

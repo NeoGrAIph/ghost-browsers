@@ -7,7 +7,11 @@ from typing import Annotated
 from fastapi import Depends
 
 from .config import Settings, get_settings
-from .metrics import ConnectionRegistry
+from .metrics import (
+    ConnectionRegistry,
+    build_metrics_backend_from_settings,
+    configure_metrics_backend,
+)
 from .proxy import RunnerProxy
 from .token import TokenValidator
 
@@ -28,7 +32,7 @@ def get_runner_proxy(settings: SettingsDependency) -> RunnerProxy:
     return get_runner_proxy._instance  # type: ignore[attr-defined]
 
 
-def get_connection_registry() -> ConnectionRegistry:
+def get_connection_registry(settings: SettingsDependency) -> ConnectionRegistry:
     """Provide a shared :class:`ConnectionRegistry` instance.
 
     The registry is stored on the dependency function itself to maintain a
@@ -36,7 +40,12 @@ def get_connection_registry() -> ConnectionRegistry:
     """
 
     if not hasattr(get_connection_registry, "_registry"):
-        get_connection_registry._registry = ConnectionRegistry()  # type: ignore[attr-defined]
+        backend = configure_metrics_backend(
+            build_metrics_backend_from_settings(settings)
+        )
+        get_connection_registry._registry = ConnectionRegistry(  # type: ignore[attr-defined]
+            metrics=backend
+        )
     return get_connection_registry._registry  # type: ignore[attr-defined]
 
 

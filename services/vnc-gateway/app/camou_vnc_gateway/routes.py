@@ -10,7 +10,12 @@ from fastapi.responses import Response
 from starlette import status
 
 from .dependencies import get_connection_registry, get_runner_proxy, get_token_validator
-from .metrics import ConnectionRegistry, record_token_validation_failure, render_prometheus_metrics
+from .metrics import (
+    ConnectionRegistry,
+    MetricsRenderNotSupportedError,
+    record_token_validation_failure,
+    render_prometheus_metrics,
+)
 from .proxy import RunnerProxy, TargetPortError
 from .token import TokenValidationError, TokenValidator
 
@@ -95,7 +100,10 @@ async def proxy_session_ws(
 async def prometheus_metrics() -> Response:
     """Expose Prometheus metrics collected by the service."""
 
-    payload, content_type = render_prometheus_metrics()
+    try:
+        payload, content_type = render_prometheus_metrics()
+    except MetricsRenderNotSupportedError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(content=payload, media_type=content_type)
 
 
