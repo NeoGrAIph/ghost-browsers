@@ -9,8 +9,10 @@ and that the claims match the requested session identifier.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import Any
 
 from jose import JWTError, jwt
@@ -40,10 +42,24 @@ class TokenValidator:
     issuer:
         Expected issuer claim embedded into gateway-generated tokens. Defaults
         to ``"camou-gateway"``.
+    replay_cache_limit:
+        Maximum number of nonces remembered per session in the replay cache.
+    clock_skew_tolerance_seconds:
+        Allowed difference (seconds) between ``iat`` and the validator clock.
     """
 
     secret: str
     issuer: str = "camou-gateway"
+    replay_cache_limit: int = 128
+    clock_skew_tolerance_seconds: int = 10
+    _replay_cache: dict[str, "OrderedDict[str, tuple[int, datetime]]"] = field(
+        init=False, repr=False
+    )
+    _lock: Lock = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_replay_cache", {})
+        object.__setattr__(self, "_lock", Lock())
 
     def _decode(self, token: str) -> dict[str, Any]:
         """Decode the provided JWT and return its claims.
@@ -111,11 +127,72 @@ class TokenValidator:
         if not isinstance(exp, int):
             raise TokenValidationError("Token is missing an expiration timestamp")
 
-        now = datetime.now(tz=UTC)
-        if now >= datetime.fromtimestamp(exp, tz=UTC):
+        issued_at_raw = claims.get("iat")
+        if not isinstance(issued_at_raw, int):
+            raise TokenValidationError("Token is missing an issued-at timestamp")
+
+        now = self._now()
+        issued_at = datetime.fromtimestamp(issued_at_raw, tz=UTC)
+        if issued_at - now > timedelta(seconds=self.clock_skew_tolerance_seconds):
+            raise TokenValidationError("Token issued-at timestamp is in the future")
+
+        expires_at = datetime.fromtimestamp(exp, tz=UTC)
+        if now >= expires_at:
             raise TokenValidationError("Token has expired")
 
+        nonce_claim = claims.get("nonce")
+        nonce = str(nonce_claim) if nonce_claim is not None else None
+        cache_key = f"{nonce or 'iat'}:{issued_at_raw}"
+
+        self._register_nonce(
+            session_id=session_id,
+            cache_key=cache_key,
+            issued_at=issued_at_raw,
+            expires_at=expires_at,
+        )
+
         LOG.debug("VNC token validated", extra={"session_id": session_id})
+
+    def _register_nonce(
+        self,
+        *,
+        session_id: str,
+        cache_key: str,
+        issued_at: int,
+        expires_at: datetime,
+    ) -> None:
+        """Persist nonce/``iat`` tuples to reject replayed tokens."""
+
+        now = self._now()
+        with self._lock:
+            session_cache = self._replay_cache.setdefault(session_id, OrderedDict())
+            self._evict_expired_locked(session_cache, now)
+
+            existing = session_cache.get(cache_key)
+            if existing is not None and existing[0] == issued_at:
+                raise TokenValidationError("Token replay detected")
+
+            session_cache[cache_key] = (issued_at, expires_at)
+            session_cache.move_to_end(cache_key)
+
+            while len(session_cache) > self.replay_cache_limit:
+                session_cache.popitem(last=False)
+
+    def _evict_expired_locked(
+        self, cache: "OrderedDict[str, tuple[int, datetime]]", now: datetime
+    ) -> None:
+        """Remove expired entries from ``cache`` under lock."""
+
+        to_delete = [
+            key for key, (_, expiry) in cache.items() if expiry <= now
+        ]
+        for key in to_delete:
+            cache.pop(key, None)
+
+    def _now(self) -> datetime:
+        """Return the current UTC timestamp (extracted for testability)."""
+
+        return datetime.now(tz=UTC)
 
 
 __all__ = ["TokenValidationError", "TokenValidator"]

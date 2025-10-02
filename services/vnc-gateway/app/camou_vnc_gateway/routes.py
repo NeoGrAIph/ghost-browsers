@@ -6,10 +6,11 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi.responses import Response
 from starlette import status
 
 from .dependencies import get_connection_registry, get_runner_proxy, get_token_validator
-from .metrics import ConnectionRegistry
+from .metrics import ConnectionRegistry, record_token_validation_failure, render_prometheus_metrics
 from .proxy import RunnerProxy, TargetPortError
 from .token import TokenValidationError, TokenValidator
 
@@ -53,6 +54,7 @@ async def proxy_session(
     try:
         validator.validate(session_id, token)
     except TokenValidationError as exc:
+        record_token_validation_failure(reason=str(exc))
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
     async with registry.track(session_id=session_id, channel="http"):
@@ -81,11 +83,20 @@ async def proxy_session_ws(
         validator.validate(session_id, token)
     except TokenValidationError as exc:
         LOG.warning("WebSocket token validation failed", extra={"session_id": session_id})
+        record_token_validation_failure(reason=str(exc))
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc))
         return
 
     async with registry.track(session_id=session_id, channel="ws"):
         await proxy.forward_websocket(session_id=session_id, websocket=websocket)
+
+
+@router.get("/metrics")
+async def prometheus_metrics() -> Response:
+    """Expose Prometheus metrics collected by the service."""
+
+    payload, content_type = render_prometheus_metrics()
+    return Response(content=payload, media_type=content_type)
 
 
 __all__ = ["router"]

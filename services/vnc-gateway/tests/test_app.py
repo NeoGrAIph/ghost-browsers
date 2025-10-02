@@ -86,6 +86,16 @@ def test_token_validator_success(validator: TokenValidator, token_service: VncTo
     validator.validate(session_id, token)
 
 
+def test_token_validator_rejects_replay(validator: TokenValidator, token_service: VncTokenService) -> None:
+    """Validator refuses to accept the same token twice."""
+
+    session_id = "replay"
+    token, _ = token_service.issue(session_id)
+    validator.validate(session_id, token)
+    with pytest.raises(TokenValidationError):
+        validator.validate(session_id, token)
+
+
 def test_token_validator_rejects_invalid_signature(
     validator: TokenValidator, token_service: VncTokenService
 ) -> None:
@@ -138,6 +148,10 @@ def test_http_endpoint_proxies_request(app, token_service: VncTokenService) -> N
     runner_proxy: DummyRunnerProxy = app.state.runner_proxy
     assert runner_proxy.http_calls[0][0] == "session-1"
 
+    metrics = client.get("/metrics")
+    assert metrics.status_code == 200
+    assert "camou_vnc_gateway_connection_opens_total" in metrics.text
+
 
 def test_http_endpoint_rejects_missing_token(app) -> None:
     """Requests without the token header are denied."""
@@ -156,3 +170,16 @@ def test_websocket_endpoint_invokes_proxy(app, token_service: VncTokenService) -
         pass
     runner_proxy: DummyRunnerProxy = app.state.runner_proxy
     assert runner_proxy.ws_sessions == ["session-ws"]
+
+
+def test_metrics_report_token_validation_failures(app, token_service: VncTokenService) -> None:
+    """Token validation failures increment the Prometheus counter."""
+
+    client = TestClient(app)
+    token, _ = token_service.issue("session-a")
+    response = client.get("/sessions/session-b", headers={"X-VNC-Token": token})
+    assert response.status_code == 401
+
+    metrics = client.get("/metrics")
+    assert "camou_vnc_gateway_token_validation_failures_total" in metrics.text
+    assert "Token was issued for a different session" in metrics.text
