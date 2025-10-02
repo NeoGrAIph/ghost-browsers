@@ -62,7 +62,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
 - **Workstation events**: `WarmPoolManager` публикует `workstation.state_changed|recycled|error` при любых переходах слота; маршруты `/workstations` только вызывают методы менеджера.
 - **SSE/WS обёртки**: `SseWorkstationEventPublisher` и `WebSocketWorkstationEventPublisher` форматируют события для стриминга в Gateway/UI.
-- **Camoufox stub dependency**: Для unit-тестов в CI runner использует локальный путь-зависимость `packages/camoufox`, реализующую CLI/API-совместимый stub. Это позволяет выполнять `poetry install` без доступа к проприетарному пакету.
+- **Camoufox SDK dependency**: Runner зависит от официального `camoufox==0.4.11[geoip]`, а локальный shim (`packages/camoufox`) лишь делегирует вызовы к нему. Тесты используют автofixture, которая подсовывает изолированный каталог установки и подменяет сетевые вызовы.
 - **Process-backed VNC controller**: Non-headless sessions allocate Xvfb/x11vnc/websockify helpers via `ProcessVncController`. The controller maintains a bounded pool of displays and ports, composes public HTTP/WS URLs from `RunnerSettings`, and tears down helpers whenever sessions terminate or switch to headless mode.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
@@ -131,6 +131,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-08 · gpt-5-codex · Добавлен HTTP publisher (`POST /events`) и покрытие unit-тестами + конфиг-переключатель в зависимостях.
 - 2025-10-09 · gpt-5-codex · Переключили зависимость `camoufox` на локальный stub-пакет и нормализовали выдачу proxy URL в `/health`,
   чтобы `poetry install` и unit-тесты проходили в офлайн-окружении без лишних слешей.
+- 2025-10-25 · ChatGPT · Перешли на официальный SDK Camoufox с тестовыми двойниками (фикстура для подмены установки, обновлённые smoke-скрипты, pin версии `0.4.11[geoip]`).
 - 2025-10-10 · gpt-5-codex · Добавлен модуль `app.browser` с управлением процессом Playwright/Camoufox и интеграционными тестами на создание/завершение сессий.
 - 2025-10-11 · gpt-5-codex · Добавлены фоновые reaper-задачи, TTL-метрики в `/health`, эндпоинт `POST /sessions/{id}/touch` и покрытие тестами.
 - 2025-10-12 · gpt-5-codex · Интегрирован процессный noVNC-контроллер, расширены настройки VNC и обновлены unit-тесты с заглушками.

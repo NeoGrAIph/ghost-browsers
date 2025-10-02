@@ -1,59 +1,32 @@
-"""Command-line interface for the Camoufox stub package.
-
-The real Camoufox distribution exposes a CLI with commands such as
-``python -m camoufox path``. Our stub mirrors the subset used in local
-checks so developers can validate configuration without the proprietary
-binary.
-
-Example:
-    >>> import subprocess
-    >>> subprocess.check_output(["python", "-m", "camoufox", "path"]).strip()
-    b'/usr/bin/camoufox'
-"""
+"""Command line interface delegating to the official Camoufox SDK."""
 
 from __future__ import annotations
 
-import argparse
-import sys
+from types import ModuleType
 
-from . import get_path, get_version
-
-
-def build_parser() -> argparse.ArgumentParser:
-    """Construct the CLI parser for supported subcommands."""
-
-    parser = argparse.ArgumentParser(prog="python -m camoufox")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("path", help="Show the expected Camoufox binary path")
-    subparsers.add_parser("version", help="Show the stub Camoufox version")
-    return parser
+from . import _load_sdk_module
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Entry point invoked via ``python -m camoufox``.
+_CLI_MODULE: ModuleType = _load_sdk_module("__main__")
+"""Reference to the upstream CLI implementation shipped with the SDK."""
 
-    Args:
-        argv: Optional list of command-line arguments. When ``None`` the
-            arguments are read from :data:`sys.argv`.
+cli = _CLI_MODULE.cli
+fetch = _CLI_MODULE.fetch
+path = _CLI_MODULE.path
+version = _CLI_MODULE.version
 
-    Returns:
-        int: Exit status code compatible with shell conventions.
+__all__ = ["cli", "fetch", "path", "version", "main"]
+
+
+def main() -> None:
+    """Execute the official Camoufox command line interface.
+
+    Example:
+        >>> # main()  # doctest: +SKIP
     """
 
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
-    if args.command == "path":
-        print(get_path())
-        return 0
-
-    if args.command == "version":
-        print(get_version())
-        return 0
-
-    parser.error(f"Unsupported command: {args.command}")
-    return 2
+    cli()
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == "__main__":  # pragma: no cover - manual invocation helper
+    main()

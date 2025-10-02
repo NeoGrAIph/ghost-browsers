@@ -1,50 +1,36 @@
-# AGENT_NOTES — camoufox stub
+# AGENT_NOTES — camoufox wrapper
 
 ## Overview
-Local-only placeholder for the proprietary Camoufox runtime. Provides a
-Python module (exposed at the repository root for `python -m camoufox`
-compatibility) and CLI compatible with the expectations of the runner
-and gateway tests so we can execute unit and lint suites without
-downloading the real browser bundle.
+Compatibility layer that re-exports the official [`camoufox`](https://pypi.org/project/camoufox/) SDK while keeping the legacy import surface used across the repository. The shim lives at the repository root (`camoufox/`) so `python -m camoufox ...` stays functional in development environments.
 
 ## Interfaces
-- **Python package**: `camoufox` exposes `get_path`, `get_version`, and a
-  synchronous `Camoufox` context manager under `camoufox.sync_api`.
-- **CLI**: `python -m camoufox path|version` returns deterministic values
-  used by diagnostics in the repository.
+- **Python package**: `camoufox` re-exports the upstream synchronous API (`camoufox.sync_api.Camoufox`, `NewBrowser`), helper utilities (`launch_options`, `DefaultAddons`) and adds thin wrappers `get_path`/`get_version` that avoid triggering implicit downloads during tests.
+- **CLI**: `python -m camoufox {path,version,fetch,...}` delegates to the upstream Click commands without modification.
 
 ## Data & Models
-No persistent data. All helpers return constant values suitable for
-configuration validation.
+No persistent data beyond what the upstream SDK stores under its installation directory (`~/.cache/camoufox` by default). Tests create disposable installation directories with synthetic `version.json` files to keep the SDK satisfied.
 
 ## Decisions
-- Provide a stub rather than mocking imports so `poetry install` can
-  succeed offline and commands like `python -m camoufox path` remain
-  functional for smoke tests; the module lives at the repo root while
-  Poetry consumes it via a path dependency.
-  Путь зависимости фиксируется на корне репозитория (`from = "../.."`),
-  чтобы editable-сборки корректно подключали модуль из каталога
-  `camoufox/`.
+- Replaced the bespoke stub with a loader that imports the official SDK through `importlib.metadata`/`importlib.util`. This keeps our package importable even though the distribution name (`camoufox`) collides with the upstream one.
+- Added compatibility helpers (`get_path`, `get_version`) that call into `camoufox.pkgman` but default to `download_if_missing=False` to prevent unintended network calls during unit tests.
+- Packaged the shim as `ghost-camoufox-wrapper` so Poetry environments can depend on it without shadowing the upstream distribution name.
 
 ## Constraints & Invariants
-- The reported path is `/usr/bin/camoufox` to match existing fixtures and
-  health-check expectations.
-- Version string stays at `0.0.0-stub`; bumping it requires updating
-  tests that assert exact output.
+- The upstream SDK **must** be installed (pinned to `camoufox==0.4.11[geoip]`). Without it `_bootstrap_sdk()` raises `ImportError`.
+- `get_path()` raises `FileNotFoundError` when binaries are absent; callers are expected to run `python -m camoufox fetch` ahead of time.
+- The package search path (`__path__`) is extended with the upstream installation directory to keep submodule imports working (`camoufox.errors`, `camoufox.pkgman`, etc.).
 
 ## Known Gaps / TODO
-- [ ] Replace the stub with bindings to the real Camoufox runtime once
-  distribution becomes available to CI agents.
+- [ ] Consider exposing async helpers (`AsyncCamoufox`, etc.) explicitly once runner code consumes them.
+- [ ] Evaluate whether we need to surface additional SDK utilities (addons management, locale helpers) as the services mature.
 
 ## How to Test
 - `cd packages/camoufox`
 - `poetry install --no-root`
-- `python -m camoufox path`
-- `python -m camoufox version`
+- `poetry run python -m camoufox path`
+- `poetry run python -m camoufox version`
 
 ## Changelog (for agents)
-- 2025-10-09 · gpt-5-codex · Создан локальный stub-пакет Camoufox для
-  успешного прохождения unit-тестов без доступа к приватному артефакту.
-- 2025-10-12 · gpt-5-codex · Исправлена конфигурация Poetry, чтобы
-  editable-установка подтягивала модуль `camoufox` из корня репозитория
-  и не падала на `poetry install --no-root` в сервисах.
+- 2025-10-09 · gpt-5-codex · Создан локальный stub-пакет Camoufox для unit-тестов без приватного бинарника.
+- 2025-10-12 · gpt-5-codex · Исправлена конфигурация Poetry, чтобы editable-установка подтягивала модуль `camoufox` из корня репозитория.
+- 2025-10-25 · ChatGPT · Заменён stub на обёртку поверх официального SDK, добавлены совместимые CLI/API прокси и автотестовые фикстуры.
