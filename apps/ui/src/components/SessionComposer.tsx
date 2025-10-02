@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { SessionComposerData, RunnerChoice } from '../utils/composer';
 
+/**
+ * Aggregated form state collected by the session composer modal.
+ */
 export interface SessionComposerValues {
   readonly browserName: string;
   readonly region: string;
   readonly proxyId: string | null;
   readonly runnerId: string | null;
+  readonly headless: boolean;
+  readonly idleTtlSeconds: number;
+  readonly startUrl: string;
+  readonly startUrlWait: 'none' | 'domcontentloaded' | 'load';
+  readonly proxyHttp: string;
+  readonly proxyHttps: string;
+  readonly proxySocks: string;
 }
 
 interface SessionComposerProps {
@@ -21,6 +31,13 @@ const defaultValues: SessionComposerValues = {
   region: '',
   proxyId: null,
   runnerId: null,
+  headless: false,
+  idleTtlSeconds: 300,
+  startUrl: '',
+  startUrlWait: 'load',
+  proxyHttp: '',
+  proxyHttps: '',
+  proxySocks: '',
 };
 
 const matchesSelection = (runner: RunnerChoice, values: SessionComposerValues) => {
