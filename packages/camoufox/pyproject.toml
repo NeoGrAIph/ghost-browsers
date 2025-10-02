@@ -1,12 +1,13 @@
 [tool.poetry]
-name = "camoufox"
-version = "0.0.0"
-description = "Stub Camoufox bindings for local development and tests"
+name = "ghost-camoufox-wrapper"
+version = "0.1.0"
+description = "Compatibility shim delegating to the official Camoufox SDK"
 authors = ["Ghost Browsers <ops@ghost.local>"]
 packages = [{include = "camoufox", from = "../.."}]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.13"
+camoufox = {version = "0.4.11", extras = ["geoip"]}
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
