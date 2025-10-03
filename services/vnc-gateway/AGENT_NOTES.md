@@ -10,7 +10,7 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 
 ## Data & Models
 - `Settings` (`app/camou_vnc_gateway/config.py`): environment-driven configuration using `pydantic-settings`. Includes runner HTTP/WS base URLs and shared token secret.
-- `TokenValidator`: валидирует HS256 JWT с claim'ами `sid`, `exp`, `iss`, `sub`; хранит in-memory кэш `(nonce, iat)` для защиты от повторного использования токенов (per-session `OrderedDict` с лимитом и учётом TTL).
+- `TokenValidator`: валидирует HS256 JWT с claim'ами `sid`, `exp`, `iss`, `sub`; хранит in-memory кэш `(nonce, iat)` для защиты от повторного использования токенов (per-session `OrderedDict` с лимитом и учётом TTL). Токены без `nonce` не попадают в кэш и могут переиспользоваться внутри собственного TTL (используется для совместимости с Gateway, который выдаёт такие токены).
 - `metrics` (`app/camou_vnc_gateway/metrics.py`): конфигурируемый набор бэкендов. По умолчанию поднимает отдельный `CollectorRegistry` (gauge/counter для соединений и ошибок токенов). Через настройки можно подключить внешний `CollectorRegistry` или OTLP-экспортёр (`MetricsEventExporter`). `/metrics` отдает payload только для Prometheus-конфигурации.
 
 - Токены — стандартные HS256 JWT; валидация выполняется через `python-jose` с проверкой `iss`, `exp`, `sid` и `iat`, после чего nonce/`iat` попадает в кэш чтобы предотвращать replay.
@@ -26,10 +26,11 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 - Helm chart `docs/helm/platform` предоставляет шаблон Deployment/Service/Ingress для VNC Gateway, принимает `secretEnv` c общим `VNC_GATEWAY_TOKEN_SECRET` и прочими секретами, обеспечивая синхронизацию конфигурации с Gateway/Runner.
 - Dockerfile ожидает корректный PEP 517 backend (`poetry-core`): без `[build-system]` wheel собирался с метаданными версии `0.0.0` и без зависимостей, что ломало установку `uvicorn` в рантайме. `pyproject` фиксирован и дополнен `authors` для совместимости с Poetry package mode.
 - 2025-10-25 · gpt-5-codex · HTTP и WebSocket маршруты принимают токен как из заголовка, так и из `token`/`access_token` query-параметров, что упрощает использование iframe/предподписанных ссылок; добавлены unit-тесты fallback.
+- 2025-10-26 · gpt-5-codex · Кэш повторов включает только токены с `nonce`; токены без `nonce` валидируются многократно (например, HTTP→WS) для совместимости с Gateway. Покрыто юнит-тестами.
 
 ## Constraints & Invariants
 - Tokens must include the matching session identifier; mismatches immediately rejected.
-- `iat` допускает максимум `clock_skew_tolerance_seconds` (10 секунд) относительно сервера; reuse токена до истечения TTL запрещён.
+- `iat` допускает максимум `clock_skew_tolerance_seconds` (10 секунд) относительно сервера; reuse токена до истечения TTL запрещён для токенов с `nonce`, но допустим для токенов без `nonce` (HTTP+WS последовательности).
 - Only `ws`/`wss` schemes accepted for Runner WS base; HTTP base limited to `http/https`.
 - `ConnectionRegistry` is process-local and not durable; acceptable for current scope. Gauge удаляется после закрытия последнего соединения, чтобы не накапливать пустые time-series.
 - Локальный `docker-compose` использует `VNC_GATEWAY_TOKEN_SECRET=dev-secret`, если переменная не передана. Для production/
@@ -62,3 +63,4 @@ poetry run pytest -q
 - 2025-10-03 · gpt-5-codex · Добавлены Helm-шаблоны/values для VNC Gateway с примерами секретов и документация по установке.
 - 2025-02-14 · gpt-5-codex · Добавлен Dockerfile с многоступенчатой сборкой, make/CI-таргеты для образа и документация по переменным окружения VNC Gateway.
 - 2025-10-25 · gpt-5-codex · Добавлен fallback обработки токена через query `token`/`access_token`, обновлены роуты и unit-тесты ключевых сценариев.
+- 2025-10-26 · gpt-5-codex · Разрешено повторное использование токенов без `nonce` (HTTP→WS), добавлен регрессионный тест и сохранена защита от replay для токенов с `nonce`.

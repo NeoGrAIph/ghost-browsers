@@ -142,7 +142,7 @@ class TokenValidator:
 
         nonce_claim = claims.get("nonce")
         nonce = str(nonce_claim) if nonce_claim is not None else None
-        cache_key = f"{nonce or 'iat'}:{issued_at_raw}"
+        cache_key = None if nonce is None else f"{nonce}:{issued_at_raw}"
 
         self._register_nonce(
             session_id=session_id,
@@ -157,16 +157,34 @@ class TokenValidator:
         self,
         *,
         session_id: str,
-        cache_key: str,
+        cache_key: str | None,
         issued_at: int,
         expires_at: datetime,
     ) -> None:
-        """Persist nonce/``iat`` tuples to reject replayed tokens."""
+        """Persist nonce/``iat`` tuples to reject replayed tokens.
+
+        Parameters
+        ----------
+        session_id:
+            Session identifier the token was issued for. Used to scope the
+            replay cache.
+        cache_key:
+            Replay-cache key derived from the token ``nonce`` and ``iat``
+            claims. ``None`` disables replay tracking which is the legacy
+            behaviour for tokens without an explicit ``nonce`` claim.
+        issued_at:
+            Raw ``iat`` value extracted from the JWT.
+        expires_at:
+            Absolute expiration timestamp used for cache eviction.
+        """
 
         now = self._now()
         with self._lock:
             session_cache = self._replay_cache.setdefault(session_id, OrderedDict())
             self._evict_expired_locked(session_cache, now)
+
+            if cache_key is None:
+                return
 
             existing = session_cache.get(cache_key)
             if existing is not None and existing[0] == issued_at:
