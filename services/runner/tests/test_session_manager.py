@@ -30,6 +30,7 @@ from core.models import (
     SessionProxySettings,
     SessionStatus,
     SessionVncDetails,
+    WorkstationState,
 )
 
 
@@ -1048,6 +1049,18 @@ async def test_create_session_uses_warm_pool_handle() -> None:
     )
 
     assert warm_pool is not None
+    assert session.workstation_id == "ws-meta"
+    assert session.workstation_fingerprint_id == "fp-ws-meta"
+    assert session.workstation is not None
+    assert session.workstation.id == session.workstation_id
+    assert (
+        session.workstation.fingerprint_id == session.workstation_fingerprint_id
+    )
+    assert session.workstation.state is WorkstationState.ASSIGNED
+    assert (
+        session.workstation.metadata.get("warm_pool_state")
+        == WarmPoolState.BUSY.value
+    )
     warm_info = session.metadata["warm_pool"]
     assert warm_info["workstation_id"] == "ws-meta"
     origin = session.metadata["browser_origin"]
@@ -1062,6 +1075,38 @@ async def test_create_session_uses_warm_pool_handle() -> None:
 
 
 @pytest.mark.anyio("asyncio")
+async def test_update_session_retains_warm_workstation_metadata() -> None:
+    """Non-terminal updates must preserve warm workstation descriptors."""
+
+    publisher = InMemorySessionEventPublisher()
+    warm_pool = _StubWarmPoolManager(workstations=["ws-sticky"])
+    manager, warm_pool = _build_manager(
+        RunnerSettings(runner_id="runner-sticky", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        warm_pool=warm_pool,
+    )
+
+    session = await manager.create_session(SessionCreatePayload())
+    assert session.workstation is not None
+
+    updated = await manager.update_session(
+        session.id, SessionUpdatePayload(headless=True)
+    )
+
+    assert updated.headless is True
+    assert updated.workstation is not None
+    assert updated.workstation_id == session.workstation_id
+    assert (
+        updated.workstation_fingerprint_id == session.workstation_fingerprint_id
+    )
+    assert (
+        updated.workstation.metadata.get("warm_pool_state")
+        == WarmPoolState.BUSY.value
+    )
+    assert session.id in manager._warm_sessions
+
+
+@pytest.mark.anyio("asyncio")
 async def test_update_session_cleans_up_browser() -> None:
     """Transitioning to DEAD should recycle the warm workstation and clear state."""
 
@@ -1073,6 +1118,8 @@ async def test_update_session_cleans_up_browser() -> None:
         warm_pool=warm_pool,
     )
     session = await manager.create_session(SessionCreatePayload())
+    assert session.workstation is not None
+    assert session.workstation_id == "ws-cleanup"
 
     updated = await manager.update_session(
         session.id,
@@ -1081,6 +1128,9 @@ async def test_update_session_cleans_up_browser() -> None:
 
     assert updated.status is SessionStatus.DEAD
     assert updated.ws_endpoint is None
+    assert updated.workstation is None
+    assert updated.workstation_id is None
+    assert updated.workstation_fingerprint_id is None
     assert session.id not in manager._browser_handles
     assert warm_pool.releases == ["ws-cleanup"]
     events = await publisher.drain()
