@@ -37,8 +37,11 @@ describe('SessionDetailsPanel', () => {
 
     render(<SessionDetailsPanel session={session} />);
 
-    const iframe = screen.getByTitle('VNC') as HTMLIFrameElement;
-    expect(iframe).toBeTruthy();
+    const iframe = screen.getByTitle('VNC');
+    if (!(iframe instanceof HTMLIFrameElement)) {
+      throw new Error('Expected VNC preview to render as an <iframe>.');
+    }
+
     expect(iframe.src).toContain('token=opaque-token');
   });
 });
