@@ -321,8 +321,10 @@ class SessionManager:
                 if session.status is not SessionStatus.DEAD:
                     self._active_sessions += 1
                     ACTIVE_SESSIONS_GAUGE.set(self._active_sessions)
-                await self._publish(session, SessionEventType.CREATED, reason=None)
-                return session
+                event_type = SessionEventType.CREATED
+                reason: str | None = None
+            await self._publish(session, event_type, reason=reason)
+            return session
         finally:
             SESSION_ALLOCATE_SECONDS.observe(perf_counter() - start_time)
 
@@ -393,8 +395,8 @@ class SessionManager:
                 if session.status is SessionStatus.DEAD
                 else SessionEventType.UPDATED
             )
-            await self._publish(session, event_type, reason=reason)
-            return session
+        await self._publish(session, event_type, reason=reason)
+        return session
 
     async def end_session(
         self,

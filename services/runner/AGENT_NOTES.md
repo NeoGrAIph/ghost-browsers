@@ -65,6 +65,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   `runner-image.yml` вызывает тот же таргет, пушит образ в GHCR и подписывает его `cosign` (keyless,
   `COSIGN_EXPERIMENTAL=1`).
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
+- **Event publishing outside critical section**: `SessionManager` освобождает `anyio.Lock` до ожидания `SessionEventPublisher.publish`, исключая head-of-line блокировку при медленных транспортных слоях. Поведение покрыто тестом `test_update_session_releases_lock_before_publishing`.
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
 - **Workstation events**: `WarmPoolManager` публикует `workstation.state_changed|recycled|error` при любых переходах слота; маршруты `/workstations` только вызывают методы менеджера.
 - **SSE/WS обёртки**: `SseWorkstationEventPublisher` и `WebSocketWorkstationEventPublisher` форматируют события для стриминга в Gateway/UI.
@@ -177,3 +178,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-31 · gpt-5-codex · Docker-образ расширен системными шрифтами, Windows-наборами, локалями и VNC-бинарями (Xvfb/x11vnc/websockify/noVNC) при сохранении поэтапной установки зависимостей через Poetry.
 - 2025-10-31 · gpt-5-codex · Сессии, созданные на warm-слотах, теперь запоминают workstation-метаданные и очищают их при релизе; добавлены проверки в unit-тестах.
 - 2025-10-31 · gpt-5-codex · Синхронизирован флаг `vnc_enabled` с реальными VNC-деталями и добавлены регрессионные тесты на headless и сбойную аллокацию.
+- 2025-11-01 · gpt-5-codex · Перенесена публикация событий из-под `SessionManager`-блокировки и добавлен тест на отсутствие head-of-line блокировок.

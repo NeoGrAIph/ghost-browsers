@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import types
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Callable
 from uuid import UUID
 
+import anyio
 import pytest
 from app.config import RunnerSettings, WarmPoolMode
-from app.events import InMemorySessionEventPublisher
+from app.events import InMemorySessionEventPublisher, SessionEventPublisher
 from app.metrics import METRICS_REGISTRY
 from app.session_manager import (
     SessionCapacityError,
@@ -26,12 +28,39 @@ from app.warm_pool import (
     WarmPoolStatistics,
 )
 from core.models import (
+    Session,
+    SessionEvent,
     SessionEventType,
     SessionProxySettings,
     SessionStatus,
     SessionVncDetails,
     WorkstationState,
 )
+
+
+class _BlockingSessionEventPublisher:
+    """Publisher double that can delay delivery for specific events."""
+
+    def __init__(self) -> None:
+        self.events: list[SessionEvent] = []
+        self._blocks: deque[tuple[anyio.Event, anyio.Event]] = deque()
+
+    def arm_block(self) -> tuple[anyio.Event, anyio.Event]:
+        """Arrange for the next publish call to pause until released."""
+
+        start = anyio.Event()
+        resume = anyio.Event()
+        self._blocks.append((start, resume))
+        return start, resume
+
+    async def publish(self, event: SessionEvent) -> None:
+        """Record ``event`` and optionally wait for an external release."""
+
+        self.events.append(event)
+        if self._blocks:
+            start, resume = self._blocks.popleft()
+            start.set()
+            await resume.wait()
 
 
 class _StubBrowserHandle:
@@ -199,7 +228,7 @@ def anyio_backend() -> str:
 
 def _build_manager(
     settings: RunnerSettings,
-    publisher: InMemorySessionEventPublisher,
+    publisher: SessionEventPublisher,
     *,
     clock: Callable[[], datetime] | None = None,
     vnc_controller: "_StubVncController" | None = None,
@@ -671,6 +700,62 @@ async def test_update_session_merges_labels_and_publishes_update(
     assert events[-1].session.status is SessionStatus.READY
     assert events[-1].occurred_at == clock_now
 
+
+
+@pytest.mark.anyio("asyncio")
+async def test_update_session_releases_lock_before_publishing(
+    stub_vnc_controller: _StubVncController,
+) -> None:
+    """Slow publishers must not block subsequent session updates."""
+
+    settings = RunnerSettings(
+        runner_id="runner-blocking",
+        camoufox_path="/usr/bin/camoufox",
+    )
+    publisher = _BlockingSessionEventPublisher()
+    manager, _ = _build_manager(
+        settings,
+        publisher,
+        vnc_controller=stub_vnc_controller,
+    )
+
+    first_session = await manager.create_session(SessionCreatePayload(headless=True))
+    second_session = await manager.create_session(
+        SessionCreatePayload(headless=True, metadata={"origin": "second"})
+    )
+
+    start_event, release_event = publisher.arm_block()
+    results: dict[str, object] = {}
+
+    async def _perform_blocking_update() -> None:
+        results["first"] = await manager.update_session(
+            first_session.id,
+            SessionUpdatePayload(status=SessionStatus.READY),
+        )
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(_perform_blocking_update)
+        await start_event.wait()
+        assert "first" not in results
+
+        with anyio.fail_after(0.5):
+            updated_second = await manager.update_session(
+                second_session.id,
+                SessionUpdatePayload(metadata={"actor": "second"}),
+            )
+
+        assert updated_second.metadata["actor"] == "second"
+        assert len(publisher.events) == 4
+        assert [event.type for event in publisher.events][-2:] == [
+            SessionEventType.UPDATED,
+            SessionEventType.UPDATED,
+        ]
+        assert publisher.events[-1].type is SessionEventType.UPDATED
+        release_event.set()
+
+    first_result = results["first"]
+    assert isinstance(first_result, Session)
+    assert first_result.status is SessionStatus.READY
 
 @pytest.mark.anyio("asyncio")
 async def test_create_session_strips_user_vnc_token(
