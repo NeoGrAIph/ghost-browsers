@@ -45,6 +45,7 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
         prewarm_navigation=True,
         start_url="https://example.test",
         start_url_wait_ms=1500,
+        browser_required_flags={"MOZ_DISABLE_HTTP3": "1"},
     )
     config = WarmPoolConfig(
         workstations=[
@@ -67,6 +68,7 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
         browser: str,
         headless: bool,
         env: dict[str, str],
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubHandle:
         handle = _StubHandle(len(launch_calls))
         launch_calls.append({
@@ -75,6 +77,7 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
             "headless": headless,
             "env": dict(env),
             "handle": handle,
+            "browser_flags": dict(browser_flags or {}),
         })
         return handle
 
@@ -117,6 +120,7 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
     assert env["CAMOUFOX_PREFS_REL_PATH"] == "profile.json"
     assert env["CAMOUFOX_PREFS_BASE_PATH"] == str(prefs_base)
     assert env["CAMOUFOX_PROFILE_DIR"].startswith(str(tmp_path))
+    assert env["MOZ_DISABLE_HTTP3"] == "1"
 
     assert len(nav_calls) == 1
     assert nav_calls[0][2] == str(settings.start_url)
@@ -125,6 +129,7 @@ async def test_start_provisions_slots_with_env_and_prewarm(tmp_path: Path) -> No
     reservation = await manager.reserve_slot()
     assert reservation.snapshot.state is WarmPoolState.RESERVED
     assert reservation.environment["CAMOUFOX_WORKSTATION_ID"] == "ws-1"
+    assert reservation.environment["MOZ_DISABLE_HTTP3"] == "1"
 
 
 @pytest.mark.anyio("asyncio")
@@ -140,6 +145,7 @@ async def test_cancel_reservation_returns_slot_to_idle(tmp_path: Path) -> None:
         browser: str,
         headless: bool,
         env: dict[str, str],
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubHandle:
         del settings, browser, headless
         handle = _StubHandle(0)
@@ -177,6 +183,7 @@ async def test_launch_failures_trigger_retries(tmp_path: Path) -> None:
         browser: str,
         headless: bool,
         env: dict[str, str],
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubHandle:
         nonlocal attempts
         attempts += 1
@@ -229,6 +236,7 @@ async def test_recycle_relaunches_with_same_fingerprint(tmp_path: Path) -> None:
         browser: str,
         headless: bool,
         env: dict[str, str],
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubHandle:
         handle = _StubHandle(len(handles))
         handles.append(handle)
@@ -286,6 +294,7 @@ async def test_drain_transitions_slots_and_prevents_reservations(tmp_path: Path)
         browser: str,
         headless: bool,
         env: dict[str, str],
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubHandle:
         handle = _StubHandle(len(handles))
         handles.append(handle)

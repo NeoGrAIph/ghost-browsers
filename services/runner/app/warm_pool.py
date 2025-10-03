@@ -738,6 +738,7 @@ class WarmPoolManager:
                 browser="camoufox",
                 headless=True,
                 env=env,
+                browser_flags=self._settings.browser_required_flags or None,
             )
         except BrowserLaunchError as exc:
             if slot.proxy_url:
@@ -794,6 +795,8 @@ class WarmPoolManager:
             "CAMOUFOX_HEADLESS": "virtual",
             "CAMOUFOX_WORKSTATION_ID": slot.workstation.id,
         }
+        if self._settings.browser_required_flags:
+            env.update(self._settings.browser_required_flags)
         if slot.fingerprint_id:
             env["CAMOUFOX_FINGERPRINT_ID"] = slot.fingerprint_id
         if slot.proxy_url:

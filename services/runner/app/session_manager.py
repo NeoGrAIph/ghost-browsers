@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import contextlib
 from collections import deque
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
-from typing import Any
+from typing import Any, Mapping
 from uuid import UUID, uuid4
 
 import anyio
@@ -25,6 +25,11 @@ from core.models import (
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 
 from .browser import BrowserLaunchError, BrowserSessionHandle, launch_browser
+from .browser_flags import (
+    merge_browser_flags,
+    normalise_browser_flags,
+    requires_additional_flags,
+)
 from .config import RunnerSettings, WarmPoolMode
 from .events import SessionEventPublisher
 from .metrics import (
@@ -195,6 +200,9 @@ class SessionManager:
         self._warm_pool = warm_pool_manager
         self._warm_pool_started = False
         self._warm_sessions: dict[UUID, str] = {}
+        self._required_browser_flags: dict[str, str] = dict(
+            settings.browser_required_flags
+        )
         self._next_idle_expiry_at: datetime | None = None
         self._reaper_total_runs = 0
         self._reaper_expired_sessions = 0
@@ -607,17 +615,35 @@ class SessionManager:
             'ws://camoufox/...'
         """
 
+        effective_flags, requested_flags = self._resolve_browser_flags(metadata)
+        if effective_flags:
+            metadata["browser_flags"] = dict(effective_flags)
+        else:
+            metadata.pop("browser_flags", None)
+        custom_flags_requested = requires_additional_flags(
+            requested_flags, self._required_browser_flags
+        )
+
         mode = self._settings.warm_pool_mode
-        if mode is WarmPoolMode.COLD_ONLY:
+        if mode is WarmPoolMode.COLD_ONLY or custom_flags_requested:
+            if mode is WarmPoolMode.WARM_ONLY:
+                raise SessionCapacityError(
+                    "warm pool cannot satisfy requested browser flags"
+                )
             metadata.pop("warm_pool", None)
             handle = await self._launch_cold_browser(
                 payload,
                 vnc_handle=vnc_handle,
+                browser_flags=effective_flags,
             )
             metadata = self._inject_browser_origin(
                 metadata,
                 kind="cold_launch",
-                details={"reason": "mode-cold-only"},
+                details={
+                    "reason": "mode-cold-only"
+                    if mode is WarmPoolMode.COLD_ONLY
+                    else "custom-browser-flags",
+                },
             )
             return BrowserAcquisition(handle=handle, metadata=metadata, reservation=None)
 
@@ -650,7 +676,11 @@ class SessionManager:
 
         metadata.pop("warm_pool", None)
         reason = "warm-pool-disabled" if warm_pool is None else "warm-pool-unavailable"
-        handle = await self._launch_cold_browser(payload, vnc_handle=vnc_handle)
+        handle = await self._launch_cold_browser(
+            payload,
+            vnc_handle=vnc_handle,
+            browser_flags=effective_flags,
+        )
         metadata = self._inject_browser_origin(
             metadata,
             kind="cold_launch",
@@ -663,6 +693,7 @@ class SessionManager:
         payload: SessionCreatePayload,
         *,
         vnc_handle: VncSessionHandle | None,
+        browser_flags: Mapping[str, str] | None,
     ) -> BrowserSessionHandle:
         """Launch a fresh Playwright browser outside of the warm pool.
 
@@ -670,6 +701,8 @@ class SessionManager:
             payload: Session creation request containing browser preferences.
             vnc_handle: Optional handle providing environment variables (e.g.
                 ``DISPLAY``) required for non-headless sessions.
+            browser_flags: Mapping of Camoufox/Firefox flags that should be
+                injected into the environment prior to launching Playwright.
 
         Returns:
             BrowserSessionHandle: Handle referencing the running Playwright
@@ -696,9 +729,38 @@ class SessionManager:
                 browser=payload.browser,
                 headless=payload.headless,
                 env=env or None,
+                browser_flags=browser_flags or None,
             )
         except BrowserLaunchError as exc:
             raise SessionCapacityError("failed to launch browser process") from exc
+
+    def _resolve_browser_flags(
+        self, metadata: dict[str, Any]
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Return merged and requested browser flags for ``metadata``.
+
+        Args:
+            metadata: Mutable session metadata supplied during creation.
+
+        Returns:
+            tuple[dict[str, str], dict[str, str]]: A pair where the first
+            element contains the merged (required + requested) flags and the
+            second element contains only the requested overrides supplied by the
+            caller.
+
+        Example:
+            >>> manager._resolve_browser_flags({"browser_flags": {"X": "1"}})  # doctest: +SKIP
+            ({'X': '1'}, {'X': '1'})
+        """
+
+        requested_raw = metadata.get("browser_flags")
+        requested = (
+            normalise_browser_flags(requested_raw)
+            if isinstance(requested_raw, Mapping)
+            else {}
+        )
+        merged = merge_browser_flags(self._required_browser_flags, requested)
+        return merged, requested
 
     def _inject_browser_origin(
         self,
