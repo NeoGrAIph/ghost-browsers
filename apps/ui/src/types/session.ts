@@ -168,15 +168,41 @@ export const adaptProxy = (proxy: RawSession['proxy']): SessionProxy | null => {
 /**
  * Converts raw VNC data into the UI representation.
  */
+const ensureTokenInUrl = (
+  url: string | null | undefined,
+  token: string | null | undefined,
+): string | null => {
+  if (!url) {
+    return null;
+  }
+  if (!token) {
+    return url;
+  }
+
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete('access_token');
+    parsed.searchParams.set('token', token);
+    return parsed.toString();
+  } catch (error) {
+    // In practice URLs are validated on the backend, but we keep the original
+    // value if parsing fails to avoid breaking rendering in the UI.
+    console.warn('Failed to append VNC token to URL', error);
+    return url;
+  }
+};
+
 export const adaptVnc = (vnc: RawSession['vnc']): SessionVnc | null => {
   if (!vnc) {
     return null;
   }
 
+  const token = vnc.token ?? null;
+
   return {
-    httpUrl: vnc.http_url ?? null,
-    websocketUrl: vnc.websocket_url ?? null,
-    token: vnc.token ?? null,
+    httpUrl: ensureTokenInUrl(vnc.http_url, token),
+    websocketUrl: ensureTokenInUrl(vnc.websocket_url, token),
+    token,
     tokenTtlSeconds: vnc.token_ttl_seconds ?? null,
   };
 };

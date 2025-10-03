@@ -122,6 +122,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   вместо этого требуется сетевое разделение и настройка доверенных CIDR на стороне Gateway.
 - Доступность VNC зависит от бинарей `Xvfb`, `x11vnc` и `websockify`; при их отсутствии `ProcessVncController` отключается и сессии остаются без VNC-URL.
 - Docker-образ предполагает запуск под `pwuser`, PATH включает `.venv/bin`, а контекст сборки обязан содержать каталоги `camoufox` и `packages`, иначе Poetry не найдёт path-зависимости.
+- BuildKit cache mounts для Poetry/pip отключены: docker compose запускает сборку с rootless BuildKit и разделяемые кеши получают root-владельца, что ломает установку зависимостей (`PermissionError`).
 
 ## Known Gaps / TODO
 - [x] Зафиксирован профиль нагрузки для in-memory издателя: 10k событий (10 параллельных продюсеров) удерживают publish avg ≤ 20 мс, peak ≤ 100 мс, drain ≤ 200 мс (см. `test_inmemory_publisher_drain_latency_under_parallel_load`).
@@ -141,6 +142,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
 - 2025-10-03 · gpt-5-codex · Добавлен Dockerfile на базе Playwright-образа, Poetry-инсталляция зависимостей и `.dockerignore` для сборки runner внутри контейнера без выполнения `camoufox fetch`.
 - 2025-10-03 · gpt-5-codex · Подготовлены Helm-шаблоны и образцы values для Runner (секреты Camoufox/прокси, ресурсы) и обновлена документация по деплою.
+- 2025-10-03 · gpt-5-codex · Убраны BuildKit cache mounts из Dockerfile (Poetry/pip), потому что docker compose строит образ под rootless BuildKit и монтирует кеши с root-владением, что валит `poetry install`.
 - 2025-10-05 · gpt-5-codex · Sanitised runner VNC payloads to defer token issuance to the gateway and extended unit tests.
 - 2025-10-07 · gpt-5-codex · Зафиксировано использование in-memory event publisher как основного транспорта, обновлены Known Gaps.
 - 2025-10-08 · gpt-5-codex · Добавлен HTTP publisher (`POST /events`) и покрытие unit-тестами + конфиг-переключатель в зависимостях.

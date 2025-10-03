@@ -25,7 +25,7 @@ services:
     environment:
       VNC_GATEWAY_RUNNER_HTTP_BASE: http://runner:8080
       VNC_GATEWAY_RUNNER_WS_BASE: ws://runner:8080
-      VNC_GATEWAY_TOKEN_SECRET: "${VNC_TOKEN_SECRET}"
+      VNC_GATEWAY_TOKEN_SECRET: "${VNC_TOKEN_SECRET:-dev-secret}"
     depends_on:
       - runner
     ports:
@@ -41,7 +41,7 @@ services:
     environment:
       DISCOVERY_MODE: static
       GATEWAY_TRUSTED_CIDRS: "${GATEWAY_TRUSTED_CIDRS:-0.0.0.0/0}"
-      VNC_TOKEN_SECRET: "${VNC_TOKEN_SECRET}"
+      VNC_TOKEN_SECRET: "${VNC_TOKEN_SECRET:-dev-secret}"
       JWT_JWKS_URL: "${JWT_JWKS_URL:-http://localhost/.well-known/jwks.json}"
       RUNNERS: >-
         [

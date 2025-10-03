@@ -73,15 +73,11 @@ RUN chown -R pwuser:pwuser /workspace
 USER pwuser
 WORKDIR /workspace/services/runner
 
-RUN --mount=type=cache,target=/home/pwuser/.cache/pypoetry \
-    --mount=type=cache,target=/home/pwuser/.cache/pip \
-    poetry install --without dev --no-root --no-interaction
+RUN poetry install --without dev --no-root --no-interaction
 
-RUN --mount=type=cache,target=/home/pwuser/.cache/pip \
-    poetry run pip install --no-deps --force-reinstall "camoufox[geoip]==${CAMOUFOX_VERSION}"
+RUN poetry run pip install --no-deps --force-reinstall "camoufox[geoip]==${CAMOUFOX_VERSION}"
 
-RUN --mount=type=cache,target=/home/pwuser/.cache/pip \
-    poetry run python -m camoufox fetch
+RUN poetry run python -m camoufox fetch
 
 # Copy the service sources after dependency resolution to keep cache hits.
 COPY --chown=pwuser:pwuser services/runner ./

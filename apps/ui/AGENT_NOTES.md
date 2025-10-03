@@ -17,12 +17,15 @@
   `proxyId`, `proxyLabel`, `snapshotUrl`). `adaptSession` теперь выбирает прямой
   `wsEndpoint` при наличии и прокидывает fallback `publicWsEndpoint` для случаев,
   когда до runner'а нет прямого доступа.
+- `adaptVnc` гарантирует, что подписанный gateway-токен встроен в `httpUrl`/`websocketUrl` как query `token`, а также очищает устаревший `access_token`, чтобы iframe и веб-клиенты могли пользоваться ссылками без ручного вмешательства.
 - Обновление прокси использует `SessionProxyUpdateSchema`, валидирующий наличие хотя бы одного URL
   перед вызовом `updateSessionProxy`.
 - Состояние фильтров в `store/sessionFilters.ts` (Zustand).
 
 ## Decisions
 - Keycloak PKCE: `AuthProvider` и `silent-check-sso.html` для фоновой проверки SSO.
+- При отсутствии Keycloak-переменных `AuthProvider` поднимает синтетическую сессию оператора
+  (токен/клиент `null`), чтобы дев-режим и тесты работали без внешнего IdP.
 - React Query как единый слой данных (`queryKeys.sessions`) + интеграция с SSE (`useSessionEvents`).
 - UI-паттерн split-view: сетка карточек слева, подробности справа.
 - Локальная тема (light/dark) через `ThemeProvider` с `localStorage`.
@@ -54,6 +57,8 @@
 - `make ui-image UI_EXTRA_BUILD_ARGS="--build-arg VITE_GATEWAY_URL=<url>"` — проверка Docker-сборки (линт/тесты выполняются внутри таргета).
 
 ## Changelog (for agents)
+- 2025-10-03 · gpt-5-codex · Добавлен offline-фоллбек в `AuthProvider` и витест, проверяющий
+  отрисовку Dashboard без Keycloak.
 - 2024-09-08 · gpt-5-codex · Начальная реализация консоли: авторизация, список/детали сессий, создание/удаление, SSE, темы, базовые тесты.
 - 2024-09-09 · gpt-5-codex · Перешли на модели core.Session/core.SessionEvent: адаптеры в
   `types/session.ts`, хранение списка сессий напрямую в React Query, обновлены фильтры,
@@ -74,3 +79,4 @@
 - 2025-10-23 · gpt-5-codex · Исправлены витесты DashboardPage: моки `useMutation` поддерживают `reset`/`isSuccess`, а `openSessionEventStream`
   возвращает безопасный EventSource, благодаря чему `pnpm -C apps/ui test` снова проходит.
 - 2025-10-24 · gpt-5-codex · Добавлен Nginx-конфиг, проксирующий `/api` на gateway, и обновлена Docker-сборка для совместимости с docker-compose стеком.
+- 2025-10-25 · gpt-5-codex · UI адаптеры теперь дописывают `token` в VNC URL, обновлён `SessionDetailsPanel` тест для верификации iframe.

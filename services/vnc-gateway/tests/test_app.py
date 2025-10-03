@@ -163,6 +163,25 @@ def test_http_endpoint_rejects_missing_token(app) -> None:
     assert response.status_code == 401
 
 
+@pytest.mark.parametrize("query_key", ["token", "access_token"])
+def test_http_endpoint_accepts_query_token(
+    app, token_service: VncTokenService, query_key: str
+) -> None:
+    """HTTP endpoint accepts ``token``/``access_token`` query parameters."""
+
+    client = TestClient(app)
+    token, _ = token_service.issue("session-query")
+    response = client.get(
+        "/sessions/session-query",
+        params={query_key: token},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"session": "session-query"}
+
+    runner_proxy: DummyRunnerProxy = app.state.runner_proxy
+    assert runner_proxy.http_calls[-1][0] == "session-query"
+
+
 def test_websocket_endpoint_invokes_proxy(app, token_service: VncTokenService) -> None:
     """WebSocket endpoint triggers the proxy when token is valid."""
 
@@ -172,6 +191,20 @@ def test_websocket_endpoint_invokes_proxy(app, token_service: VncTokenService) -
         pass
     runner_proxy: DummyRunnerProxy = app.state.runner_proxy
     assert runner_proxy.ws_sessions == ["session-ws"]
+
+
+@pytest.mark.parametrize("query_key", ["token", "access_token"])
+def test_websocket_endpoint_accepts_query_token(
+    app, token_service: VncTokenService, query_key: str
+) -> None:
+    """WebSocket token validation uses the query string as a fallback."""
+
+    client = TestClient(app)
+    token, _ = token_service.issue("session-ws-query")
+    with client.websocket_connect(f"/sessions/session-ws-query/ws?{query_key}={token}"):
+        pass
+    runner_proxy: DummyRunnerProxy = app.state.runner_proxy
+    assert "session-ws-query" in runner_proxy.ws_sessions
 
 
 def test_metrics_report_token_validation_failures(app, token_service: VncTokenService) -> None:

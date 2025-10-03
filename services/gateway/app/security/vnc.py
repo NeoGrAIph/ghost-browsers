@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from core import SessionVncDetails
 from jose import jwt
@@ -95,16 +96,67 @@ class VncTokenService:
 
         Returns:
             SessionVncDetails: Updated descriptor including ``token`` and
-            ``token_ttl_seconds`` fields.
+            ``token_ttl_seconds`` fields and query parameters that embed the
+            token for iframe consumers.
 
         Notes:
             Runner services intentionally leave ``token`` and
             ``token_ttl_seconds`` empty so the gateway can append a signature.
             Whenever a token is absent this method will mint a fresh JWT using
-            :meth:`issue`.
+            :meth:`issue` and inject it into the ``http_url`` and
+            ``websocket_url`` query strings (when present) so callers can use
+            the published URLs without setting extra headers.
         """
 
         if details.token is not None:
             return details
         token, ttl = self.issue(session_id, subject=subject)
-        return details.model_copy(update={"token": token, "token_ttl_seconds": ttl})
+
+        http_with_token = self._append_query_token(
+            str(details.http_url) if details.http_url is not None else None,
+            token,
+        )
+        ws_with_token = self._append_query_token(
+            str(details.websocket_url) if details.websocket_url is not None else None,
+            token,
+        )
+
+        payload: dict[str, Any] = {
+            "token": token,
+            "token_ttl_seconds": ttl,
+        }
+        if http_with_token is not None:
+            payload["http_url"] = http_with_token
+        if ws_with_token is not None:
+            payload["websocket_url"] = ws_with_token
+        return details.model_copy(update=payload)
+
+    @staticmethod
+    def _append_query_token(url: str | None, token: str) -> str | None:
+        """Inject the freshly minted token into the provided URL query string.
+
+        Args:
+            url (str | None): Absolute VNC URL reported by the runner or
+                overrides.
+            token (str): Token issued by :meth:`issue`.
+
+        Returns:
+            str | None: Updated URL with the ``token`` query parameter when a
+            URL was provided, otherwise ``None``.
+
+        Example:
+            >>> VncTokenService._append_query_token('https://vnc/view', 'abc')
+            'https://vnc/view?token=abc'
+        """
+
+        if not url:
+            return None
+        parts = urlparse(url)
+        query_items = [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key not in {"token", "access_token"}
+        ]
+        query_items.append(("token", token))
+        new_query = urlencode(query_items)
+        return urlunparse(parts._replace(query=new_query))

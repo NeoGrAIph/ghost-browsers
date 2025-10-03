@@ -2,6 +2,7 @@
 name = "camou-gateway"
 version = "0.1.0"
 description = "Ghost-browsers Gateway service"
+authors = ["Ghost Browsers Team <engineering@ghost-browsers.local>"]
 packages = [{ include = "app" }]
 
 [tool.poetry.dependencies]

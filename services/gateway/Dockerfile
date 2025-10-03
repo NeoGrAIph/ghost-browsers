@@ -9,11 +9,15 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     POETRY_VIRTUALENVS_IN_PROJECT=1 \
     POETRY_VIRTUALENVS_CREATE=1 \
+    POETRY_CACHE_DIR=/tmp/pypoetry-cache \
     PATH="${POETRY_HOME}/bin:${PATH}"
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y build-essential python3-dev libffi-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /tmp/pypoetry-cache /tmp/pip-cache \
+    && chmod 1777 /tmp/pypoetry-cache /tmp/pip-cache
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install "poetry==${POETRY_VERSION}"
@@ -29,12 +33,13 @@ COPY packages ./packages
 
 RUN chown -R app:app /workspace
 
+RUN mkdir -p /home/app/.cache/pip \
+    && chown -R app:app /home/app
+
 USER app
 WORKDIR /workspace/services/gateway
 
-RUN --mount=type=cache,target=/home/app/.cache/pypoetry \
-    --mount=type=cache,target=/home/app/.cache/pip \
-    poetry install --without dev
+RUN poetry install --without dev --no-root
 
 # Copy application sources after dependency resolution to maximize cache hits.
 COPY --chown=app:app services/gateway ./

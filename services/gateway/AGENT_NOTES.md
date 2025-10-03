@@ -50,6 +50,7 @@
 - JWKS кэшируется в памяти и повторно запрашивается при отсутствии нужного `kid` (устойчивость к ротации ключей).
 - ВNC-токены выдаются как HMAC JWT (`HS256`) через `VncTokenService` с TTL из конфигурации (≤300 сек); секрет читается из `VNC_TOKEN_SECRET` и должен совпадать с `Settings.token_secret` в VNC Gateway.
 - Runner-инстансы больше не присылают пред-выданные VNC токены; `VncTokenService.enrich_vnc_details` всегда монтирует подпись, если поле `token` отсутствует, перезаписывая TTL на конфигурационный.
+- Enrich-фаза переписывает `http_url`/`websocket_url`, добавляя query `token=<jwt>`, чтобы downstream-клиенты (UI/iframe, tooling) могли пользоваться готовыми ссылками без ручного выставления `X-VNC-Token`.
 - Переиспользуем подход из beta-контроллера: для каждого раннера можно настроить шаблоны публичных VNC-URL (HTTP/WS) и при регистрации сессии мы переписываем внутренние адреса на общую точку входа, что позволяет использовать ограниченное число наружных портов.
 - SSE реализовано через `StreamingResponse`, WebSocket — нативный FastAPI роутер; для обоих каналов используется единый event bridge.
 - Маршруты `/workstations` валидируют payload через `WorkstationUpsertPayload`/`WorkstationEvent` и возвращают `WorkstationRecord`, сохраняя идентификаторы и состояние даже при мета-апдейтах.
@@ -78,6 +79,13 @@
 ## Constraints & Invariants
 - `VNC_TOKEN_TTL_SEC` всегда ≤300; нарушение приводит к `ValueError` на старте.
 - `VNC_TOKEN_SECRET` обязателен и должен быть согласован с VNC Gateway.
+- Локальный `docker-compose` подставляет `VNC_TOKEN_SECRET=dev-secret`, если переменная не задана; в продовых/шареных окружениях
+  следует переопределять секрет явно.
+- BuildKit cache mounts для Poetry отключены: docker compose выполняет сборку с rootless BuildKit и монтирует кеши с root-владением,
+  из-за чего `poetry install --without dev` падал бы с `PermissionError`; вместо этого используем `POETRY_CACHE_DIR=/tmp/pypoetry-cache`
+  с правами `1777`.
+- `poetry install` выполняется с `--no-root`, потому что исходники (`app/`) копируются после установки зависимостей; убирая флаг, нужно
+  перестроить Dockerfile и копировать код до шага установки зависимостей.
 - JWT должен содержать `kid` и валидный `exp`; аудит-лог записывает `sub` и `email`/`preferred_username`.
 - In-memory хранилища не предназначены для горизонтального масштабирования; восстановление состояния из Runner discovery пока не реализовано.
 
@@ -109,6 +117,10 @@
 - 2025-10-01 · OpenAI ChatGPT · Реализован FastAPI gateway (REST/SSE/WS), Keycloak JWT, VNC-токены и покрывающие unit-тесты.
 - 2025-10-02 · OpenAI ChatGPT · Добавлены публичные VNC-шаблоны для раннеров и переписывание URL при создании сессий по образцу beta-control-plane.
 - 2025-10-03 · gpt-5-codex · Вынесен VNC JWT секрет в конфигурацию и синхронизирован с VNC Gateway.
+- 2025-10-03 · gpt-5-codex · Добавлен дефолт `VNC_TOKEN_SECRET=dev-secret` для локального docker-compose и задокументирован опциональный override.
+- 2025-10-03 · gpt-5-codex · Дополнен `pyproject.toml` обязательным полем authors для корректной работы Poetry package mode.
+- 2025-10-03 · gpt-5-codex · Убраны BuildKit cache mounts в Dockerfile, перенесён `POETRY_CACHE_DIR` в `/tmp/pypoetry-cache` (1777) и добавлен `--no-root`, чтобы `docker compose build` не падал при установке зависимостей до копирования исходников.
+- 2025-10-03 · gpt-5-codex · Исправлено чтение `GATEWAY_TRUSTED_HEADER` в `GatewaySettings.from_env`: раньше использовался дескриптор класса, что падало при пустом env.
 - 2025-10-03 · gpt-5-codex · Задокументирован Helm-чарт control plane (templates + values) с опциями для секретов Gateway.
 - 2025-10-05 · gpt-5-codex · Уточнена логика выдачи VNC токенов при пустых значениях от Runner и добавлены покрывающие тесты.
 - 2025-10-06 · gpt-5-codex · Разрешена аутентификация SSE через query `access_token`, добавлен unit-тест маршрута `/events`.
@@ -132,4 +144,4 @@
 - 2025-10-18 · gpt-5-codex · Восстановление сессий при рестарте через `GET /sessions`, расширенный RunnerCommandClient и новые unit-тесты bootstrap.
 - 2025-10-19 · gpt-5-codex · Добавлены контейнерный образ Gateway, make-таргеты для сборки/публикации и GitHub Actions пайплайн
   с опциональной подписью Cosign.
-
+- 2025-10-25 · gpt-5-codex · VNC-детали теперь включают подписанный токен прямо в URL, а Gateway и UI потребители используют query `token` fallback вместо ручных заголовков; добавлены покрывающие тесты.

@@ -58,8 +58,8 @@ describe('session adapters', () => {
       socks: null,
     });
     expect(session.vnc).toEqual({
-      httpUrl: 'https://vnc.example/view/1',
-      websocketUrl: 'wss://vnc.example/ws/1',
+      httpUrl: 'https://vnc.example/view/1?token=opaque-token',
+      websocketUrl: 'wss://vnc.example/ws/1?token=opaque-token',
       token: 'opaque-token',
       tokenTtlSeconds: 60,
     });

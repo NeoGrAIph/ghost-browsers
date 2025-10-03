@@ -86,7 +86,7 @@ class GatewaySettings:
             raise ValueError("DISCOVERY_POLL_INTERVAL_SEC must be a positive number")
         runners = list(_parse_runners(env_map.get("RUNNERS")))
         trusted_cidrs = _parse_trusted_cidrs(env_map.get("GATEWAY_TRUSTED_CIDRS"))
-        trusted_header = env_map.get("GATEWAY_TRUSTED_HEADER", cls.trusted_header)
+        trusted_header = env_map.get("GATEWAY_TRUSTED_HEADER", defaults.trusted_header)
         if trusted_header is not None:
             trusted_header = trusted_header.strip() or None
         return cls(

@@ -31,31 +31,72 @@ const keycloakClientId = import.meta.env.VITE_KEYCLOAK_CLIENT_ID;
 const isAuthConfigured = Boolean(keycloakUrl && keycloakRealm && keycloakClientId);
 
 /**
- * React context exposing the Keycloak authentication state.
+ * React context exposing the authentication state maintained by {@link AuthProvider}.
+ *
+ * @remarks
+ * Consumers can rely on `keycloak` being `null` whenever Keycloak integration is disabled.
+ *
+ * @example
+ * const { profile } = useAuth();
  */
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
-/**
- * Provides Keycloak authentication state to the component tree and manages token refresh.
- */
 interface AuthProviderProps {
   readonly children: ReactNode;
 }
 
+const createLocalProfile = (): KeycloakProfile => ({
+  firstName: 'Оператор',
+  username: 'local-operator',
+});
+
+const buildLocalAuthState = (): AuthState => ({
+  isAuthenticated: true,
+  isLoading: false,
+  keycloak: null,
+  parsedToken: undefined,
+  profile: createLocalProfile(),
+  token: null,
+});
+
+const buildRemoteAuthState = (): AuthState => ({
+  isAuthenticated: false,
+  isLoading: true,
+  keycloak: null,
+  parsedToken: undefined,
+  profile: null,
+  token: null,
+});
+
+/**
+ * Provides authentication state to the component tree and manages Keycloak session refreshes.
+ *
+ * @param props.children React subtree that consumes the authentication context.
+ * @returns Provider element wiring the current authentication state to descendants.
+ *
+ * @throws never
+ *
+ * @remarks
+ * When Keycloak environment variables are absent the provider synthesizes a local operator
+ * session (token and Keycloak client are `null`) so the UI remains usable during development.
+ * Otherwise, it initialises a Keycloak client, keeps tokens refreshed in the background, and
+ * exposes the received profile to consumers.
+ *
+ * @example
+ * <AuthProvider>
+ *   <App />
+ * </AuthProvider>
+ */
 export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
   const keycloakRef = useRef<Keycloak>();
-  const [state, setState] = useState<AuthState>({
-    isAuthenticated: false,
-    isLoading: isAuthConfigured,
-    keycloak: null,
-    parsedToken: undefined,
-    profile: null,
-    token: null,
-  });
+  const [state, setState] = useState<AuthState>(() =>
+    isAuthConfigured ? buildRemoteAuthState() : buildLocalAuthState(),
+  );
 
   useEffect(() => {
     if (!isAuthConfigured) {
-      setState((current) => ({ ...current, isLoading: false }));
+      // Preserve the synthetic authenticated session whenever Keycloak env variables are missing.
+      setState(buildLocalAuthState());
       return;
     }
 

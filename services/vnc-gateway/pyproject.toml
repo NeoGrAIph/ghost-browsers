@@ -2,6 +2,7 @@
 name = "camou-vnc-gateway"
 version = "0.1.0"
 description = "Ghost-browsers VNC Gateway (to be implemented)"
+authors = ["Ghost Browsers Team <engineering@ghost-browsers.local>"]
 packages = [{ include = "camou_vnc_gateway", from = "app" }]
 
 [tool.poetry.dependencies]
@@ -17,3 +18,7 @@ prometheus-client = "^0.21.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
 ruff = "^0.6.9"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
