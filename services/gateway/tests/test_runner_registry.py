@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 from app.services.runner_registry import RunnerRegistry
-from core import Runner
+from core import Runner, RunnerState
 
 
 @pytest.fixture()
@@ -76,6 +76,43 @@ async def test_select_next_rotates_candidates() -> None:
         "runner-2",
         "runner-3",
     ]
+
+
+@pytest.mark.anyio("asyncio")
+async def test_select_next_skips_exhausted_or_busy_runners() -> None:
+    """Exhausted slots or non-accepting states should be ignored by selector."""
+
+    registry = RunnerRegistry(
+        [
+            Runner(
+                id="runner-busy",
+                base_url="http://runner-busy",
+                total_slots=1,
+                available_slots=0,
+                state=RunnerState.BUSY,
+            ),
+            Runner(
+                id="runner-empty",
+                base_url="http://runner-empty",
+                total_slots=1,
+                available_slots=0,
+                state=RunnerState.IDLE,
+            ),
+            Runner(
+                id="runner-free",
+                base_url="http://runner-free",
+                total_slots=1,
+                available_slots=1,
+                state=RunnerState.IDLE,
+            ),
+        ]
+    )
+
+    first_pick = await registry.select_next(requires_vnc=False)
+    second_pick = await registry.select_next(requires_vnc=False)
+
+    assert first_pick is not None and first_pick.id == "runner-free"
+    assert second_pick is not None and second_pick.id == "runner-free"
 
 
 @pytest.mark.anyio("asyncio")

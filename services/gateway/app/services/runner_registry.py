@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Iterable
 from uuid import UUID
 
-from core import Runner
+from core import Runner, RunnerState
 
 
 class RunnerRegistry:
@@ -283,6 +283,11 @@ class RunnerRegistry:
         Returns:
             Optional[Runner]: The selected runner or ``None`` if no candidate
             satisfies the requested constraints.
+
+        Notes:
+            ``select_next`` also skips runners whose ``available_slots`` is
+            explicitly ``0`` or whose :class:`~core.RunnerState` indicates they
+            are not accepting work (``busy``, ``degraded`` or ``offline``).
         """
 
         async with self._lock:
@@ -297,6 +302,14 @@ class RunnerRegistry:
                 if require_healthy and not candidate.healthy:
                     continue
                 if requires_vnc and not candidate.supports_vnc:
+                    continue
+                if candidate.available_slots is not None and candidate.available_slots == 0:
+                    continue
+                if candidate.state in {
+                    RunnerState.BUSY,
+                    RunnerState.DEGRADED,
+                    RunnerState.OFFLINE,
+                }:
                     continue
                 self._cursor = (index + 1) % total
                 return candidate
