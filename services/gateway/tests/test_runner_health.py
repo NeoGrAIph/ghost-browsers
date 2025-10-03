@@ -22,7 +22,7 @@ def anyio_backend() -> str:
 async def test_probe_updates_registry_on_success() -> None:
     """Successful probes should update health and slot information."""
 
-    runner = Runner(id="runner-1", base_url="http://runner-1", total_slots=1)
+    runner = Runner(id="runner-1", base_url="http://runner-1", total_slots=None)
     registry = RunnerRegistry([runner])
 
     def _handler(request: httpx.Request) -> httpx.Response:
@@ -32,7 +32,7 @@ async def test_probe_updates_registry_on_success() -> None:
             json={
                 "status": "ok",
                 "runner_id": "runner-1",
-                "slots": {"total": 4, "available": 2},
+                "slots": {"total": None, "available": None},
                 "vnc": {"enabled": True},
             },
         )
@@ -42,8 +42,8 @@ async def test_probe_updates_registry_on_success() -> None:
     updated = await client.probe(runner, registry)
     assert updated is not None
     assert updated.healthy is True
-    assert updated.available_slots == 2
-    assert updated.total_slots == 4
+    assert updated.available_slots is None
+    assert updated.total_slots is None
     assert updated.supports_vnc is True
     assert updated.last_heartbeat_at is not None
     assert updated.last_heartbeat_at.tzinfo is UTC

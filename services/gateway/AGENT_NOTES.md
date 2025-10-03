@@ -43,6 +43,8 @@
 - `Session` теперь хранит прямой `ws_endpoint` от runner'а и проксируемый `ws_public_endpoint`; Gateway больше не перезаписывает
   прямой URL в REST-ответах, чтобы внутренние клиенты могли подключаться без прокси.
 - `SessionRegistry`/`RunnerRegistry` — простые in-memory контейнеры с `asyncio.Lock` для потокобезопасности.
+- `Runner` допускает `total_slots = null`, что сигнализирует об отсутствии жёсткого лимита; `RunnerRegistry.record_health`
+  принимает `total_slots=None`, чтобы очистить сохранённую ёмкость и отражать «неограниченные» раннеры.
 - `WorkstationRegistry` — in-memory карта рабочих станций, сохраняет `WorkstationRecord` с последним событием.
 - `InMemorySessionEventBridge` (из core) хранит последнее событие и раздаёт подписчикам.
 - `WorkstationRecord`/`WorkstationUpsertPayload` — gateway-модели для REST, совместимы с `core.WorkstationMeta`/`WorkstationEvent` и сохраняют идентификаторы/состояние.
@@ -167,3 +169,4 @@
 - 2025-10-30 · gpt-5-codex · Ужесточена валидация TTL VNC-токенов (диапазон 1–300 сек) и добавлены unit-тесты на ошибочные значения.
 - 2025-10-30 · gpt-5-codex · Очистка сессий при пропаже раннера стала устойчивой к `KeyError` в реестре сессий; добавлен тест на конкурентное удаление.
 - 2025-10-31 · gpt-5-codex · Реестр сессий очищает VNC токены перед сохранением и добавлен тест, подтверждающий выдачу нового токена после TTL при `GET /sessions`.
+- 2025-10-28 · gpt-5-codex · Добавлена поддержка «безлимитных» раннеров: `RunnerRegistry` принимает `total_slots=None`, health-профайлер сохраняет `null` в `slots.total/available`, UI/REST схемы обновлены.

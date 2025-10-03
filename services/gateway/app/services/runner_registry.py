@@ -11,6 +11,13 @@ from uuid import UUID
 from core import Runner, RunnerState
 
 
+class _Missing:
+    """Sentinel used to differentiate between absent and explicit ``None`` values."""
+
+
+_MISSING = _Missing()
+
+
 class RunnerRegistry:
     """Track runner information reported by the discovery layer.
 
@@ -325,7 +332,7 @@ class RunnerRegistry:
         *,
         healthy: bool,
         heartbeat_at: datetime | None,
-        total_slots: int | None = None,
+        total_slots: int | None | _Missing = _MISSING,
         available_slots: int | None = None,
         supports_vnc: bool | None = None,
     ) -> Runner | None:
@@ -336,7 +343,7 @@ class RunnerRegistry:
             healthy: Outcome of the health probe.
             heartbeat_at: Timestamp when the health response was observed.
             total_slots: Optional override for the slot capacity reported by
-                the runner.
+                the runner. Pass ``None`` to clear previously stored limits.
             available_slots: Optional override for the currently available
                 slots derived from the health payload.
             supports_vnc: Optional capability flag indicating whether the
@@ -352,20 +359,21 @@ class RunnerRegistry:
             if current is None:
                 return None
 
-            updates: dict[str, object] = {"healthy": healthy}
-            if heartbeat_at is not None:
-                updates["last_heartbeat_at"] = heartbeat_at
-            if total_slots is not None:
-                updates["total_slots"] = total_slots
-
-            if available_slots is not None:
-                capacity = (
-                    total_slots
-                    if total_slots is not None
-                    else current.total_slots
-                )
+        updates: dict[str, object] = {"healthy": healthy}
+        if heartbeat_at is not None:
+            updates["last_heartbeat_at"] = heartbeat_at
+        capacity: int | None
+        if total_slots is not _MISSING:
+            updates["total_slots"] = total_slots
+            capacity = total_slots
+        else:
+            capacity = current.total_slots
+        if available_slots is not None:
+            if capacity is None:
+                constrained = max(available_slots, 0)
+            else:
                 constrained = max(min(available_slots, capacity), 0)
-                updates["available_slots"] = constrained
+            updates["available_slots"] = constrained
 
             if supports_vnc is not None:
                 updates["supports_vnc"] = supports_vnc

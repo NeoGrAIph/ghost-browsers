@@ -40,7 +40,6 @@ class RunnerSettings(BaseModel):
         camoufox_path: Absolute path to the Camoufox binary.
         event_endpoint: Optional HTTP(S) endpoint used by the event publisher
             stub. When absent, events are kept in-memory.
-        slot_limit: Maximum number of concurrently active sessions.
         warm_pool_config_path: Optional path to a JSON file describing the warm
             workstation pool.
         warm_pool_mode: Strategy for sourcing browsers — exclusively warm pool,
@@ -82,7 +81,6 @@ class RunnerSettings(BaseModel):
     runner_id: str = Field(default="runner-local", min_length=1)
     camoufox_path: Path = Field(default=Path("/usr/bin/camoufox"))
     event_endpoint: AnyUrl | None = Field(default=None)
-    slot_limit: PositiveInt = Field(default=4, ge=1)
     warm_pool_config_path: Path | None = Field(
         default=None,
         description="Path to the warm pool configuration JSON file",
@@ -167,8 +165,6 @@ class RunnerSettings(BaseModel):
             source["camoufox_path"] = Path(env["CAMOUFOX_PATH"])
         if "EVENT_ENDPOINT" in env:
             source["event_endpoint"] = env["EVENT_ENDPOINT"]
-        if "SLOT_LIMIT" in env:
-            source["slot_limit"] = int(env["SLOT_LIMIT"])
         if "WARM_POOL_CONFIG_PATH" in env:
             raw = env["WARM_POOL_CONFIG_PATH"].strip()
             source["warm_pool_config_path"] = Path(raw) if raw else None

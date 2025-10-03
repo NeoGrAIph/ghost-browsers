@@ -25,8 +25,14 @@ class RunnerStatus(BaseModel):
     id: str = Field(description="Runner identifier")
     base_url: AnyUrl = Field(description="Runner control-plane base URL")
     state: RunnerState = Field(description="Operational state reported by discovery")
-    total_slots: int = Field(description="Maximum concurrent sessions")
-    available_slots: int = Field(description="Currently free slots")
+    total_slots: int | None = Field(
+        default=None,
+        description="Maximum concurrent sessions when bounded",
+    )
+    available_slots: int | None = Field(
+        default=None,
+        description="Currently free slots when the runner reports capacity",
+    )
     healthy: bool = Field(description="Latest health probe outcome")
     supports_vnc: bool = Field(description="Runner can serve VNC sessions")
     last_heartbeat_at: datetime | None = Field(

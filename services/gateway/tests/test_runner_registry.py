@@ -147,6 +147,33 @@ async def test_record_health_updates_snapshot() -> None:
 
 
 @pytest.mark.anyio("asyncio")
+async def test_record_health_allows_clearing_capacity() -> None:
+    """Explicit ``None`` total slots should clear stored runner capacity."""
+
+    registry = RunnerRegistry(
+        [
+            Runner(
+                id="runner-flex",
+                base_url="http://runner-flex",
+                total_slots=2,
+            )
+        ]
+    )
+
+    updated = await registry.record_health(
+        "runner-flex",
+        healthy=True,
+        heartbeat_at=datetime.now(tz=UTC),
+        total_slots=None,
+        available_slots=None,
+    )
+
+    assert updated is not None
+    assert updated.total_slots is None
+    assert updated.available_slots is None
+
+
+@pytest.mark.anyio("asyncio")
 async def test_session_ws_binding_registration() -> None:
     """RunnerRegistry stores runner and public endpoints for sessions."""
 

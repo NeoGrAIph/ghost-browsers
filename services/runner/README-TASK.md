@@ -50,7 +50,7 @@
   "status": "ok",
   "runner_id": "runner-name",
   "camoufox_path": "/usr/bin/camoufox",
-  "slots": {"total": 3, "active": 1, "available": 2},
+  "slots": {"total": null, "active": 1, "available": null},
   "vnc": {
     "http_base_url": "http://localhost:9000/vnc",
     "ws_base_url": "ws://localhost:9000/vnc",

@@ -292,7 +292,6 @@ async def test_health_endpoint_reports_extended_metrics() -> None:
     settings = RunnerSettings(
         runner_id="runner-health",
         camoufox_path="/usr/bin/camoufox",
-        slot_limit=3,
         vnc_enabled=True,
         vnc_http_base_url="http://localhost:9000/vnc",
         vnc_ws_base_url="ws://localhost:9000/vnc",
@@ -332,7 +331,7 @@ async def test_health_endpoint_reports_extended_metrics() -> None:
     assert payload["status"] == "ok"
     assert payload["runner_id"] == "runner-health"
     assert payload["camoufox_path"].endswith("camoufox")
-    assert payload["slots"] == {"total": 3, "active": 2, "available": 1}
+    assert payload["slots"] == {"total": None, "active": 2, "available": None}
     assert payload["warm_pool"] == {
         "enabled": True,
         "total": 3,

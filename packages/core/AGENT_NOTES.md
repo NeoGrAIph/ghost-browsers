@@ -15,9 +15,10 @@
   получения последнего события при реконнекте клиента.
 
 ## Data & Models
-- `Runner`: идентификатор, `base_url`, состояние, слоты, флаг `healthy`, поддержка
-  VNC (`supports_vnc`), время последнего heartbeat, capability-флаги. Идентификаторы
-  триммируются и не допускают пустых значений.
+- `Runner`: идентификатор, `base_url`, состояние, слоты (включая `total_slots=null`
+  для «безлимитных» раннеров), флаг `healthy`, поддержка VNC (`supports_vnc`), время
+  последнего heartbeat, capability-флаги. Идентификаторы триммируются и не допускают
+  пустых значений.
 - `Session`: UUID, `runner_id`, статус (`INIT→DEAD`), `created_at`, `last_seen_at`
   (alias `updated_at`), опциональный `ended_at`, флаги `headless`, `idle_ttl_seconds`
   (30–3600), `browser`, `labels`, `start_url`, `start_url_wait`, `ws_endpoint`,
@@ -56,7 +57,7 @@
 - Все временные метки должны быть timezone-aware (`tzinfo` не `None`).
 - `Session.last_seen_at ≥ created_at`; если задано, `ended_at ≥ created_at`.
 - `idle_ttl_seconds` в диапазоне 30–3600 секунд.
-- `Runner.available_slots ≤ total_slots`; OFFLINE-раннер не может быть `healthy`.
+- `Runner.available_slots ≤ total_slots` при наличии лимита; OFFLINE-раннер не может быть `healthy`.
 - `SessionProxySettings` требует хотя бы одного URL, предотвращая пустые прокси.
 - `SessionVncDetails` требует хотя бы один из HTTP/WS URL и валидный TTL при наличии токена.
 - `Session.workstation` валидируется на совпадение с `workstation_id` и
@@ -93,4 +94,5 @@
   workstation-полями, обновлены тесты сериализации/валидации.
 - 2025-10-24 · gpt-5-codex — Добавлен стресс-тест моста на 5k событий и задокументированы латентности/пороговые значения.
 - 2025-10-30 · ChatGPT — Проверена установка зависимостей и прохождение линтера/тестов через Poetry (`ruff`, `pytest`).
+- 2025-10-28 · gpt-5-codex — Разрешены раннеры без лимита: `Runner.total_slots` стал optional, валидация `available_slots` учитывает `None`, добавлены покрывающие тесты.
 

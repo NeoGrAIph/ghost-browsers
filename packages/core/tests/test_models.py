@@ -66,6 +66,13 @@ def test_runner_defaults_available_slots_to_total() -> None:
     assert runner.state == RunnerState.STARTING
 
 
+def test_runner_with_unbounded_capacity_preserves_null_slots() -> None:
+    """Runner reports ``None`` slots when capacity is intentionally unbounded."""
+
+    runner = Runner(id="runner-1", base_url="http://runner:8080", total_slots=None)
+    assert runner.available_slots is None
+
+
 def test_runner_id_rejects_whitespace_only_identifiers() -> None:
     """Runner identifiers consisting of whitespace should be rejected."""
 

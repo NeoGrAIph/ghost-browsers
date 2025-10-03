@@ -82,6 +82,9 @@ def test_runner_derives_available_slots_and_validates_constraints() -> None:
     assert runner.available_slots == 4
     assert runner.id == "runner-42"
 
+    unbounded = Runner(id="runner-unbounded", base_url="http://runner", total_slots=None)
+    assert unbounded.available_slots is None
+
     with pytest.raises(ValidationError):
         Runner(id="runner-1", base_url="http://runner", total_slots=1, available_slots=2)
 

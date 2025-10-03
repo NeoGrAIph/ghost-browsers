@@ -806,7 +806,6 @@ async def test_metrics_track_active_sessions_and_prewarm_failures(
         RunnerSettings(
             runner_id="runner-metrics",
             camoufox_path="/usr/bin/camoufox",
-            slot_limit=3,
             prewarm_failure_history_size=2,
         ),
         publisher,

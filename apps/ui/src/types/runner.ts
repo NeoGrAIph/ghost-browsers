@@ -13,7 +13,7 @@ export const RunnerStatusSchema = z
     id: z.string(),
     base_url: z.string().url(),
     state: RunnerStateSchema,
-    total_slots: z.number().int().nonnegative(),
+    total_slots: z.number().int().nonnegative().nullable(),
     available_slots: z.number().int().nonnegative().nullable(),
     healthy: z.boolean(),
     supports_vnc: z.boolean(),
@@ -34,7 +34,7 @@ export interface RunnerStatus {
   readonly id: string;
   readonly baseUrl: string;
   readonly state: RunnerState;
-  readonly totalSlots: number;
+  readonly totalSlots: number | null;
   readonly availableSlots: number | null;
   readonly healthy: boolean;
   readonly supportsVnc: boolean;
@@ -51,7 +51,7 @@ export const adaptRunnerStatus = (runner: RawRunnerStatus): RunnerStatus => ({
   id: runner.id,
   baseUrl: runner.base_url,
   state: runner.state,
-  totalSlots: runner.total_slots,
+  totalSlots: runner.total_slots ?? null,
   availableSlots: runner.available_slots ?? null,
   healthy: runner.healthy,
   supportsVnc: runner.supports_vnc,

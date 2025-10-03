@@ -8,7 +8,8 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 ## Interfaces
 - **HTTP**
   - `GET /health` — возвращает `{status, runner_id, camoufox_path, slots, vnc, proxy, prewarm, ttl}`;
-    `slots.total` считывается из `RunnerSettings.slot_limit`, `slots.active` — количество
+    `slots.total` и `slots.available` равны `null`, сигнализируя об отсутствии
+    жёсткого ограничения на параллельные сессии; `slots.active` — количество
     не-`DEAD` сессий; `prewarm` включает счётчик и последнюю ошибку прогрева;
     `ttl` содержит ближайшее истечение (`next_expiry_at`) и счетчики работы
     фонового reaper-а (`total_runs`, `expired_sessions`, `last_run_at`).
@@ -71,7 +72,8 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Camoufox SDK dependency**: Runner зависит от официального `camoufox==0.4.11[geoip]`, а локальный shim (`packages/camoufox`) лишь делегирует вызовы к нему. Тесты используют автofixture, которая подсовывает изолированный каталог установки и подменяет сетевые вызовы.
 - **Process-backed VNC controller**: Non-headless sessions allocate Xvfb/x11vnc/websockify helpers via `ProcessVncController`. The controller maintains a bounded pool of displays and ports, composes public HTTP/WS URLs from `RunnerSettings`, and tears down helpers whenever sessions terminate or switch to headless mode.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
-- **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
+- **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры включают базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
+- **Unlimited runner capacity**: Конфигурация больше не ограничивает количество параллельных сессий; `/health` возвращает `slots.total = null` и `slots.available = null`, чтобы сигнализировать об отсутствии лимита, сохраняя обратную совместимость структуры ответа.
 - **Local compose warm pool park**: docker-compose mounts `services/runner/config/warm-pool.local.json` и `browser-prefs.local.json`, обеспечивая демонстрационный парк рабочих станций с фиксированными `fingerprint_id` и набором тумблеров, который разделяют прогретые и холодные сессии; режим по умолчанию `WARM_POOL_MODE=hybrid` даёт возможность создавать холодные браузеры, когда парк занят.
 - **Playwright CLI compatibility**: начиная с Playwright 1.55 runner вызывает `playwright launch-server --browser <name>` и транслирует публичное имя `camoufox` в `firefox`, параллельно прокидывая `CAMOUFOX_BINARY`, чтобы использовать Camoufox runtime вместо стандартного Firefox. Лаунчер понимает как JSON-ответы (`{"wsEndpoint": ...}`), так и текстовый вывод (`ws://...` / ANSI-раскрашенный), что устраняет возврат 429 при создании cold-сессий.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
@@ -158,6 +160,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-12 · gpt-5-codex · Интегрирован процессный noVNC-контроллер, расширены настройки VNC и обновлены unit-тесты с заглушками.
 - 2025-10-13 · gpt-5-codex · Добавлены Prometheus-метрики, эндпоинт `/metrics` и тестовое покрытие на экспорт/счётчики.
 - 2025-10-14 · gpt-5-codex · Привели код и тесты к требованиям Ruff (импорт, длины строк, ошибки) и актуализировали конфигурацию линтера.
+- 2025-10-28 · gpt-5-codex · Убрали лимит сессий: `RunnerSettings` больше не содержит `slot_limit`, `/health` возвращает `null` в `slots.total/available`, обновлены core/gateway/UI модели и тесты.
 - 2025-10-15 · gpt-5-codex · Добавлены warm pool-конфиги (JSON), загрузка при старте, новые настройки и модульные тесты на валидацию/парсинг.
 - 2025-10-16 · gpt-5-codex · Реализован ``WarmPoolManager`` с управлением состояниями, recycle, преднавигацией и юнит-тестами на ключевые сценарии.
 - 2025-10-17 · gpt-5-codex · Интегрирован warm pool в `SessionManager`/API, добавлен отклик 429 при нехватке слотов и покрытие тестами.

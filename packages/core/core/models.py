@@ -261,8 +261,10 @@ class Runner(BaseModel):
         id: Stable runner identifier (unique within the cluster).
         base_url: Base HTTP URL for runner control API.
         state: Operational state of the runner.
-        total_slots: Maximum concurrent sessions supported.
-        available_slots: Currently free slots; derived from total minus active sessions.
+        total_slots: Optional hard cap on concurrent sessions. ``None`` indicates
+            that the runner reports unbounded capacity.
+        available_slots: Currently free slots when ``total_slots`` is known.
+            ``None`` is used when the runner does not provide slot telemetry.
         healthy: Whether the runner passes health checks.
         supports_vnc: Whether the runner can expose VNC previews.
         vnc_http_url_template: Optional public HTTP viewer template exposed via
@@ -282,11 +284,14 @@ class Runner(BaseModel):
     id: str = Field(min_length=1, description="Runner identifier")
     base_url: AnyUrl = Field(description="Base URL for runner control plane")
     state: RunnerState = Field(default=RunnerState.STARTING, description="Operational state")
-    total_slots: PositiveInt = Field(description="Total concurrent sessions supported")
+    total_slots: PositiveInt | None = Field(
+        default=None,
+        description="Total concurrent sessions supported when bounded",
+    )
     available_slots: int | None = Field(
         default=None,
         ge=0,
-        description="Number of free session slots (<= total_slots)",
+        description="Number of free session slots when capacity is reported",
     )
     healthy: bool = Field(default=True, description="True if health checks pass")
     supports_vnc: bool = Field(default=False, description="Runner can allocate VNC sessions")
@@ -351,14 +356,19 @@ class Runner(BaseModel):
             Runner(id='runner-1', base_url=AnyUrl('http://runner:8080', ...), ...)
         """
 
-        object.__setattr__(
-            self,
-            "available_slots",
-            self.total_slots if self.available_slots is None else self.available_slots,
-        )
-        if self.available_slots < 0:
+        if self.available_slots is None:
+            object.__setattr__(
+                self,
+                "available_slots",
+                self.total_slots,
+            )
+        if self.available_slots is not None and self.available_slots < 0:
             raise ValueError("available_slots must be >= 0")
-        if self.available_slots > self.total_slots:
+        if (
+            self.available_slots is not None
+            and self.total_slots is not None
+            and self.available_slots > self.total_slots
+        ):
             raise ValueError("available_slots cannot exceed total_slots")
         if self.state == RunnerState.OFFLINE and self.healthy:
             raise ValueError("offline runners cannot be marked healthy")

@@ -99,7 +99,7 @@ describe('DashboardPage', () => {
       id: 'runner-1',
       baseUrl: 'http://runner',
       state: 'idle',
-      totalSlots: 1,
+      totalSlots: null,
       availableSlots: 1,
       healthy: true,
       supportsVnc: true,

@@ -92,8 +92,11 @@ async def health(
 
     metrics = await manager.get_metrics()
     active_slots = metrics.active_sessions
-    total_slots = settings.slot_limit
-    available_slots = max(total_slots - active_slots, 0)
+    slots_payload = {
+        "total": None,
+        "active": active_slots,
+        "available": None,
+    }
     warm_pool_stats = manager.get_warm_pool_statistics()
     warm_pool_payload = {
         "enabled": warm_pool_stats is not None and warm_pool_stats.total > 0,
@@ -107,11 +110,9 @@ async def health(
         "status": "ok",
         "runner_id": settings.runner_id,
         "camoufox_path": str(settings.camoufox_path),
-        "slots": {
-            "total": total_slots,
-            "active": active_slots,
-            "available": available_slots,
-        },
+        # ``None`` values communicate that the runner does not enforce a hard
+        # cap on concurrent sessions while preserving schema compatibility.
+        "slots": slots_payload,
         "warm_pool": warm_pool_payload,
         "vnc": {
             "http_base_url": str(settings.vnc_http_base_url),

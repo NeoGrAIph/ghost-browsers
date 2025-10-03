@@ -18,6 +18,7 @@
   `wsEndpoint` при наличии и прокидывает fallback `publicWsEndpoint` для случаев,
   когда до runner'а нет прямого доступа.
 - `adaptVnc` гарантирует, что подписанный gateway-токен встроен в `httpUrl`/`websocketUrl` как query `token`, а также очищает устаревший `access_token`, чтобы iframe и веб-клиенты могли пользоваться ссылками без ручного вмешательства.
+- `RunnerStatusSchema` допускает `total_slots=null`, отображая «безлимитных» раннеров; адаптер `adaptRunnerStatus` нормализует значения в `totalSlots: null`.
 - Обновление прокси использует `SessionProxyUpdateSchema`, валидирующий наличие хотя бы одного URL
   перед вызовом `updateSessionProxy`.
 - Состояние фильтров в `store/sessionFilters.ts` (Zustand).
@@ -83,3 +84,4 @@
 - 2025-10-24 · gpt-5-codex · Добавлен Nginx-конфиг, проксирующий `/api` на gateway, и обновлена Docker-сборка для совместимости с docker-compose стеком.
 - 2025-10-25 · gpt-5-codex · UI адаптеры теперь дописывают `token` в VNC URL, обновлён `SessionDetailsPanel` тест для верификации iframe.
 - 2025-02-14 · gpt-5-codex · Верифицированы рабочие команды `pnpm install`, `pnpm -C apps/ui lint`, `pnpm -C apps/ui test`, `pnpm -C apps/ui build`.
+- 2025-10-28 · gpt-5-codex · UI принимает `totalSlots=null` от Gateway: обновлены Zod-схемы, адаптеры и тестовые моки.

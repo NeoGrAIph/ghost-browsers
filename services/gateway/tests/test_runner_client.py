@@ -27,7 +27,7 @@ def sample_runner() -> Runner:
     return Runner(
         id="runner-1",
         base_url="http://runner.example",
-        total_slots=1,
+        total_slots=None,
         supports_vnc=True,
     )
 

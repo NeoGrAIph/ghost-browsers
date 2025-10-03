@@ -69,7 +69,7 @@ def gateway_app() -> FastAPI:
             Runner(
                 id="runner-1",
                 base_url="http://runner-1",
-                total_slots=1,
+                total_slots=None,
                 supports_vnc=True,
                 vnc_http_url_template="https://vnc.example/view/{id}",
                 vnc_ws_url_template="wss://vnc.example/ws/{id}",
@@ -314,7 +314,7 @@ async def test_lifespan_restores_sessions_from_healthy_runners() -> None:
             json={
                 "status": "ok",
                 "runner_id": "runner-1",
-                "slots": {"total": 1, "available": 0},
+                "slots": {"total": None, "available": None},
                 "vnc": {"enabled": True},
             },
         )
@@ -325,7 +325,7 @@ async def test_lifespan_restores_sessions_from_healthy_runners() -> None:
             Runner(
                 id="runner-1",
                 base_url="http://runner-1",
-                total_slots=1,
+                total_slots=None,
                 supports_vnc=True,
             )
         ],
@@ -512,7 +512,7 @@ def test_create_command_returns_503_when_no_vnc_runner_available(
             Runner(
                 id="runner-2",
                 base_url="http://runner-2",
-                total_slots=1,
+                total_slots=None,
                 supports_vnc=False,
             )
         )
