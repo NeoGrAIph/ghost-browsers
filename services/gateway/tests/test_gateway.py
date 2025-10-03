@@ -630,7 +630,11 @@ async def test_sse_event_forwarding(gateway_app: FastAPI) -> None:
     iterator = response.body_iterator
     consumer = asyncio.create_task(iterator.__anext__())
     await asyncio.sleep(0)
-    result = await publish_session_event(event=event, bridge=bridge)
+    result = await publish_session_event(
+        event=event,
+        bridge=bridge,
+        _user=AuthenticatedUser(subject="tester", email="tester@example.com"),
+    )
     assert result.status_code == 202
     chunk = await asyncio.wait_for(consumer, timeout=1)
     text = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
