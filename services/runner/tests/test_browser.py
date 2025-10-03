@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import pytest
 
@@ -58,19 +58,33 @@ class _DummyProcess:
         self.returncode = 0
 
 
-@pytest.mark.anyio
-async def test_launch_browser_injects_browser_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure the default Playwright command includes the required browser flag."""
-
-    recorded: dict[str, Any] = {}
-
+def _make_launch_stub(recorded: dict[str, Any], payload: bytes) -> Callable[..., Awaitable[_DummyProcess]]:
     async def _fake_subprocess_exec(*args: Any, **kwargs: Any) -> _DummyProcess:
         recorded["args"] = args
         recorded["env"] = kwargs.get("env", {})
-        payload = json.dumps({"wsEndpoint": "ws://dummy"}).encode("utf-8") + b"\n"
         return _DummyProcess(payload)
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_subprocess_exec)
+    return _fake_subprocess_exec
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        (json.dumps({"wsEndpoint": "ws://dummy-json"}).encode("utf-8") + b"\n", "ws://dummy-json"),
+        (b"Websocket endpoint:\x1b[93m ws://dummy-ansi \x1b[0m\n", "ws://dummy-ansi"),
+        (b"ws://dummy-plain\n", "ws://dummy-plain"),
+    ],
+)
+async def test_launch_browser_parses_ws_payload(
+    payload: bytes,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure the launcher accepts JSON, ANSI-decorated, and plain ws payloads."""
+
+    recorded: dict[str, Any] = {}
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _make_launch_stub(recorded, payload))
     settings = RunnerSettings(runner_id="runner-test", camoufox_path="/usr/bin/camoufox")
 
     handle = await launch_browser(settings, browser="camoufox", headless=True)
@@ -79,7 +93,7 @@ async def test_launch_browser_injects_browser_flag(monkeypatch: pytest.MonkeyPat
     assert args[:3] == ("playwright", "launch-server", "--browser")
     assert args[3] == "firefox"
     assert recorded["env"]["CAMOUFOX_BINARY"] == str(settings.camoufox_path)
-    assert handle.ws_endpoint == "ws://dummy"
+    assert handle.ws_endpoint == expected
 
 
 def test_resolve_playwright_browser_name() -> None:

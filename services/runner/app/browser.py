@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from asyncio.subprocess import Process
 from dataclasses import dataclass
 from typing import Mapping, Sequence
@@ -188,11 +189,30 @@ async def launch_browser(
         raise BrowserLaunchError("Playwright exited without providing wsEndpoint")
 
     try:
-        payload = json.loads(raw.decode("utf-8"))
-        ws_endpoint = payload["wsEndpoint"]
-    except (json.JSONDecodeError, KeyError, UnicodeDecodeError) as exc:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
         await _terminate_process(process, force=True)
-        raise BrowserLaunchError("Invalid wsEndpoint payload from Playwright") from exc
+        raise BrowserLaunchError("wsEndpoint payload contains invalid UTF-8") from exc
+
+    ws_endpoint: str | None = None
+    try:
+        payload = json.loads(decoded)
+    except json.JSONDecodeError:
+        text = decoded.strip()
+        if text:
+            match = re.search(r"wss?://[^\s\x1b]+", text)
+            if match:
+                ws_endpoint = match.group(0)
+        if ws_endpoint is None:
+            await _terminate_process(process, force=True)
+            raise BrowserLaunchError(
+                f"Invalid wsEndpoint payload from Playwright: {text!r}"
+            )
+    else:
+        ws_endpoint = payload.get("wsEndpoint") if isinstance(payload, dict) else None
+        if not ws_endpoint:
+            await _terminate_process(process, force=True)
+            raise BrowserLaunchError("Playwright JSON payload missing wsEndpoint")
 
     if not isinstance(ws_endpoint, str) or not ws_endpoint.strip():
         await _terminate_process(process, force=True)
@@ -205,7 +225,9 @@ async def launch_browser(
             f"Playwright exited prematurely with code {process.returncode}: {message}"
         )
 
-    return BrowserSessionHandle(ws_endpoint=ws_endpoint.strip(), process=process)
+    ws_endpoint = ws_endpoint.strip()
+
+    return BrowserSessionHandle(ws_endpoint=ws_endpoint, process=process)
 
 
 async def _terminate_process(process: Process, *, force: bool = False) -> None:
