@@ -29,12 +29,14 @@
 - Команда создания формирует payload (`browserName`, `region`, `proxyId`, `runnerId?`) на базе выбранных справочников; при отсутствии явного `runnerId` подбор выполняет Gateway.
 - Worker статус-панель повторно использует те же данные `/runners`, что и composer, для единого источника правды.
 - Состояние `SessionComposerValues` хранит дополнительные поля (`headless`, `idleTtlSeconds`, `startUrl*`, `proxy*`), чтобы API-адаптер мог формировать полный payload Runner даже до появления соответствующего UI.
+- Продакшн-сборка распространяется как статический бандл Vite внутри `nginx:alpine`; Dockerfile принимает build-arg `VITE_GATEWAY_URL` и вызывается через `make ui-image`.
 
 ## Constraints & Invariants
 - Все сетевые вызовы через `ApiClient` (`fetch` + Zod валидация).
 - SSE обязателен для консистентного кеша React Query.
 - `SessionComposer` отправляет минимум (`browserName`, `region`, `proxyId?`) и при явном выборе прокидывает `runnerId`.
 - Токен Keycloak обновляется каждые 20 сек. и при событии `onTokenExpired`.
+- `VITE_GATEWAY_URL` должен быть определён на этапе сборки (`pnpm build`/`docker build`), иначе фронтенд не сможет обратиться к Gateway.
 
 ## Known Gaps / TODO
 - [x] Реальные справочники браузеров/регионов/прокси брать с backend вместо захардкоженных значений (через `/runners` + агрегацию `buildSessionComposerData`).
@@ -47,6 +49,7 @@
 - `pnpm -C apps/ui lint`
 - `pnpm -C apps/ui test`
 - `pnpm -C apps/ui dev` — локальный просмотр (требуются переменные VITE_GATEWAY_URL/Keycloak).
+- `make ui-image UI_EXTRA_BUILD_ARGS="--build-arg VITE_GATEWAY_URL=<url>"` — проверка Docker-сборки (линт/тесты выполняются внутри таргета).
 
 ## Changelog (for agents)
 - 2024-09-08 · gpt-5-codex · Начальная реализация консоли: авторизация, список/детали сессий, создание/удаление, SSE, темы, базовые тесты.
@@ -64,3 +67,6 @@
 - 2025-10-15 · gpt-5-codex · Синхронизировали модель `SessionComposerValues` с адаптером создания сессий, устранив lint-ошибки по небезопасным полям.
 - 2025-10-15 · gpt-5-codex · Уточнены моки React Query/API в тестах DashboardPage для строгой типизации ESLint; адаптер
   `buildSessionCreatePayload` теперь использует явный тип `SessionComposerSubmission`.
+- 2025-10-22 · gpt-5-codex · Добавлены Dockerfile UI, make-таргет `ui-image`, workflow публикации образа и документация по `VITE_GATEWAY_URL`.
+- 2025-10-23 · gpt-5-codex · Исправлены витесты DashboardPage: моки `useMutation` поддерживают `reset`/`isSuccess`, а `openSessionEventStream`
+  возвращает безопасный EventSource, благодаря чему `pnpm -C apps/ui test` снова проходит.

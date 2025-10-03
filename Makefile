@@ -1,4 +1,4 @@
-.PHONY: bootstrap check runner-image runner-image-publish gateway-image gateway-image-publish vnc-gateway-image vnc-gateway-image-publish
+.PHONY: bootstrap check runner-image runner-image-publish gateway-image gateway-image-publish vnc-gateway-image vnc-gateway-image-publish ui-image
 
 RUNNER_IMAGE ?= ghost-runner:local
 RUNNER_DOCKERFILE ?= services/runner/Dockerfile
@@ -26,6 +26,12 @@ VNC_GATEWAY_BUILD_ARGS := $(VNC_GATEWAY_EXTRA_BUILD_ARGS)
 VNC_GATEWAY_SIGN ?= false
 VNC_GATEWAY_COSIGN_ARGS ?= --yes
 VNC_GATEWAY_SMOKE_CMD := poetry install --with dev --no-root --no-interaction && poetry run ruff check . && poetry run pytest -q
+
+UI_IMAGE ?= ghost-ui:local
+UI_DOCKERFILE ?= apps/ui/Dockerfile
+UI_CONTEXT ?= .
+UI_EXTRA_BUILD_ARGS ?=
+UI_BUILD_ARGS := $(UI_EXTRA_BUILD_ARGS)
 
 bootstrap:
         pnpm install
@@ -69,3 +75,8 @@ vnc-gateway-image-publish: vnc-gateway-image
         @if [ "$(VNC_GATEWAY_SIGN)" = "true" ]; then \
         cosign sign $(VNC_GATEWAY_COSIGN_ARGS) $(VNC_GATEWAY_IMAGE); \
         fi
+
+ui-image:
+        pnpm -C apps/ui lint
+        pnpm -C apps/ui test
+        docker buildx build --load -f $(UI_DOCKERFILE) -t $(UI_IMAGE) $(UI_BUILD_ARGS) $(UI_CONTEXT)
