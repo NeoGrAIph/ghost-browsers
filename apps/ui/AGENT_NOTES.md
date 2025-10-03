@@ -57,6 +57,8 @@
 - `make ui-image UI_EXTRA_BUILD_ARGS="--build-arg VITE_GATEWAY_URL=<url>"` — проверка Docker-сборки (линт/тесты выполняются внутри таргета).
 
 ## Changelog (for agents)
+- 2025-11-19 · gpt-5-codex · Восстановлен entry-point `index.html`, из-за отсутствия которого `pnpm build` и Docker-сборка падали, и
+  вычищен lint-варнинг в тесте `SessionDetailsPanel`.
 - 2025-10-03 · gpt-5-codex · Добавлен offline-фоллбек в `AuthProvider` и витест, проверяющий
   отрисовку Dashboard без Keycloak.
 - 2024-09-08 · gpt-5-codex · Начальная реализация консоли: авторизация, список/детали сессий, создание/удаление, SSE, темы, базовые тесты.
