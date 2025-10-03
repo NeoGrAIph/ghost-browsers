@@ -321,7 +321,28 @@ class SessionManager:
                 if session.status is not SessionStatus.DEAD:
                     self._active_sessions += 1
                     ACTIVE_SESSIONS_GAUGE.set(self._active_sessions)
-                await self._publish(session, SessionEventType.CREATED, reason=None)
+                try:
+                    await self._publish(session, SessionEventType.CREATED, reason=None)
+                except Exception:
+                    self._sessions.pop(session_id, None)
+                    browser_handle = self._browser_handles.pop(session_id, None)
+                    warm_tracked = session_id in self._warm_sessions
+                    if session.status is not SessionStatus.DEAD:
+                        self._active_sessions = max(0, self._active_sessions - 1)
+                    ACTIVE_SESSIONS_GAUGE.set(self._active_sessions)
+                    with contextlib.suppress(Exception):
+                        if session_id in self._vnc_handles:
+                            await self._release_vnc_handle(session_id)
+                        else:
+                            await self._discard_vnc_handle(session_id, vnc_handle)
+                    with contextlib.suppress(Exception):
+                        if warm_tracked:
+                            await self._release_warm_slot(session_id)
+                        elif browser_handle is not None:
+                            await self._safe_shutdown_cold_browser(browser_handle)
+                    VNC_ALLOCATIONS_GAUGE.set(len(self._vnc_handles))
+                    self._recalculate_next_idle_expiry_locked()
+                    raise
                 return session
         finally:
             SESSION_ALLOCATE_SECONDS.observe(perf_counter() - start_time)

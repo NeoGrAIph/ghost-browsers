@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { openSessionEventStream } from './client';
 
@@ -64,5 +64,26 @@ describe('openSessionEventStream', () => {
     expect(MockEventSource.createdUrls[0]).not.toContain('access_token=');
 
     eventSource.close();
+  });
+
+  it('normalises relative gateway URLs against the current origin', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_GATEWAY_URL', '/api');
+
+    try {
+      const { openSessionEventStream: relativeOpenSessionEventStream } = await import('./client');
+
+      const { eventSource } = relativeOpenSessionEventStream({ token: 'xyz' });
+
+      expect(MockEventSource.createdUrls).toHaveLength(1);
+      expect(MockEventSource.createdUrls[0]).toContain('/api/events');
+      expect(MockEventSource.createdUrls[0]).toContain('access_token=xyz');
+      expect(MockEventSource.createdUrls[0].startsWith(window.location.origin)).toBe(true);
+
+      eventSource.close();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });

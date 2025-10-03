@@ -177,3 +177,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-31 · gpt-5-codex · Docker-образ расширен системными шрифтами, Windows-наборами, локалями и VNC-бинарями (Xvfb/x11vnc/websockify/noVNC) при сохранении поэтапной установки зависимостей через Poetry.
 - 2025-10-31 · gpt-5-codex · Сессии, созданные на warm-слотах, теперь запоминают workstation-метаданные и очищают их при релизе; добавлены проверки в unit-тестах.
 - 2025-10-31 · gpt-5-codex · Синхронизирован флаг `vnc_enabled` с реальными VNC-деталями и добавлены регрессионные тесты на headless и сбойную аллокацию.
+- 2025-10-31 · gpt-5-codex · Защищено `SessionManager.create_session` от сбоев публикации: откат аллокаций warm/VNC, обновлены метрики и добавлен регрессионный тест.

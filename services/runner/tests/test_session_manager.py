@@ -26,6 +26,7 @@ from app.warm_pool import (
     WarmPoolStatistics,
 )
 from core.models import (
+    SessionEvent,
     SessionEventType,
     SessionProxySettings,
     SessionStatus,
@@ -228,6 +229,22 @@ def stub_vnc_controller() -> _StubVncController:
     return _StubVncController()
 
 
+class _FailingSessionEventPublisher:
+    """Session event publisher double that raises to emulate transport failures."""
+
+    def __init__(self, exc: Exception | None = None) -> None:
+        """Initialise the publisher with an optional exception to propagate."""
+
+        self._exc = exc or RuntimeError("session publish failure")
+        self.events: list[SessionEvent] = []
+
+    async def publish(self, event: SessionEvent) -> None:
+        """Record the attempted event and raise the configured exception."""
+
+        self.events.append(event)
+        raise self._exc
+
+
 @pytest.mark.anyio("asyncio")
 async def test_create_session_emits_event_and_vnc_stub(
     stub_vnc_controller: _StubVncController,
@@ -278,6 +295,43 @@ async def test_create_session_emits_event_and_vnc_stub(
     assert events[0].type is SessionEventType.CREATED
     assert events[0].session.id == session.id
     assert events[0].occurred_at == clock_now
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_rolls_back_state_when_publish_fails(
+    stub_vnc_controller: _StubVncController,
+) -> None:
+    """Publish failures during creation must roll back all allocations."""
+
+    def _sample(name: str) -> float:
+        value = METRICS_REGISTRY.get_sample_value(name)
+        return 0.0 if value is None else value
+
+    publisher = _FailingSessionEventPublisher()
+    manager, warm_pool = _build_manager(
+        RunnerSettings(runner_id="runner-publish-fail", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        vnc_controller=stub_vnc_controller,
+    )
+    assert warm_pool is not None
+
+    baseline_active = _sample("runner_active_sessions")
+    baseline_vnc = _sample("runner_vnc_allocations")
+
+    with pytest.raises(RuntimeError):
+        await manager.create_session(SessionCreatePayload(headless=False))
+
+    assert len(manager._sessions) == 0
+    assert manager._browser_handles == {}
+    assert manager._warm_sessions == {}
+    assert manager._vnc_handles == {}
+    assert manager._next_idle_expiry_at is None
+    assert manager._active_sessions == 0
+
+    assert len(warm_pool.releases) == 1
+    assert all(handle.released for handle in stub_vnc_controller.handles.values())
+    assert _sample("runner_active_sessions") == pytest.approx(baseline_active)
+    assert _sample("runner_vnc_allocations") == pytest.approx(baseline_vnc)
 
 
 @pytest.mark.anyio("asyncio")

@@ -196,7 +196,26 @@ export const deleteSession = (sessionId: string, headers?: AuthHeaders) =>
  * support function correctly.
  */
 export const openSessionEventStream = (headers?: AuthHeaders) => {
-  const url = new URL(createUrl(gatewayUrl, '/events'));
+  const eventsPath = createUrl(gatewayUrl, '/events');
+  let url: URL;
+
+  try {
+    url = new URL(eventsPath);
+  } catch (error) {
+    const origin =
+      typeof window !== 'undefined' && typeof window.location?.origin === 'string'
+        ? window.location.origin
+        : undefined;
+
+    if (!origin) {
+      throw error;
+    }
+
+    // Relative gateway URLs (e.g. "/api") are resolved against the current origin so
+    // the EventSource receives an absolute URL compatible with native implementations.
+    url = new URL(eventsPath, origin);
+  }
+
   if (headers?.token) {
     url.searchParams.set('access_token', headers.token);
   }

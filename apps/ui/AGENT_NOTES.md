@@ -84,3 +84,4 @@
 - 2025-10-25 · gpt-5-codex · UI адаптеры теперь дописывают `token` в VNC URL, обновлён `SessionDetailsPanel` тест для верификации iframe.
 - 2025-02-14 · gpt-5-codex · Верифицированы рабочие команды `pnpm install`, `pnpm -C apps/ui lint`, `pnpm -C apps/ui test`, `pnpm -C apps/ui build`.
 - 2025-10-26 · gpt-5-codex · Добавлена обработка ошибки загрузки сессий в DashboardPage с баннером повторной попытки и покрывающим витестом.
+- 2025-10-26 · gpt-5-codex · Нормализован SSE-клиент при относительном `VITE_GATEWAY_URL`, добавлен витест, проверяющий абсолютный URL EventSource.
