@@ -31,6 +31,7 @@ Camoufox worker обеспечивает выполнение короткожи
   `camoufox` лёгкой заглушкой до monkeypatch'ей тестов.
 * Dockerfile устанавливает зависимости через Poetry (`poetry.lock`), копирует `worker/` и `bin/worker-launch.sh` под пользователем `pwuser` и допускает переопределение версии `camoufox` build-аргументом.
 * `worker.queue` реализует консьюмера задач с поддержкой Redis Streams, AMQP и in-memory backend, ретраями/идемпотентностью, Prometheus-метриками и структурированными JSON-логами. Исполнители инжектируются, что позволяет переопределять стратегию запуска задач.
+* Helm chart `docs/helm/platform` разворачивает worker рядом с Gateway/Runner, позволяет объявлять секреты (`GATEWAY_TOKEN`, proxy creds) через `secretEnv` и пример `camoufox-worker.values.yaml`.
 
 ## Constraints & Invariants
 * Выполнение под non-root пользователем, без `pip install`/`camoufox fetch` в рантайме.
@@ -67,4 +68,5 @@ Camoufox worker обеспечивает выполнение короткожи
   обновлены инструкции по зависимостям и тестам.
 * 2025-02-24 · ChatGPT · Добавлен модуль очереди с Redis/AMQP адаптерами, Prometheus метриками, тумблерами профиля и тестами интеграций.
 * 2025-02-26 · ChatGPT · Интегрирован FastAPI worker (REST/VNC/WebSocket), добавлены конфиги `worker.config`, обязательные флаги браузера и unit-тесты `test_service.py`; обновлены зависимости Poetry.
+* 2025-10-03 · gpt-5-codex · Добавлены Helm-шаблоны/values для camoufox-worker с примерами секретов и описанием деплоя.
 * 2025-10-14 · gpt-5-codex · Возврат прямого runner `ws_endpoint` в REST-ответах и добавление поля `ws_proxy_endpoint` вместо перезаписи URL прокси.

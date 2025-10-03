@@ -1,0 +1,123 @@
+fullnameOverride: ""
+nameOverride: ""
+
+imagePullSecrets: []
+serviceAccountName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+gateway:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/gateway
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  env: {}
+  secretEnv: []
+  extraEnvFromSecrets: []
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+
+runner:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/runner
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  env: {}
+  secretEnv: []
+  extraEnvFromSecrets: []
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+
+vncGateway:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/vnc-gateway
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  env: {}
+  secretEnv: []
+  extraEnvFromSecrets: []
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+
+ui:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  env: {}
+  secretEnv: []
+  extraEnvFromSecrets: []
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+
+camoufoxWorker:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/camoufox-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  env: {}
+  secretEnv: []
+  extraEnvFromSecrets: []
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}

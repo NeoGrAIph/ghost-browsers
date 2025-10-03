@@ -1,0 +1,31 @@
+runner:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/acme/ghost-runner
+    tag: v1.4.0
+  service:
+    type: ClusterIP
+    port: 8080
+  env:
+    RUNNER_ID: runner-a
+    SLOT_LIMIT: "4"
+    VNC_ENABLED: "true"
+    VNC_HTTP_BASE_URL: https://vnc.example.com
+    VNC_WS_BASE_URL: wss://vnc.example.com
+    VNC_TOKEN_TTL_SECONDS: "300"
+    WARM_POOL_MODE: hybrid
+    WARM_POOL_CONFIG_PATH: /config/warm-pool.json
+    CAMOUFOX_HEADLESS: virtual
+  secretEnv:
+    - name: CAMOUFOX_API_TOKEN
+      secretName: camoufox-credentials
+      secretKey: apiToken
+  extraEnvFromSecrets:
+    - runner-proxy-credentials
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      cpu: 2
+      memory: 4Gi

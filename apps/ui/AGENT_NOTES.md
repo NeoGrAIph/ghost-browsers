@@ -30,6 +30,7 @@
 - Worker статус-панель повторно использует те же данные `/runners`, что и composer, для единого источника правды.
 - Состояние `SessionComposerValues` хранит дополнительные поля (`headless`, `idleTtlSeconds`, `startUrl*`, `proxy*`), чтобы API-адаптер мог формировать полный payload Runner даже до появления соответствующего UI.
 - Продакшн-сборка распространяется как статический бандл Vite внутри `nginx:alpine`; Dockerfile принимает build-arg `VITE_GATEWAY_URL` и вызывается через `make ui-image`.
+- Helm chart `docs/helm/platform` описывает деплой UI (Deployment/Service/Ingress) и позволяет прокидывать Keycloak секреты через `secretEnv` при запуске контейнера.
 
 ## Constraints & Invariants
 - Все сетевые вызовы через `ApiClient` (`fetch` + Zod валидация).
@@ -64,6 +65,7 @@
 - 2025-10-20 · gpt-5-codex · Добавлена форма редактирования прокси сессии, клиент `updateSessionProxy`, локальная валидация и RTL-тесты кеширования.
 - 2025-10-21 · gpt-5-codex · Расширены `SessionComposerValues` и дефолтные значения для поддержки адаптера создания сессии и строгих правил ESLint.
 - 2025-10-02 · gpt-5-codex · Добавлен стор для отслеживания SSE, обработка превышения ретраев и баннер повторного подключения.
+- 2025-10-03 · gpt-5-codex · Добавлены Helm-шаблоны/values для UI и документация по установке с секретами Keycloak.
 - 2025-10-15 · gpt-5-codex · Синхронизировали модель `SessionComposerValues` с адаптером создания сессий, устранив lint-ошибки по небезопасным полям.
 - 2025-10-15 · gpt-5-codex · Уточнены моки React Query/API в тестах DashboardPage для строгой типизации ESLint; адаптер
   `buildSessionCreatePayload` теперь использует явный тип `SessionComposerSubmission`.

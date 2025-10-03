@@ -1,0 +1,85 @@
+{{- if .Values.vncGateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ghost-platform.componentName" (list . "vnc-gateway") }}
+  labels:
+    app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+    app.kubernetes.io/component: vnc-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+spec:
+  replicas: {{ .Values.vncGateway.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+      app.kubernetes.io/component: vnc-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+        app.kubernetes.io/component: vnc-gateway
+{{- with .Values.vncGateway.podLabels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.vncGateway.podAnnotations }}
+      annotations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+{{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- range .Values.imagePullSecrets }}
+        - name: {{ .name }}
+{{- end }}
+{{- end }}
+{{- if .Values.serviceAccountName }}
+      serviceAccountName: {{ .Values.serviceAccountName }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      containers:
+        - name: vnc-gateway
+          image: "{{ .Values.vncGateway.image.repository }}:{{ .Values.vncGateway.image.tag }}"
+          imagePullPolicy: {{ .Values.vncGateway.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.vncGateway.service.port }}
+              name: http
+{{- $hasEnv := or (gt (len .Values.vncGateway.env) 0) (gt (len .Values.vncGateway.secretEnv) 0) }}
+{{- if $hasEnv }}
+          env:
+{{- range $key, $value := .Values.vncGateway.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+{{- end }}
+{{- range .Values.vncGateway.secretEnv }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .secretKey }}
+{{- end }}
+{{- end }}
+{{- if .Values.vncGateway.extraEnvFromSecrets }}
+          envFrom:
+{{- range .Values.vncGateway.extraEnvFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+{{- end }}
+{{- end }}
+{{- with .Values.vncGateway.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+{{- end }}

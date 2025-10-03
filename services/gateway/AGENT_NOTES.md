@@ -72,6 +72,8 @@
   чтобы собрать `uvicorn[standard]` зависимости, и Poetry 1.8.3 создает локальное venv. Entry-point использует
   `uvicorn app.main:create_app`, чтобы запускать приложение через фабрику и корректно применять конфигурацию.
   Публикация в GHCR сопровождается опциональной подписью Cosign (переключается флагом `sign_image`).
+- Helm chart `docs/helm/platform` описывает деплой Gateway вместе с другими контрол-плейн сервисами, поддерживая передачу
+  переменных окружения и Secret-значений (Keycloak, `VNC_TOKEN_SECRET`) через `secretEnv`/`extraEnvFromSecrets`.
 
 ## Constraints & Invariants
 - `VNC_TOKEN_TTL_SEC` всегда ≤300; нарушение приводит к `ValueError` на старте.
@@ -107,6 +109,7 @@
 - 2025-10-01 · OpenAI ChatGPT · Реализован FastAPI gateway (REST/SSE/WS), Keycloak JWT, VNC-токены и покрывающие unit-тесты.
 - 2025-10-02 · OpenAI ChatGPT · Добавлены публичные VNC-шаблоны для раннеров и переписывание URL при создании сессий по образцу beta-control-plane.
 - 2025-10-03 · gpt-5-codex · Вынесен VNC JWT секрет в конфигурацию и синхронизирован с VNC Gateway.
+- 2025-10-03 · gpt-5-codex · Задокументирован Helm-чарт control plane (templates + values) с опциями для секретов Gateway.
 - 2025-10-05 · gpt-5-codex · Уточнена логика выдачи VNC токенов при пустых значениях от Runner и добавлены покрывающие тесты.
 - 2025-10-06 · gpt-5-codex · Разрешена аутентификация SSE через query `access_token`, добавлен unit-тест маршрута `/events`.
 - 2025-10-07 · gpt-5-codex · Добавлены командные эндпоинты `/sessions/commands*`, httpx-клиент Runner и покрывающие тесты.

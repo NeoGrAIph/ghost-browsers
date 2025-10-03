@@ -1,0 +1,38 @@
+{{- if and .Values.ui.enabled .Values.ui.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ghost-platform.componentName" (list . "ui") }}
+  labels:
+    app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+    app.kubernetes.io/component: ui
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- with .Values.ui.ingress.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+{{- with .Values.ui.ingress.className }}
+  ingressClassName: {{ . }}
+{{- end }}
+  rules:
+{{- range .Values.ui.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths:
+{{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ include "ghost-platform.componentName" (list $ "ui") }}
+                port:
+                  number: {{ $.Values.ui.service.port }}
+{{- end }}
+{{- end }}
+{{- with .Values.ui.ingress.tls }}
+  tls:
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,85 @@
+{{- if .Values.camoufoxWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ghost-platform.componentName" (list . "camoufox-worker") }}
+  labels:
+    app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+    app.kubernetes.io/component: camoufox-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+spec:
+  replicas: {{ .Values.camoufoxWorker.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+      app.kubernetes.io/component: camoufox-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+        app.kubernetes.io/component: camoufox-worker
+{{- with .Values.camoufoxWorker.podLabels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.camoufoxWorker.podAnnotations }}
+      annotations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+{{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- range .Values.imagePullSecrets }}
+        - name: {{ .name }}
+{{- end }}
+{{- end }}
+{{- if .Values.serviceAccountName }}
+      serviceAccountName: {{ .Values.serviceAccountName }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      containers:
+        - name: camoufox-worker
+          image: "{{ .Values.camoufoxWorker.image.repository }}:{{ .Values.camoufoxWorker.image.tag }}"
+          imagePullPolicy: {{ .Values.camoufoxWorker.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.camoufoxWorker.service.port }}
+              name: http
+{{- $hasEnv := or (gt (len .Values.camoufoxWorker.env) 0) (gt (len .Values.camoufoxWorker.secretEnv) 0) }}
+{{- if $hasEnv }}
+          env:
+{{- range $key, $value := .Values.camoufoxWorker.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+{{- end }}
+{{- range .Values.camoufoxWorker.secretEnv }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .secretKey }}
+{{- end }}
+{{- end }}
+{{- if .Values.camoufoxWorker.extraEnvFromSecrets }}
+          envFrom:
+{{- range .Values.camoufoxWorker.extraEnvFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+{{- end }}
+{{- end }}
+{{- with .Values.camoufoxWorker.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+{{- end }}

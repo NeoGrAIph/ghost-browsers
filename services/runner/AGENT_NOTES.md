@@ -81,6 +81,8 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   переключается на `launch_browser`, если гибридный режим не находит idle-слота, и
   добавляет в метаданные `browser_origin` с деталями источника.
 - **Gateway proxy compatibility**: `SessionCreatePayload` остаётся публичным контрактом, но теперь вызывается через Gateway, потому важна обратная совместимость и строгая валидация.
+- **Helm deployment**: общий чарт `docs/helm/platform` разворачивает Runner вместе с Gateway/VNC/UI, позволяет прокидывать переменные
+  окружения и секреты (`secretEnv`, `extraEnvFromSecrets`) для токенов Camoufox, прокси и warm-pool конфигураций.
 - **Playwright launch lifecycle**: `app.browser.launch_browser` стартует Playwright в режиме `launch-server`, сохраняет `wsEndpoint`/PID в метаданных и позволяет `SessionManager` останавливать процесс при переходе в `DEAD` или очистке endpoint. Исключения при старте выполняют откат без публикации событий.
 - **Idle TTL reaper**: `SessionManager` содержит AnyIO-based reaper, который вызывает
   `reap_expired_sessions`, завершает истёкшие по `idle_ttl_seconds` сессии и публикует события
@@ -132,6 +134,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 ## Changelog (for agents)
 - 2024-09-22 · OpenAI ChatGPT · Расширен `/health`, добавлены метрики/история prewarm, новые настройки и модульные тесты.
 - 2025-10-03 · gpt-5-codex · Добавлен Dockerfile на базе Playwright-образа, Poetry-инсталляция зависимостей и `.dockerignore` для сборки runner внутри контейнера без выполнения `camoufox fetch`.
+- 2025-10-03 · gpt-5-codex · Подготовлены Helm-шаблоны и образцы values для Runner (секреты Camoufox/прокси, ресурсы) и обновлена документация по деплою.
 - 2025-10-05 · gpt-5-codex · Sanitised runner VNC payloads to defer token issuance to the gateway and extended unit tests.
 - 2025-10-07 · gpt-5-codex · Зафиксировано использование in-memory event publisher как основного транспорта, обновлены Known Gaps.
 - 2025-10-08 · gpt-5-codex · Добавлен HTTP publisher (`POST /events`) и покрытие unit-тестами + конфиг-переключатель в зависимостях.

@@ -42,3 +42,56 @@
   OTLP-экспортёр, когда `VNC_GATEWAY_METRICS_BACKEND=otlp`.
 
 > Секреты не хранятся в VCS. Используйте `.env` локально и Secret в k3s.
+
+## Helm deployment
+
+Набор чарта для control-plane компонентов расположен в `docs/helm/platform`. Он
+собирает Deployments/Services/Ingress для `gateway`, `runner`, `vnc-gateway`,
+`ui` и `camoufox-worker`, поддерживает передачу переменных окружения и Secret-
+значений (например, `VNC_TOKEN_SECRET`, Keycloak client secret, токены Camoufox).
+
+1. Подготовьте namespace и базовые Secret'ы:
+
+   ```bash
+   kubectl create namespace ghost
+   kubectl create secret generic gateway-keycloak \
+     --namespace ghost \
+     --from-literal=clientSecret=... && \
+   kubectl create secret generic gateway-vnc \
+     --namespace ghost \
+     --from-literal=token=...
+   ```
+
+   Аналогично создайте секреты для Runner (`camoufox-credentials`), UI
+   (`ui-keycloak`), camoufox-worker (`worker-gateway-token`) и т.д. либо
+   подключите существующие Secret'ы через `extraEnvFromSecrets`.
+
+2. Выберите значения для окружения. В каталоге `docs/helm/platform` приведены
+   примеры (`gateway.values.yaml`, `runner.values.yaml`, `vnc-gateway.values.yaml`,
+   `ui.values.yaml`, `camoufox-worker.values.yaml`). Их можно комбинировать или
+   использовать как шаблон для собственного файла.
+
+3. Установите релиз Helm, передав необходимые overrides:
+
+   ```bash
+   helm install ghost ./docs/helm/platform \
+     --namespace ghost --create-namespace \
+     -f docs/helm/platform/values.yaml \
+     -f docs/helm/platform/gateway.values.yaml \
+     -f docs/helm/platform/runner.values.yaml \
+     -f docs/helm/platform/vnc-gateway.values.yaml \
+     -f docs/helm/platform/ui.values.yaml \
+     -f docs/helm/platform/camoufox-worker.values.yaml
+   ```
+
+   Для обновления конфигурации используйте `helm upgrade ghost ./docs/helm/platform -f ...`.
+
+4. Проверяйте состояние релиза стандартными командами Helm/Kubernetes:
+
+   ```bash
+   helm status ghost -n ghost
+   kubectl get pods,svc,ingress -n ghost
+   ```
+
+> Чарт не создаёт Secret'ы автоматически — их нужно подготовить заранее или
+> подключить существующие через `secretEnv`/`extraEnvFromSecrets`.
