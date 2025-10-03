@@ -124,7 +124,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 
 ## How to Test
 - `poetry install --no-root`
-- `PYTHONPATH=. poetry run pytest -q` (anyio-powered unit tests)
+- `poetry run pytest -q` (anyio-powered unit tests)
 - `poetry run ruff check .`
 - `make runner-image` — соберёт контейнер, выполнит `poetry check`, `poetry install --with dev --no-root`, `PYTHONPATH=. poetry run pytest -q`, `python -m camoufox path` и `python -m camoufox version` внутри образа.
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_config_warm_pool.py -q`
@@ -161,3 +161,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-27 · gpt-5-codex · Добавлен make-таргет/CI-контур для сборки runner-образа с контейнерными тестами и подписями cosign.
 - 2025-10-28 · gpt-5-codex · Документирован локальный парк прогретых рабочих станций и примеры конфигов для docker compose.
 - 2025-10-29 · gpt-5-codex · Перевели docker compose на гибридный режим тёплого пула, чтобы локально запускались холодные сессии при исчерпании парка.
+- 2025-10-30 · gpt-5-codex · Добавлены pytest-конфигурации для автоматического импорта пакета `app` и задан `PYTHONPATH` внутри контейнера Runner, чтобы `uvicorn` и тесты работали без ручных переменных окружения.
