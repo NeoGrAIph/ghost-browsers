@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import Request, WebSocket
-
 from core import AbstractSessionEventBridge
+from fastapi import Request, WebSocket
 
 from ..security import VncTokenService
 from ..services.runner_client import RunnerCommandClient

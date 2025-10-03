@@ -8,7 +8,6 @@ from core import (
     WorkstationEvent,
     WorkstationEventType,
     WorkstationMeta,
-    WorkstationState,
 )
 from pydantic import BaseModel, ConfigDict, Field
 

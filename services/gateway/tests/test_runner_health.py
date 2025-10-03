@@ -6,10 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from core import Runner
-
 from app.services.runner_health import RunnerHealthClient
 from app.services.runner_registry import RunnerRegistry
+from core import Runner
 
 
 @pytest.fixture()

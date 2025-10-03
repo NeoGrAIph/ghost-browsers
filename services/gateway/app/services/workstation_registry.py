@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from core import WorkstationEvent, WorkstationMeta, WorkstationState
+from core import WorkstationEvent, WorkstationMeta
 
 from ..models.workstations import WorkstationRecord
 

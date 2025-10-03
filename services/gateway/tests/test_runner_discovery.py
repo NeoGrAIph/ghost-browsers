@@ -8,8 +8,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from core import Runner, Session, SessionStatus
-
 from app.config import GatewaySettings
 from app.services.discovery import (
     HttpRunnerDiscoveryBackend,
@@ -20,6 +18,7 @@ from app.services.discovery import (
 )
 from app.services.runner_registry import RunnerRegistry
 from app.services.session_registry import SessionRegistry
+from core import Runner, Session, SessionStatus
 
 
 @pytest.fixture()
