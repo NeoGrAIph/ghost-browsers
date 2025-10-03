@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from ..deps import get_event_bridge
 from ..deps.security import authenticate_websocket, get_authenticator, get_current_user
-from ..security import AuthenticatedUser, KeycloakAuthenticator
+from ..security import AuthenticatedUser, AuthenticationError, KeycloakAuthenticator
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -65,7 +65,10 @@ async def websocket_events(
 ) -> None:
     """Relay session events over a WebSocket connection."""
 
-    await authenticate_websocket(websocket, authenticator)
+    try:
+        await authenticate_websocket(websocket, authenticator)
+    except AuthenticationError:
+        return
     await websocket.accept()
     bridge: AbstractSessionEventBridge = websocket.app.state.event_bridge  # type: ignore[attr-defined]
     subscription = await bridge.subscribe(replay_latest=True)
