@@ -63,9 +63,9 @@ class GatewaySettings:
             GatewaySettings: Populated settings instance.
 
         Raises:
-            ValueError: If ``VNC_TOKEN_TTL_SEC`` exceeds 300 seconds, a runner
-                definition cannot be parsed, or trusted CIDR/header variables
-                contain invalid values.
+            ValueError: If ``VNC_TOKEN_TTL_SEC`` is outside the allowed
+                ``[1, 300]`` range, a runner definition cannot be parsed, or
+                trusted CIDR/header variables contain invalid values.
         """
 
         env_map: Mapping[str, str] = os.environ if env is None else env
@@ -75,8 +75,10 @@ class GatewaySettings:
         jwt_jwks_url = env_map.get("JWT_JWKS_URL", defaults.jwt_jwks_url)
         ttl_raw = env_map.get("VNC_TOKEN_TTL_SEC", str(defaults.vnc_token_ttl_seconds))
         ttl = int(ttl_raw)
+        if ttl <= 0:
+            raise ValueError("VNC_TOKEN_TTL_SEC must be between 1 and 300 seconds")
         if ttl > 300:
-            raise ValueError("VNC_TOKEN_TTL_SEC must be <= 300 seconds")
+            raise ValueError("VNC_TOKEN_TTL_SEC must be between 1 and 300 seconds")
         poll_interval_raw = env_map.get(
             "DISCOVERY_POLL_INTERVAL_SEC",
             str(defaults.discovery_poll_interval_seconds),

@@ -80,7 +80,8 @@
   переменных окружения и Secret-значений (Keycloak, `VNC_TOKEN_SECRET`) через `secretEnv`/`extraEnvFromSecrets`.
 
 ## Constraints & Invariants
-- `VNC_TOKEN_TTL_SEC` всегда ≤300; нарушение приводит к `ValueError` на старте.
+- `VNC_TOKEN_TTL_SEC` и TTL VNC-токенов должны находиться в диапазоне 1–300 секунд;
+  отклонение приводит к `ValueError` в конфигурации и сервисе токенов.
 - `VNC_TOKEN_SECRET` обязателен и должен быть согласован с VNC Gateway.
 - Локальный `docker-compose` подставляет `VNC_TOKEN_SECRET=dev-secret`, если переменная не задана; в продовых/шареных окружениях
   следует переопределять секрет явно.
@@ -158,3 +159,4 @@
   раннерами без bearer-токена.
 - 2025-10-28 · gpt-5-codex · Обновлён RunnerCommandClient: исключает пустые JSON-тела для GET/DELETE и добавлен регрессионный тест на отсутствие body.
 - 2025-10-30 · gpt-5-codex · `DELETE /sessions/commands/{id}` очищает WebSocket binding в RunnerRegistry аналогично прямому удалению; добавлен тест на вызов `drop_session_ws_endpoint`.
+- 2025-10-30 · gpt-5-codex · Ужесточена валидация TTL VNC-токенов (диапазон 1–300 сек) и добавлены unit-тесты на ошибочные значения.

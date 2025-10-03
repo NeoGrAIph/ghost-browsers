@@ -27,15 +27,19 @@ class VncTokenService:
                 gateway. The value must be identical to the
                 ``Settings.token_secret`` configuration of the VNC gateway
                 service.
-            ttl_seconds: Lifetime of each token; must not exceed 300 seconds.
+            ttl_seconds: Lifetime of each token in seconds; must fall within the
+                inclusive ``[1, 300]`` range.
             issuer: Issuer claim embedded into generated tokens.
 
         Raises:
-            ValueError: If ``ttl_seconds`` exceeds the contractually defined limit.
+            ValueError: If ``ttl_seconds`` falls outside the supported range or
+                the secret is empty.
         """
 
+        if ttl_seconds <= 0:
+            raise ValueError("VNC token TTL must be between 1 and 300 seconds")
         if ttl_seconds > 300:
-            raise ValueError("VNC token TTL must be <= 300 seconds")
+            raise ValueError("VNC token TTL must be between 1 and 300 seconds")
         if not secret:
             msg = "VNC token secret must be a non-empty string"
             raise ValueError(msg)
