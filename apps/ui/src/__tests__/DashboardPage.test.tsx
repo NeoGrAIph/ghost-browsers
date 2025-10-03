@@ -308,6 +308,32 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Загружаем раннеров…')).toBeTruthy();
   });
 
+  it('shows an error banner when the sessions query fails', () => {
+    useQueryMock.mockImplementation(({ queryKey }: { queryKey: QueryKey }) => {
+      if (queryKey === queryKeys.sessions) {
+        return {
+          data: undefined,
+          isLoading: false,
+          isFetching: false,
+          error: new Error('Network down'),
+        };
+      }
+      if (queryKey === queryKeys.runners) {
+        return { data: [], isLoading: false, isFetching: false, error: null };
+      }
+      throw new Error('Unexpected query key');
+    });
+
+    render(<DashboardPage />);
+
+    const banner = screen.getByRole('alert');
+    expect(banner.textContent ?? '').toContain('Network down');
+
+    fireEvent.click(within(banner).getByRole('button', { name: 'Повторить' }));
+
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: queryKeys.sessions });
+  });
+
   it('filters sessions based on active store filters', () => {
     const sessions = [
       createSession({ id: 'session-alpha', runnerId: 'runner-alpha', browser: 'Chrome', region: 'eu' }),

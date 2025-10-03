@@ -63,13 +63,18 @@ export function DashboardPage(): JSX.Element {
   const connectionError = useSessionEventConnection((state) => state.error);
   const requestConnectionRetry = useSessionEventConnection((state) => state.requestRetry);
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: queryKeys.sessions,
     queryFn: () => fetchSessions({ token: token ?? undefined }),
     refetchInterval: 15_000,
   });
 
   const sessions = useMemo(() => data ?? [], [data]);
+  const sessionsErrorMessage = error
+    ? error instanceof Error
+      ? error.message
+      : 'Не удалось загрузить сессии.'
+    : null;
 
   const {
     data: runners,
@@ -134,6 +139,18 @@ export function DashboardPage(): JSX.Element {
           <SessionToolbar sessions={sessions} onCreate={() => setComposerOpen(true)} />
           {isLoading ? (
             <div className="loading">Загружаем сессии…</div>
+          ) : sessionsErrorMessage ? (
+            <div className="dashboard__banner dashboard__banner--error" role="alert">
+              <span>{sessionsErrorMessage}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+                }}
+              >
+                Повторить
+              </button>
+            </div>
           ) : (
             <SessionList sessions={filteredSessions} selectedId={selectedId} onSelect={setSelectedId} />
           )}
