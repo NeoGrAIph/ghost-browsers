@@ -126,6 +126,29 @@ async def test_delete_session_issues_delete(sample_runner: Runner) -> None:
     assert requests[0].url.path.endswith(f"/sessions/{session_id}")
 
 
+async def test_request_payload_omits_body_for_empty_payload(sample_runner: Runner) -> None:
+    """GET/DELETE commands should not serialise ``None`` payloads into the body."""
+
+    requests: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json=[_session_payload()])
+        return httpx.Response(200, json=_session_payload(status=SessionStatus.DEAD))
+
+    client = RunnerCommandClient(transport=httpx.MockTransport(_handler))
+
+    await client.list_sessions(sample_runner)
+    await client.delete_session(sample_runner, uuid4())
+
+    assert len(requests) == 2
+    assert requests[0].method == "GET"
+    assert requests[0].content == b""
+    assert requests[1].method == "DELETE"
+    assert requests[1].content == b""
+
+
 async def test_list_sessions_returns_validated_models(sample_runner: Runner) -> None:
     """``list_sessions`` issues ``GET /sessions`` and validates each entry."""
 

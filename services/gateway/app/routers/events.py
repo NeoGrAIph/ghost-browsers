@@ -19,6 +19,7 @@ router = APIRouter(prefix="/events", tags=["events"])
 async def publish_session_event(
     event: SessionEvent,
     bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
+    _user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Response:
     """Accept a :class:`SessionEvent` from a runner and fan it out to clients.
 
@@ -27,6 +28,9 @@ async def publish_session_event(
             runner.
         bridge: Application-scoped event bridge that relays events to SSE and
             WebSocket subscribers.
+        _user: Authenticated principal publishing the event. The value is not
+            used directly but ensures that callers are authorised via
+            :func:`get_current_user` before an event enters the system.
 
     Returns:
         Response: ``202 Accepted`` response confirming that the event was

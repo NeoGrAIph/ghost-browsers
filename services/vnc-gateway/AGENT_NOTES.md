@@ -19,6 +19,7 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 - Dependency wiring relies on `typing.Annotated` wrappers to avoid Ruff `B008` violations while keeping FastAPI semantics.
 - Tests inject stubbed `RunnerProxy` via dependency overrides; `tests/conftest.py` adjusts `sys.path` instead of installing the package.
 - Runner proxy keeps a singleton `httpx.AsyncClient` and resolves `target_port` from query/referer/cookie (persisting it via `vnc-target-port` cookie) to build Runner URLs with configurable prefixes; WebSocket relay теперь ждёт оба направления через `TaskGroup`, отдаёт 1008 при невалидном `target_port` и 1011 при timeouts/сетевых ошибках.
+- HTTP proxy фильтрует заголовки как упорядоченный список пар, чтобы проксировать дублирующиеся значения (`Set-Cookie`) без потерь.
 - Prometheus экспозиция реализована через `/metrics`, чтобы scrape-еры (Prometheus, VictoriaMetrics и т.д.) могли использовать стандартный текстовый формат без дополнительных middleware.
 
 ## Decisions
@@ -64,3 +65,4 @@ poetry run pytest -q
 - 2025-02-14 · gpt-5-codex · Добавлен Dockerfile с многоступенчатой сборкой, make/CI-таргеты для образа и документация по переменным окружения VNC Gateway.
 - 2025-10-25 · gpt-5-codex · Добавлен fallback обработки токена через query `token`/`access_token`, обновлены роуты и unit-тесты ключевых сценариев.
 - 2025-10-26 · gpt-5-codex · Разрешено повторное использование токенов без `nonce` (HTTP→WS), добавлен регрессионный тест и сохранена защита от replay для токенов с `nonce`.
+- 2025-10-27 · gpt-5-codex · HTTP proxy сохраняет порядок дублирующихся заголовков (`Set-Cookie`), добавлен регрессионный тест на проксирование двух cookie.

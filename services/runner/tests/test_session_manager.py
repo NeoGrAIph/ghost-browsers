@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import types
 from datetime import UTC, datetime, timedelta
 from typing import Callable
+from uuid import UUID
 
 import pytest
 from app.config import RunnerSettings, WarmPoolMode
@@ -15,6 +17,7 @@ from app.session_manager import (
     SessionManager,
     SessionUpdatePayload,
 )
+from app.vnc import VncSessionHandle
 from app.warm_pool import (
     WarmPoolReservation,
     WarmPoolSnapshot,
@@ -27,6 +30,7 @@ from core.models import (
     SessionProxySettings,
     SessionStatus,
     SessionVncDetails,
+    WorkstationState,
 )
 
 
@@ -274,6 +278,75 @@ async def test_create_session_emits_event_and_vnc_stub(
     assert events[0].type is SessionEventType.CREATED
     assert events[0].session.id == session.id
     assert events[0].occurred_at == clock_now
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_headless_disables_vnc_flag(
+    stub_vnc_controller: _StubVncController,
+) -> None:
+    """Headless sessions must not persist VNC handles or enable the flag."""
+
+    settings = RunnerSettings(
+        runner_id="runner-headless",
+        camoufox_path="/usr/bin/camoufox",
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager, _ = _build_manager(
+        settings,
+        publisher,
+        vnc_controller=stub_vnc_controller,
+    )
+
+    session = await manager.create_session(
+        SessionCreatePayload(headless=True, vnc_enabled=True)
+    )
+
+    assert session.headless is True
+    assert session.vnc is None
+    assert session.vnc_enabled is False
+    assert session.id not in manager._vnc_handles
+
+
+@pytest.mark.anyio("asyncio")
+async def test_create_session_disables_vnc_when_allocation_fails(
+    monkeypatch: pytest.MonkeyPatch, stub_vnc_controller: _StubVncController
+) -> None:
+    """Failed VNC allocations should force ``vnc_enabled`` to ``False``."""
+
+    settings = RunnerSettings(
+        runner_id="runner-vnc-fail",
+        camoufox_path="/usr/bin/camoufox",
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager, _ = _build_manager(
+        settings,
+        publisher,
+        vnc_controller=stub_vnc_controller,
+    )
+
+    async def _fail_resolve(
+        self: SessionManager,
+        payload: SessionCreatePayload,
+        session_id: UUID,
+        *,
+        sanitized_vnc: SessionVncDetails | None,
+    ) -> tuple[SessionVncDetails | None, VncSessionHandle | None]:
+        del payload, session_id, sanitized_vnc
+        return None, None
+
+    monkeypatch.setattr(
+        manager,
+        "_resolve_vnc",
+        types.MethodType(_fail_resolve, manager),
+    )
+
+    session = await manager.create_session(
+        SessionCreatePayload(headless=False, vnc_enabled=True)
+    )
+
+    assert session.vnc is None
+    assert session.vnc_enabled is False
+    assert session.id not in manager._vnc_handles
 
 
 @pytest.mark.anyio("asyncio")
@@ -668,6 +741,35 @@ async def test_update_session_strips_user_vnc_token(
 
 
 @pytest.mark.anyio("asyncio")
+async def test_update_session_disables_vnc_when_details_removed(
+    stub_vnc_controller: _StubVncController,
+) -> None:
+    """Clearing VNC details must also disable the ``vnc_enabled`` flag."""
+
+    publisher = InMemorySessionEventPublisher()
+    manager, _ = _build_manager(
+        RunnerSettings(
+            runner_id="runner-update-vnc",
+            camoufox_path="/usr/bin/camoufox",
+        ),
+        publisher,
+        vnc_controller=stub_vnc_controller,
+    )
+    session = await manager.create_session(SessionCreatePayload(headless=False))
+    assert session.vnc is not None
+    assert session.vnc_enabled is True
+
+    updated = await manager.update_session(
+        session.id,
+        SessionUpdatePayload(vnc=None, vnc_enabled=True),
+    )
+
+    assert updated.vnc is None
+    assert updated.vnc_enabled is False
+    assert session.id not in manager._vnc_handles
+
+
+@pytest.mark.anyio("asyncio")
 async def test_end_session_sets_terminal_state_and_event(
     stub_vnc_controller: _StubVncController,
 ) -> None:
@@ -947,6 +1049,18 @@ async def test_create_session_uses_warm_pool_handle() -> None:
     )
 
     assert warm_pool is not None
+    assert session.workstation_id == "ws-meta"
+    assert session.workstation_fingerprint_id == "fp-ws-meta"
+    assert session.workstation is not None
+    assert session.workstation.id == session.workstation_id
+    assert (
+        session.workstation.fingerprint_id == session.workstation_fingerprint_id
+    )
+    assert session.workstation.state is WorkstationState.ASSIGNED
+    assert (
+        session.workstation.metadata.get("warm_pool_state")
+        == WarmPoolState.BUSY.value
+    )
     warm_info = session.metadata["warm_pool"]
     assert warm_info["workstation_id"] == "ws-meta"
     origin = session.metadata["browser_origin"]
@@ -961,6 +1075,38 @@ async def test_create_session_uses_warm_pool_handle() -> None:
 
 
 @pytest.mark.anyio("asyncio")
+async def test_update_session_retains_warm_workstation_metadata() -> None:
+    """Non-terminal updates must preserve warm workstation descriptors."""
+
+    publisher = InMemorySessionEventPublisher()
+    warm_pool = _StubWarmPoolManager(workstations=["ws-sticky"])
+    manager, warm_pool = _build_manager(
+        RunnerSettings(runner_id="runner-sticky", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        warm_pool=warm_pool,
+    )
+
+    session = await manager.create_session(SessionCreatePayload())
+    assert session.workstation is not None
+
+    updated = await manager.update_session(
+        session.id, SessionUpdatePayload(headless=True)
+    )
+
+    assert updated.headless is True
+    assert updated.workstation is not None
+    assert updated.workstation_id == session.workstation_id
+    assert (
+        updated.workstation_fingerprint_id == session.workstation_fingerprint_id
+    )
+    assert (
+        updated.workstation.metadata.get("warm_pool_state")
+        == WarmPoolState.BUSY.value
+    )
+    assert session.id in manager._warm_sessions
+
+
+@pytest.mark.anyio("asyncio")
 async def test_update_session_cleans_up_browser() -> None:
     """Transitioning to DEAD should recycle the warm workstation and clear state."""
 
@@ -972,6 +1118,8 @@ async def test_update_session_cleans_up_browser() -> None:
         warm_pool=warm_pool,
     )
     session = await manager.create_session(SessionCreatePayload())
+    assert session.workstation is not None
+    assert session.workstation_id == "ws-cleanup"
 
     updated = await manager.update_session(
         session.id,
@@ -980,6 +1128,9 @@ async def test_update_session_cleans_up_browser() -> None:
 
     assert updated.status is SessionStatus.DEAD
     assert updated.ws_endpoint is None
+    assert updated.workstation is None
+    assert updated.workstation_id is None
+    assert updated.workstation_fingerprint_id is None
     assert session.id not in manager._browser_handles
     assert warm_pool.releases == ["ws-cleanup"]
     events = await publisher.drain()
