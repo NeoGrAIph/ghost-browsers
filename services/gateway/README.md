@@ -42,3 +42,16 @@ poetry run pytest -q
 ```
 
 Use `poetry run ruff check .` for linting the service codebase.
+
+## Container image
+
+- Dockerfile: `services/gateway/Dockerfile` builds on top of `python:3.12-slim`,
+  installs production dependencies via `poetry install --without dev`, and
+  starts the service with `uvicorn app.main:create_app` bound to port `8080`.
+- Local build: `make gateway-image` produces a `ghost-gateway:local` image
+  using Docker BuildKit; use `GATEWAY_IMAGE=<ref>` to override the tag.
+- Publishing: `make gateway-image-publish GATEWAY_IMAGE=<registry/repo:tag>`
+  pushes the artefact and optionally signs it when `GATEWAY_SIGN=true`.
+- CI/CD: `.github/workflows/gateway-image.yml` builds and pushes
+  `ghcr.io/<owner>/gateway:<tag>` on relevant changes or manual dispatch, with
+  opt-in Cosign signing controlled by the `sign_image` input (default `true`).
