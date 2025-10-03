@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: services/runner/Dockerfile
+    environment:
+      RUNNER_ID: "${RUNNER_ID:-runner-1}"
+      SLOT_LIMIT: "${SLOT_LIMIT:-2}"
+      VNC_ENABLED: "${VNC_ENABLED:-true}"
+      WARM_POOL_CONFIG_PATH: "${WARM_POOL_CONFIG_PATH:-/etc/runner/warm-pool.json}"
+      WARM_POOL_MODE: "${WARM_POOL_MODE:-hybrid}"
+      BROWSER_PREFS_PATH: "${BROWSER_PREFS_PATH:-/etc/runner/browser-prefs.json}"
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./services/runner/config/warm-pool.local.json:/etc/runner/warm-pool.json:ro
+      - ./services/runner/config/browser-prefs.local.json:/etc/runner/browser-prefs.json:ro
+
+  vnc-gateway:
+    build:
+      context: .
+      dockerfile: services/vnc-gateway/Dockerfile
+    environment:
+      VNC_GATEWAY_RUNNER_HTTP_BASE: http://runner:8080
+      VNC_GATEWAY_RUNNER_WS_BASE: ws://runner:8080
+      VNC_GATEWAY_TOKEN_SECRET: "${VNC_TOKEN_SECRET}"
+    depends_on:
+      - runner
+    ports:
+      - "8001:8000"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    depends_on:
+      - runner
+      - vnc-gateway
+    environment:
+      DISCOVERY_MODE: static
+      GATEWAY_TRUSTED_CIDRS: "${GATEWAY_TRUSTED_CIDRS:-0.0.0.0/0}"
+      VNC_TOKEN_SECRET: "${VNC_TOKEN_SECRET}"
+      JWT_JWKS_URL: "${JWT_JWKS_URL:-http://localhost/.well-known/jwks.json}"
+      RUNNERS: >-
+        [
+          {
+            "id": "runner-1",
+            "base_url": "http://runner:8080",
+            "state": "idle",
+            "total_slots": 2,
+            "available_slots": 2,
+            "healthy": true,
+            "supports_vnc": true,
+            "vnc_http_url_template": "http://localhost:8001/sessions/{id}",
+            "vnc_ws_url_template": "ws://localhost:8001/sessions/{id}/ws"
+          }
+        ]
+    ports:
+      - "8080:8080"
+
+  ui:
+    build:
+      context: .
+      dockerfile: apps/ui/Dockerfile
+      args:
+        VITE_GATEWAY_URL: /api
+    depends_on:
+      - gateway
+    ports:
+      - "8081:80"

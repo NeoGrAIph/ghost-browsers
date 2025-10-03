@@ -30,6 +30,7 @@
 - Worker статус-панель повторно использует те же данные `/runners`, что и composer, для единого источника правды.
 - Состояние `SessionComposerValues` хранит дополнительные поля (`headless`, `idleTtlSeconds`, `startUrl*`, `proxy*`), чтобы API-адаптер мог формировать полный payload Runner даже до появления соответствующего UI.
 - Продакшн-сборка распространяется как статический бандл Vite внутри `nginx:alpine`; Dockerfile принимает build-arg `VITE_GATEWAY_URL` и вызывается через `make ui-image`.
+- Продакшн Nginx-конфигурация (`apps/ui/nginx.conf`) проксирует `/api/` в Gateway, обеспечивая единый origin для REST/SSE/WS без CORS.
 - Helm chart `docs/helm/platform` описывает деплой UI (Deployment/Service/Ingress) и позволяет прокидывать Keycloak секреты через `secretEnv` при запуске контейнера.
 
 ## Constraints & Invariants
@@ -72,3 +73,4 @@
 - 2025-10-22 · gpt-5-codex · Добавлены Dockerfile UI, make-таргет `ui-image`, workflow публикации образа и документация по `VITE_GATEWAY_URL`.
 - 2025-10-23 · gpt-5-codex · Исправлены витесты DashboardPage: моки `useMutation` поддерживают `reset`/`isSuccess`, а `openSessionEventStream`
   возвращает безопасный EventSource, благодаря чему `pnpm -C apps/ui test` снова проходит.
+- 2025-10-24 · gpt-5-codex · Добавлен Nginx-конфиг, проксирующий `/api` на gateway, и обновлена Docker-сборка для совместимости с docker-compose стеком.

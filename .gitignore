@@ -8,6 +8,7 @@
 .venv
 .env
 .env.*
+!.env.example
 poetry.lock
 !services/camoufox_worker/poetry.lock
 !services/runner/poetry.lock
