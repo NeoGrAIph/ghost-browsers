@@ -46,3 +46,13 @@ def test_from_env_rejects_invalid_cidr() -> None:
         GatewaySettings.from_env({"GATEWAY_TRUSTED_CIDRS": "not-a-network"})
 
     assert "GATEWAY_TRUSTED_CIDRS" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("ttl_value", ["0", "-5"])
+def test_from_env_rejects_non_positive_vnc_token_ttl(ttl_value: str) -> None:
+    """`GatewaySettings.from_env` enforces the lower VNC token TTL bound."""
+
+    with pytest.raises(ValueError) as excinfo:
+        GatewaySettings.from_env({"VNC_TOKEN_TTL_SEC": ttl_value})
+
+    assert "between 1 and 300 seconds" in str(excinfo.value)
