@@ -318,6 +318,7 @@ async def test_create_session_cold_only_launches_new_browser(
         command: list[str] | None = None,
         env: dict[str, str] | None = None,
         read_timeout: float = 10.0,
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubBrowserHandle:
         handle = _StubBrowserHandle(ws_endpoint="ws://cold/0", pid=8800)
         calls.append(
@@ -326,6 +327,7 @@ async def test_create_session_cold_only_launches_new_browser(
                 "headless": headless,
                 "env": dict(env or {}),
                 "timeout": read_timeout,
+                "browser_flags": dict(browser_flags or {}),
             }
         )
         return handle
@@ -353,12 +355,66 @@ async def test_create_session_cold_only_launches_new_browser(
     assert launch_call["browser"] == "camoufox"
     assert launch_call["headless"] is False
     assert launch_call["env"] == {"DISPLAY": ":stub"}
+    assert launch_call["browser_flags"] == {}
     origin = session.metadata["browser_origin"]
     assert origin["kind"] == "cold_launch"
     assert origin["mode"] == settings.warm_pool_mode.value
     assert origin["reason"] == "mode-cold-only"
     assert "warm_pool" not in session.metadata
     assert session.metadata["runner_browser_pid"] == 8800
+
+
+@pytest.mark.anyio("asyncio")
+async def test_cold_launch_merges_browser_flags_from_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold launches should union runner-level and request-specific flags."""
+
+    calls: list[dict[str, object]] = []
+
+    async def _fake_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str] | None = None,
+        browser_flags: dict[str, str] | None = None,
+        read_timeout: float = 10.0,
+        command: list[str] | None = None,
+    ) -> _StubBrowserHandle:
+        del settings, browser, headless, env, read_timeout, command
+        handle = _StubBrowserHandle(ws_endpoint="ws://cold/flags", pid=7700)
+        calls.append({"browser_flags": dict(browser_flags or {})})
+        return handle
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+
+    settings = RunnerSettings(
+        runner_id="runner-flags",
+        camoufox_path="/usr/bin/camoufox",
+        warm_pool_mode=WarmPoolMode.COLD_ONLY,
+        browser_required_flags={"MOZ_DISABLE_HTTP3": "1"},
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager, _ = _build_manager(settings, publisher, use_warm_pool=False)
+
+    payload = SessionCreatePayload(
+        headless=True,
+        metadata={"browser_flags": {"EXTRA_FLAG": True}},
+    )
+
+    session = await manager.create_session(payload)
+
+    assert calls
+    launch_call = calls[0]
+    assert launch_call["browser_flags"] == {
+        "MOZ_DISABLE_HTTP3": "1",
+        "EXTRA_FLAG": "1",
+    }
+    assert session.metadata["browser_flags"] == launch_call["browser_flags"]
+    origin = session.metadata["browser_origin"]
+    assert origin["kind"] == "cold_launch"
+    assert origin["reason"] == "mode-cold-only"
 
 
 @pytest.mark.anyio("asyncio")
@@ -377,6 +433,7 @@ async def test_create_session_hybrid_falls_back_when_warm_pool_busy(
         command: list[str] | None = None,
         env: dict[str, str] | None = None,
         read_timeout: float = 10.0,
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubBrowserHandle:
         handle = _StubBrowserHandle(ws_endpoint="ws://cold/fallback", pid=9900)
         calls.append(
@@ -385,6 +442,7 @@ async def test_create_session_hybrid_falls_back_when_warm_pool_busy(
                 "headless": headless,
                 "env": dict(env or {}),
                 "timeout": read_timeout,
+                "browser_flags": dict(browser_flags or {}),
             }
         )
         return handle
@@ -414,12 +472,98 @@ async def test_create_session_hybrid_falls_back_when_warm_pool_busy(
     launch_call = calls[0]
     assert launch_call["headless"] is False
     assert launch_call["env"] == {"DISPLAY": ":stub"}
+    assert launch_call["browser_flags"] == {}
     origin = session.metadata["browser_origin"]
     assert origin["kind"] == "cold_launch"
     assert origin["mode"] == settings.warm_pool_mode.value
     assert origin["reason"] == "warm-pool-unavailable"
     assert "warm_pool" not in session.metadata
     assert session.metadata["runner_browser_pid"] == 9900
+
+
+@pytest.mark.anyio("asyncio")
+async def test_warm_only_rejects_custom_browser_flags(
+    stub_vnc_controller: _StubVncController,
+) -> None:
+    """Warm-only mode should reject sessions requiring bespoke browser flags."""
+
+    publisher = InMemorySessionEventPublisher()
+    warm_pool = _StubWarmPoolManager()
+    settings = RunnerSettings(
+        runner_id="runner-warm",
+        camoufox_path="/usr/bin/camoufox",
+        warm_pool_mode=WarmPoolMode.WARM_ONLY,
+    )
+    manager, _ = _build_manager(
+        settings,
+        publisher,
+        vnc_controller=stub_vnc_controller,
+        warm_pool=warm_pool,
+    )
+
+    payload = SessionCreatePayload(metadata={"browser_flags": {"EXTRA": "flag"}})
+
+    with pytest.raises(SessionCapacityError):
+        await manager.create_session(payload)
+
+    assert warm_pool.reservations == []
+
+
+@pytest.mark.anyio("asyncio")
+async def test_hybrid_skips_warm_pool_for_custom_browser_flags(
+    monkeypatch: pytest.MonkeyPatch, stub_vnc_controller: _StubVncController
+) -> None:
+    """Hybrid mode should bypass warm slots when additional flags are requested."""
+
+    calls: list[dict[str, object]] = []
+
+    async def _fake_launch(
+        settings: RunnerSettings,
+        *,
+        browser: str,
+        headless: bool,
+        env: dict[str, str] | None = None,
+        browser_flags: dict[str, str] | None = None,
+        read_timeout: float = 10.0,
+        command: list[str] | None = None,
+    ) -> _StubBrowserHandle:
+        del settings, browser, headless, env, read_timeout, command
+        handle = _StubBrowserHandle(ws_endpoint="ws://cold/custom", pid=8801)
+        calls.append({"browser_flags": dict(browser_flags or {})})
+        return handle
+
+    monkeypatch.setattr("app.session_manager.launch_browser", _fake_launch)
+
+    warm_pool = _StubWarmPoolManager()
+    settings = RunnerSettings(
+        runner_id="runner-hybrid-flags",
+        camoufox_path="/usr/bin/camoufox",
+        warm_pool_mode=WarmPoolMode.HYBRID,
+    )
+    publisher = InMemorySessionEventPublisher()
+    manager, _ = _build_manager(
+        settings,
+        publisher,
+        vnc_controller=stub_vnc_controller,
+        warm_pool=warm_pool,
+    )
+
+    payload = SessionCreatePayload(
+        headless=True,
+        metadata={"browser_flags": {"EXTRA": "flag"}},
+    )
+
+    session = await manager.create_session(payload)
+
+    assert warm_pool.reservations == []
+    assert calls
+    launch_call = calls[0]
+    assert launch_call["browser_flags"] == {"EXTRA": "flag"}
+    metadata = session.metadata
+    assert metadata["browser_flags"] == {"EXTRA": "flag"}
+    origin = metadata["browser_origin"]
+    assert origin["kind"] == "cold_launch"
+    assert origin["reason"] == "custom-browser-flags"
 
 
 @pytest.mark.anyio("asyncio")

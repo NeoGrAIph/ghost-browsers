@@ -81,6 +81,7 @@ async def launch_browser(
     headless: bool,
     command: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
+    browser_flags: Mapping[str, str] | None = None,
     read_timeout: float = 10.0,
 ) -> BrowserSessionHandle:
     """Launch Playwright in ``launch-server`` mode and return its wsEndpoint.
@@ -93,6 +94,9 @@ async def launch_browser(
             ``[PLAYWRIGHT_CLI, "launch-server", browser]`` where ``PLAYWRIGHT_CLI``
             comes from the environment or falls back to ``playwright``.
         env: Additional environment variables merged with ``os.environ``.
+        browser_flags: Mapping of Camoufox/Firefox specific flags that should
+            be exported as environment variables before the Playwright process
+            starts. Keys with ``None`` values are ignored.
         read_timeout: Seconds to wait for Playwright to emit the ``wsEndpoint``
             JSON payload before aborting the launch.
 
@@ -122,6 +126,8 @@ async def launch_browser(
         launch_env.setdefault("CAMOUFOX_HEADLESS", "virtual")
     if env:
         launch_env.update(env)
+    if browser_flags:
+        launch_env.update({k: v for k, v in browser_flags.items() if v is not None})
 
     try:
         process = await asyncio.create_subprocess_exec(

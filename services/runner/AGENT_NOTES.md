@@ -74,13 +74,18 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Local compose warm pool park**: docker-compose mounts `services/runner/config/warm-pool.local.json` и `browser-prefs.local.json`, обеспечивая демонстрационный парк рабочих станций с фиксированными `fingerprint_id` и набором тумблеров, который разделяют прогретые и холодные сессии; режим по умолчанию `WARM_POOL_MODE=hybrid` даёт возможность создавать холодные браузеры, когда парк занят.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
   показывать последние сбои без риска утечки памяти.
-- **Container image**: Runner контейнер собирается из `mcr.microsoft.com/playwright/python`, использует Poetry для in-project виртуального окружения под учёткой `pwuser`, устанавливает production wheel `camoufox[geoip]==0.4.11`, прогружает артефакты Camoufox во время сборки, удаляет локальные stub-пакеты из образа и монтирует BuildKit-кеши для Poetry/pip.
+- **Container image**: Runner контейнер собирается из `mcr.microsoft.com/playwright/python` (1.55.0-noble), использует Poetry для in-project виртуального окружения под учёткой `pwuser`, устанавливает production wheel `camoufox[geoip]==0.4.11`, прогружает артефакты Camoufox во время сборки, удаляет локальные stub-пакеты из образа и монтирует BuildKit-кеши для Poetry/pip. Образ стал толстым: в нём предустановлены локали, Windows-совместимые шрифты (Segoe UI/Calibri и т.п.), системные наборы шрифтов, Xvfb/x11vnc/websockify/noVNC и вспомогательные CLI (curl/ffmpeg/jq), поэтому headless и VNC-процессы работают без дополнительных зависимостей.
 - **Warm pool-backed sessions**: `SessionManager` теперь зависит от `WarmPoolManager`, резервирует слот до создания сессии и
   рециклирует его при завершении. В случае исчерпания слотов API возвращает 429.
 - **Warm pool strategy modes**: `RunnerSettings.warm_pool_mode` позволяет выбирать между
   тёплыми слотами, холодными запусками и гибридом; `SessionManager` автоматически
   переключается на `launch_browser`, если гибридный режим не находит idle-слота, и
   добавляет в метаданные `browser_origin` с деталями источника.
+- **Browser flags propagation**: `RunnerSettings.browser_required_flags` и модуль
+  `app.browser_flags` нормализуют флаги из конфигурации и метаданных; warm pool
+  запускает браузеры с обязательными переменными окружения, а `SessionManager`
+  инжектирует их в холодные старты и откатывается на cold launch, если запрос
+  требует дополнительных флагов, несовместимых с текущими warm-слотами.
 - **Gateway proxy compatibility**: `SessionCreatePayload` остаётся публичным контрактом, но теперь вызывается через Gateway, потому важна обратная совместимость и строгая валидация.
 - **Helm deployment**: общий чарт `docs/helm/platform` разворачивает Runner вместе с Gateway/VNC/UI, позволяет прокидывать переменные
   окружения и секреты (`secretEnv`, `extraEnvFromSecrets`) для токенов Camoufox, прокси и warm-pool конфигураций.
@@ -162,3 +167,5 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-28 · gpt-5-codex · Документирован локальный парк прогретых рабочих станций и примеры конфигов для docker compose.
 - 2025-10-29 · gpt-5-codex · Перевели docker compose на гибридный режим тёплого пула, чтобы локально запускались холодные сессии при исчерпании парка.
 - 2025-10-30 · gpt-5-codex · Добавлены pytest-конфигурации для автоматического импорта пакета `app` и задан `PYTHONPATH` внутри контейнера Runner, чтобы `uvicorn` и тесты работали без ручных переменных окружения.
+- 2025-10-31 · gpt-5-codex · Добавлена поддержка обязательных/запросных browser flags в cold launch и warm pool, нормализация значений и тесты на совместимость режимов.
+- 2025-10-31 · gpt-5-codex · Docker-образ расширен системными шрифтами, Windows-наборами, локалями и VNC-бинарями (Xvfb/x11vnc/websockify/noVNC) при сохранении поэтапной установки зависимостей через Poetry.

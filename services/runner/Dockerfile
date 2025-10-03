@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-FROM mcr.microsoft.com/playwright/python:v1.54.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=0 \
@@ -12,8 +12,52 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="${POETRY_HOME}/bin:${PATH}"
 
 ARG CAMOUFOX_VERSION=0.4.11
+ARG DEBIAN_FRONTEND=noninteractive
 
 USER root
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cabextract \
+        curl \
+        ffmpeg \
+        fontconfig \
+        fonts-dejavu-core \
+        fonts-liberation \
+        fonts-noto-cjk \
+        fonts-noto-color-emoji \
+        fonts-noto-mono \
+        jq \
+        locales \
+        nano \
+        novnc \
+        procps \
+        tzdata \
+        unzip \
+        websockify \
+        wget \
+        x11vnc \
+        xfonts-base \
+        xfonts-scalable \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
+RUN ln -snf /usr/share/zoneinfo/Etc/UTC /etc/localtime \
+    && echo Etc/UTC > /etc/timezone \
+    && locale-gen en_US.UTF-8 ru_RU.UTF-8 fi_FI.UTF-8
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    TZ=Etc/UTC
+
+COPY services/runner/docker/scripts/install-windows-fonts.sh /tmp/install-windows-fonts.sh
+RUN chmod +x /tmp/install-windows-fonts.sh \
+    && /tmp/install-windows-fonts.sh \
+    && rm /tmp/install-windows-fonts.sh
+COPY services/runner/docker/assets/fontconfig/99-windows-fonts.conf /etc/fonts/conf.d/99-windows-fonts.conf
+RUN fc-cache -f
+
 RUN python -m pip install --upgrade pip \
     && python -m pip install "poetry==${POETRY_VERSION}"
 

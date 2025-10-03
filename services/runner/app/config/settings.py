@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from enum import Enum
 from pathlib import Path
@@ -67,6 +68,8 @@ class RunnerSettings(BaseModel):
             ``start_url`` before considering prewarm complete.
         prewarm_failure_history_size: Number of most recent prewarm failures to
             retain for diagnostics.
+        browser_required_flags: Mapping of environment variables that must be
+            exported when launching Camoufox regardless of the session payload.
 
     Example:
         >>> settings = RunnerSettings.from_env({"RUNNER_ID": "runner-1"})
@@ -122,6 +125,10 @@ class RunnerSettings(BaseModel):
         description="Milliseconds to wait after navigating to the start_url",
     )
     prewarm_failure_history_size: PositiveInt = Field(default=5, ge=1, le=50)
+    browser_required_flags: dict[str, str] = Field(
+        default_factory=dict,
+        description="Environment variables enforced on every browser launch",
+    )
 
     @model_validator(mode="after")
     def _validate_vnc_ranges(self) -> "RunnerSettings":
@@ -222,7 +229,35 @@ class RunnerSettings(BaseModel):
             source["start_url_wait_ms"] = int(env["START_URL_WAIT_MS"])
         if "PREWARM_FAILURE_HISTORY_SIZE" in env:
             source["prewarm_failure_history_size"] = int(env["PREWARM_FAILURE_HISTORY_SIZE"])
+        if "BROWSER_REQUIRED_FLAGS" in env:
+            raw_flags = env["BROWSER_REQUIRED_FLAGS"].strip()
+            if raw_flags:
+                try:
+                    parsed = json.loads(raw_flags)
+                except json.JSONDecodeError as exc:  # pragma: no cover - config guard
+                    raise ValueError(
+                        "BROWSER_REQUIRED_FLAGS must be a JSON object"
+                    ) from exc
+                if not isinstance(parsed, dict):  # pragma: no cover - config guard
+                    raise ValueError(
+                        "BROWSER_REQUIRED_FLAGS must be a JSON object"
+                    )
+                flags: dict[str, str] = {}
+                for key, value in parsed.items():
+                    name = str(key).strip()
+                    if not name or value is None:
+                        continue
+                    flags[name] = _stringify_flag_value(value)
+                source["browser_required_flags"] = flags
         return cls.model_validate(source)
 
 
 __all__ = ["RunnerSettings", "WarmPoolMode"]
+
+
+def _stringify_flag_value(value: Any) -> str:
+    """Return a string representation suitable for environment variables."""
+
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    return str(value)

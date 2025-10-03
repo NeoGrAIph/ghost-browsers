@@ -67,6 +67,7 @@ async def _build_warm_pool(
         browser: str,
         headless: bool,
         env: dict[str, str],
+        browser_flags: dict[str, str] | None = None,
     ) -> _StubHandle:
         """Return synthetic handles while optionally simulating launch failures."""
 
@@ -75,6 +76,8 @@ async def _build_warm_pool(
             failure_counter["remaining"] -= 1
             raise BrowserLaunchError("synthetic launch failure")
         launch_env_history.append(dict(env))
+        if browser_flags:
+            launch_env_history[-1].update(browser_flags)
         handle = _StubHandle(env["CAMOUFOX_WORKSTATION_ID"])
         handles.append(handle)
         return handle
