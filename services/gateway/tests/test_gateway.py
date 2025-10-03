@@ -1,4 +1,6 @@
-"""Unit tests for the gateway service."""
+"""Integration-style tests for the gateway FastAPI application."""
+
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -8,6 +10,7 @@ import json
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
@@ -39,6 +42,9 @@ from core import (  # noqa: E402
     SessionVncDetails,
 )
 from tests.conftest import HttpxMockTransport  # noqa: E402
+
+if TYPE_CHECKING:
+    from .conftest import HttpxMockTransport
 
 
 @pytest.fixture()

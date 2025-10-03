@@ -1,4 +1,4 @@
-"""Dependency providers for gateway routers."""
+"""Dependency providers for FastAPI routers in the gateway service."""
 
 from __future__ import annotations
 

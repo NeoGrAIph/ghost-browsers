@@ -1,4 +1,4 @@
-"""Tests covering the workstation management API surface."""
+"""Gateway API tests focused on workstation registration and lifecycle."""
 
 from __future__ import annotations
 

@@ -1,14 +1,12 @@
-"""Pydantic models describing workstation contracts exposed by the gateway."""
+"""Pydantic models that shape workstation registry payloads for the gateway."""
+
 from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
 
-from core import (
-    WorkstationEvent,
-    WorkstationEventType,
-    WorkstationMeta,
-)
+from core import WorkstationEvent, WorkstationEventType, WorkstationMeta
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -31,7 +29,7 @@ class WorkstationRecord(BaseModel):
         >>> metadata = WorkstationMeta(
         ...     id="ws-1",
         ...     fingerprint_id="fp-1",
-        ...     state=WorkstationState.AVAILABLE,
+        ...     state="available",
         ... )
         >>> WorkstationRecord.from_metadata(metadata).workstation.id
         'ws-1'
@@ -121,10 +119,10 @@ class WorkstationUpsertPayload(BaseModel):
         ...     workstation=WorkstationMeta(
         ...         id="ws-1",
         ...         fingerprint_id="fp-1",
-        ...         state=WorkstationState.AVAILABLE,
+        ...         state="available",
         ...     )
         ... ).workstation.state
-        <WorkstationState.AVAILABLE: 'available'>
+        'available'
     """
 
     model_config = ConfigDict(extra="forbid")

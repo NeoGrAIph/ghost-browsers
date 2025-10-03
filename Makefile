@@ -34,10 +34,10 @@ UI_EXTRA_BUILD_ARGS ?=
 UI_BUILD_ARGS := $(UI_EXTRA_BUILD_ARGS)
 
 bootstrap:
-        pnpm install
-        cd services/gateway && poetry install --no-root
-        cd services/runner && poetry install --no-root
-        cd services/vnc-gateway && poetry install --no-root
+	pnpm install
+	cd services/gateway && poetry install --no-root
+	cd services/runner && poetry install --no-root
+	cd services/vnc-gateway && poetry install --no-root
 	cd packages/core && poetry install --no-root
 
 check:
@@ -54,29 +54,29 @@ runner-image:
 runner-image-publish: runner-image
 	docker push $(RUNNER_IMAGE)
 	@if [ "$(RUNNER_SIGN)" = "true" ]; then \
-	cosign sign $(RUNNER_COSIGN_ARGS) $(RUNNER_IMAGE); \
-	fi
+		cosign sign $(RUNNER_COSIGN_ARGS) $(RUNNER_IMAGE); \
+		fi
 
 gateway-image:
 	docker buildx build --load -f $(GATEWAY_DOCKERFILE) -t $(GATEWAY_IMAGE) $(GATEWAY_BUILD_ARGS) $(GATEWAY_CONTEXT)
 
 gateway-image-publish: gateway-image
-        docker push $(GATEWAY_IMAGE)
-        @if [ "$(GATEWAY_SIGN)" = "true" ]; then \
-        cosign sign $(GATEWAY_COSIGN_ARGS) $(GATEWAY_IMAGE); \
-        fi
+	docker push $(GATEWAY_IMAGE)
+	@if [ "$(GATEWAY_SIGN)" = "true" ]; then \
+		cosign sign $(GATEWAY_COSIGN_ARGS) $(GATEWAY_IMAGE); \
+		fi
 
 vnc-gateway-image:
-        cd services/vnc-gateway && $(VNC_GATEWAY_SMOKE_CMD)
-        docker buildx build --load -f $(VNC_GATEWAY_DOCKERFILE) -t $(VNC_GATEWAY_IMAGE) $(VNC_GATEWAY_BUILD_ARGS) $(VNC_GATEWAY_CONTEXT)
+	cd services/vnc-gateway && $(VNC_GATEWAY_SMOKE_CMD)
+	docker buildx build --load -f $(VNC_GATEWAY_DOCKERFILE) -t $(VNC_GATEWAY_IMAGE) $(VNC_GATEWAY_BUILD_ARGS) $(VNC_GATEWAY_CONTEXT)
 
 vnc-gateway-image-publish: vnc-gateway-image
-        docker push $(VNC_GATEWAY_IMAGE)
-        @if [ "$(VNC_GATEWAY_SIGN)" = "true" ]; then \
-        cosign sign $(VNC_GATEWAY_COSIGN_ARGS) $(VNC_GATEWAY_IMAGE); \
-        fi
+	docker push $(VNC_GATEWAY_IMAGE)
+	@if [ "$(VNC_GATEWAY_SIGN)" = "true" ]; then \
+		cosign sign $(VNC_GATEWAY_COSIGN_ARGS) $(VNC_GATEWAY_IMAGE); \
+		fi
 
 ui-image:
-        pnpm -C apps/ui lint
-        pnpm -C apps/ui test
-        docker buildx build --load -f $(UI_DOCKERFILE) -t $(UI_IMAGE) $(UI_BUILD_ARGS) $(UI_CONTEXT)
+	pnpm -C apps/ui lint
+	pnpm -C apps/ui test
+	docker buildx build --load -f $(UI_DOCKERFILE) -t $(UI_IMAGE) $(UI_BUILD_ARGS) $(UI_CONTEXT)

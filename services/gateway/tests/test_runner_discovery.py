@@ -1,4 +1,4 @@
-"""Tests covering the runner discovery service and helpers."""
+"""Tests covering runner discovery backends and reconciliation helpers."""
 
 from __future__ import annotations
 
