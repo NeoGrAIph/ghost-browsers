@@ -87,12 +87,24 @@ def test_token_validator_success(validator: TokenValidator, token_service: VncTo
 
 
 def test_token_validator_rejects_replay(
-    validator: TokenValidator, token_service: VncTokenService
+    validator: TokenValidator, settings: Settings
 ) -> None:
-    """Validator refuses to accept the same token twice."""
+    """Validator refuses to accept the same nonce-bearing token twice."""
 
     session_id = "replay"
-    token, _ = token_service.issue(session_id)
+    now = datetime.now(tz=UTC)
+    expires = now + timedelta(seconds=60)
+    token = jwt.encode(
+        {
+            "sid": session_id,
+            "iss": "camou-gateway",
+            "exp": int(expires.timestamp()),
+            "iat": int(now.timestamp()),
+            "nonce": "unique-nonce",
+        },
+        settings.token_secret,
+        algorithm="HS256",
+    )
     validator.validate(session_id, token)
     with pytest.raises(TokenValidationError):
         validator.validate(session_id, token)
@@ -191,6 +203,31 @@ def test_websocket_endpoint_invokes_proxy(app, token_service: VncTokenService) -
         pass
     runner_proxy: DummyRunnerProxy = app.state.runner_proxy
     assert runner_proxy.ws_sessions == ["session-ws"]
+
+
+def test_token_without_nonce_reused_for_http_and_websocket(
+    app, token_service: VncTokenService
+) -> None:
+    """Tokens lacking nonce can be reused across HTTP and WebSocket validation."""
+
+    client = TestClient(app)
+    token, _ = token_service.issue("session-shared")
+
+    response = client.get(
+        "/sessions/session-shared",
+        headers={"X-VNC-Token": token},
+    )
+    assert response.status_code == 200
+
+    with client.websocket_connect(
+        "/sessions/session-shared/ws",
+        headers={"X-VNC-Token": token},
+    ):
+        pass
+
+    runner_proxy: DummyRunnerProxy = app.state.runner_proxy
+    assert runner_proxy.http_calls[0][0] == "session-shared"
+    assert "session-shared" in runner_proxy.ws_sessions
 
 
 @pytest.mark.parametrize("query_key", ["token", "access_token"])
