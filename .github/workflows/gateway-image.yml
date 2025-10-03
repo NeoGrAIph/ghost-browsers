@@ -1,0 +1,57 @@
+name: build-gateway-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      gateway_tag:
+        description: "Tag gateway-образа (пример: dev)"
+        required: true
+      sign_image:
+        description: "Подписывать образ (true/false)"
+        required: false
+        default: "true"
+  push:
+    paths:
+      - "services/gateway/Dockerfile"
+      - "services/gateway/pyproject.toml"
+      - "services/gateway/**/*.py"
+      - "services/gateway/**/py.typed"
+      - "services/gateway/tests/**"
+      - "packages/core/**"
+      - "Makefile"
+      - ".github/workflows/gateway-image.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      IMAGE_NAME: ghcr.io/${{ toLower(github.repository_owner) }}/gateway
+      IMAGE_TAG: ${{ inputs.gateway_tag || github.sha }}
+      SIGN_IMAGE: ${{ inputs.sign_image || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Compose image reference
+        run: echo "IMAGE_REF=${IMAGE_NAME}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+      - name: Build gateway image
+        env:
+          GATEWAY_IMAGE: ${{ env.IMAGE_REF }}
+        run: make gateway-image GATEWAY_IMAGE="${GATEWAY_IMAGE}"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push gateway image
+        run: docker push "${IMAGE_REF}"
+      - uses: sigstore/cosign-installer@v3.6.0
+        if: env.SIGN_IMAGE == 'true'
+      - name: Sign gateway image
+        if: env.SIGN_IMAGE == 'true'
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign sign --yes "${IMAGE_REF}"

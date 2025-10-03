@@ -1,4 +1,4 @@
-.PHONY: bootstrap check runner-image runner-image-publish
+.PHONY: bootstrap check runner-image runner-image-publish gateway-image gateway-image-publish
 
 RUNNER_IMAGE ?= ghost-runner:local
 RUNNER_DOCKERFILE ?= services/runner/Dockerfile
@@ -9,6 +9,14 @@ RUNNER_BUILD_ARGS := $(if $(RUNNER_CAMOUFOX_VERSION),--build-arg CAMOUFOX_VERSIO
 RUNNER_TEST_CMD := set -euo pipefail; poetry check; poetry install --with dev --no-root --no-interaction; PYTHONPATH=. poetry run pytest -q; poetry run python -m camoufox path; poetry run python -m camoufox version
 RUNNER_SIGN ?= false
 RUNNER_COSIGN_ARGS ?= --yes
+
+GATEWAY_IMAGE ?= ghost-gateway:local
+GATEWAY_DOCKERFILE ?= services/gateway/Dockerfile
+GATEWAY_CONTEXT ?= .
+GATEWAY_EXTRA_BUILD_ARGS ?=
+GATEWAY_BUILD_ARGS := $(GATEWAY_EXTRA_BUILD_ARGS)
+GATEWAY_SIGN ?= false
+GATEWAY_COSIGN_ARGS ?= --yes
 
 bootstrap:
 	pnpm install
@@ -32,4 +40,13 @@ runner-image-publish: runner-image
 	docker push $(RUNNER_IMAGE)
 	@if [ "$(RUNNER_SIGN)" = "true" ]; then \
 	cosign sign $(RUNNER_COSIGN_ARGS) $(RUNNER_IMAGE); \
+	fi
+
+gateway-image:
+	docker buildx build --load -f $(GATEWAY_DOCKERFILE) -t $(GATEWAY_IMAGE) $(GATEWAY_BUILD_ARGS) $(GATEWAY_CONTEXT)
+
+gateway-image-publish: gateway-image
+	docker push $(GATEWAY_IMAGE)
+	@if [ "$(GATEWAY_SIGN)" = "true" ]; then \
+	cosign sign $(GATEWAY_COSIGN_ARGS) $(GATEWAY_IMAGE); \
 	fi

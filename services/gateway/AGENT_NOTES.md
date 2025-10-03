@@ -32,6 +32,10 @@
   заголовок `GATEWAY_TRUSTED_HEADER` с оригинальным клиентским IP. Совпадение выдаёт синтетического пользователя
   `internal:<ip>` и логирует стратегию `auth_strategy=internal-bypass`.
 - Аутентификация: Bearer JWT (Keycloak). Для WebSocket токен передаётся в заголовке `Authorization: Bearer` или параметре `token`.
+- Контейнерный образ: `services/gateway/Dockerfile` на базе `python:3.12-slim` ставит прод-зависимости через
+  `poetry install --without dev`, монтирует `packages/core` и запускает `uvicorn app.main:create_app`
+  (порт 8080). Собирается локально `make gateway-image`, публикуется через `make gateway-image-publish`
+  либо GitHub Actions workflow `build-gateway-image` (GHCR `ghcr.io/<owner>/gateway:<tag>` с опциональной подписью Cosign).
 
 ## Data & Models
 - Переиспользуются модели из `packages/core`: `Session`, `SessionEvent`, `Runner`, `SessionProxySettings`, `SessionVncDetails` и др.
@@ -64,6 +68,10 @@
 - Тесты аутентификатора Keycloak используют `httpx.MockTransport`, чтобы прогонять полный цикл `_fetch_jwks` без прямых правок кэша
   и проверять повторные запросы при смене `kid`, HTTP-ошибки и сбои декодирования JSON.
 - Lifespan-хук после discovery обходит только здоровых раннеров, вызывает `GET /sessions` через `RunnerCommandClient.list_sessions` и восстанавливает `SessionRegistry` вместе с веб-сокетными биндингами `RunnerRegistry`. Поток проверен тестом `test_lifespan_restores_sessions_from_healthy_runners`.
+- Контейнер формируется на базе `python:3.12-slim`: добавлены системные пакеты (`build-essential`, `python3-dev`, `libffi-dev`),
+  чтобы собрать `uvicorn[standard]` зависимости, и Poetry 1.8.3 создает локальное venv. Entry-point использует
+  `uvicorn app.main:create_app`, чтобы запускать приложение через фабрику и корректно применять конфигурацию.
+  Публикация в GHCR сопровождается опциональной подписью Cosign (переключается флагом `sign_image`).
 
 ## Constraints & Invariants
 - `VNC_TOKEN_TTL_SEC` всегда ≤300; нарушение приводит к `ValueError` на старте.
@@ -119,4 +127,6 @@
 - 2025-10-16 · gpt-5-codex · Уточнена документация зависимостей безопасности и обработка пустых env-карт для доверенных CIDR.
 - 2025-10-17 · gpt-5-codex · Добавлены registry/роуты для рабочих станций, модели `WorkstationRecord`/`WorkstationUpsertPayload` и unit-тесты API контрактов.
 - 2025-10-18 · gpt-5-codex · Восстановление сессий при рестарте через `GET /sessions`, расширенный RunnerCommandClient и новые unit-тесты bootstrap.
+- 2025-10-19 · gpt-5-codex · Добавлены контейнерный образ Gateway, make-таргеты для сборки/публикации и GitHub Actions пайплайн
+  с опциональной подписью Cosign.
 
