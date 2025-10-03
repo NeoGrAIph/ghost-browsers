@@ -37,6 +37,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - Uses `core.Session`, `SessionEvent`, `SessionProxySettings`, `SessionVncDetails`, and related enums.
 - Local payload models (`SessionCreatePayload`, `SessionUpdatePayload`) act as request DTOs before conversion into immutable core models.
 - Sessions are keyed by UUID and persisted in-memory; timestamps sourced from an injectable clock (UTC aware).
+- Warm-backed sessions persist `workstation_id`, `workstation_fingerprint_id` и вложенный `WorkstationMeta`, полученный из снэпшота warm-пула; поля очищаются при завершении или ручном освобождении слота, исключая повторное использование устаревшей информации.
 - `SessionManagerMetrics` агрегирует счётчик активных сессий и историю ошибок прогрева (bounded deque по
   `RunnerSettings.prewarm_failure_history_size`), ближайшее истечение TTL и статистику
   фонового reaper-а (кол-во запусков, количество завершённых сессий и отметку последнего запуска).
@@ -173,3 +174,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-30 · gpt-5-codex · Добавлены pytest-конфигурации для автоматического импорта пакета `app` и задан `PYTHONPATH` внутри контейнера Runner, чтобы `uvicorn` и тесты работали без ручных переменных окружения.
 - 2025-10-31 · gpt-5-codex · Добавлена поддержка обязательных/запросных browser flags в cold launch и warm pool, нормализация значений и тесты на совместимость режимов.
 - 2025-10-31 · gpt-5-codex · Docker-образ расширен системными шрифтами, Windows-наборами, локалями и VNC-бинарями (Xvfb/x11vnc/websockify/noVNC) при сохранении поэтапной установки зависимостей через Poetry.
+- 2025-10-31 · gpt-5-codex · Сессии, созданные на warm-слотах, теперь запоминают workstation-метаданные и очищают их при релизе; добавлены проверки в unit-тестах.
