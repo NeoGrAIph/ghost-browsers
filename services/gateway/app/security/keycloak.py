@@ -94,12 +94,30 @@ class KeycloakAuthenticator:
             return key
 
     async def _fetch_jwks(self) -> dict[str, Mapping[str, Any]]:
-        """Download JWKS metadata and index it by ``kid``."""
+        """Download JWKS metadata and index it by ``kid``.
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(self._jwks_url, timeout=5.0)
-        response.raise_for_status()
-        data = response.json()
+        Raises:
+            AuthenticationError: If the JWKS document cannot be retrieved or the
+                payload is malformed.
+
+        """
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(self._jwks_url, timeout=5.0)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            _LOGGER.error(
+                "Failed to fetch JWKS document", extra={"jwks_url": self._jwks_url}, exc_info=exc
+            )
+            raise AuthenticationError("Unable to fetch JWKS document") from exc
+        try:
+            data = response.json()
+        except ValueError as exc:
+            _LOGGER.error(
+                "Failed to decode JWKS payload", extra={"jwks_url": self._jwks_url}, exc_info=exc
+            )
+            raise AuthenticationError("JWKS payload is malformed") from exc
         keys = data.get("keys", [])
         if not isinstance(keys, list):
             raise AuthenticationError("JWKS payload is malformed")

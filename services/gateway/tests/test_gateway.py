@@ -972,11 +972,11 @@ async def test_keycloak_authenticator_fetches_and_caches_jwks(
     assert len(httpx_mock_transport.requests) == 2
 
     httpx_mock_transport.enqueue_json({"keys": []}, status_code=500)
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(AuthenticationError):
         await authenticator._fetch_jwks()
     assert len(httpx_mock_transport.requests) == 3
 
     httpx_mock_transport.enqueue_text("not-a-json-payload")
-    with pytest.raises(ValueError):
+    with pytest.raises(AuthenticationError):
         await authenticator._fetch_jwks()
     assert len(httpx_mock_transport.requests) == 4
