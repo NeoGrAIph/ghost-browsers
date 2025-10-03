@@ -20,13 +20,16 @@ const useQueryMock = vi.fn<(options: { queryKey: QueryKey }) => MockedQueryResul
 
 type MutationOptions = {
   mutationFn: (variables: unknown) => unknown;
-  onSuccess?: () => void;
+  onSuccess?: (value: unknown) => void;
+  onError?: (error: unknown) => void;
 };
 
 type MutationResult = {
   mutate: (value?: unknown) => void;
   mutateAsync: (value?: unknown) => Promise<unknown>;
+  reset: () => void;
   isPending: boolean;
+  isSuccess: boolean;
 };
 
 const useMutationMock = vi.fn<(options: MutationOptions) => MutationResult>();
@@ -56,20 +59,42 @@ useQueryMock.mockImplementation(() => ({
   isFetching: false,
   error: null,
 }));
-useMutationMock.mockImplementation(({ mutationFn, onSuccess }: MutationOptions) => ({
-  mutate: (value?: unknown) => {
-    const result = mutationFn(value);
-    void Promise.resolve(result).then(() => {
-      onSuccess?.();
-    });
-  },
-  mutateAsync: async (value?: unknown) => {
-    const result = await Promise.resolve(mutationFn(value));
-    onSuccess?.();
-    return result;
-  },
-  isPending: false,
-}));
+useMutationMock.mockImplementation(({ mutationFn, onSuccess, onError }: MutationOptions) => {
+  const result: MutationResult = {
+    mutate: (value?: unknown) => {
+      try {
+        const output = mutationFn(value);
+        void Promise.resolve(output)
+          .then((resolved) => {
+            result.isSuccess = true;
+            onSuccess?.(resolved);
+          })
+          .catch((error) => {
+            onError?.(error);
+          });
+      } catch (error) {
+        onError?.(error);
+      }
+    },
+    mutateAsync: async (value?: unknown) => {
+      try {
+        const resolved = await Promise.resolve(mutationFn(value));
+        result.isSuccess = true;
+        onSuccess?.(resolved);
+        return resolved;
+      } catch (error) {
+        onError?.(error);
+        throw error;
+      }
+    },
+    reset: () => {
+      result.isSuccess = false;
+    },
+    isPending: false,
+    isSuccess: false,
+  };
+  return result;
+});
 invalidateQueriesMock.mockImplementation(() => {});
 setQueryDataMock.mockImplementation(() => {});
 
@@ -78,11 +103,30 @@ const {
   fetchRunnersMock,
   createSessionMock,
   deleteSessionMock,
+  openSessionEventStreamMock,
 } = vi.hoisted(() => ({
   fetchSessionsMock: vi.fn<(...args: unknown[]) => Promise<Session[]>>(),
   fetchRunnersMock: vi.fn<(...args: unknown[]) => Promise<RunnerStatus[]>>(),
   createSessionMock: vi.fn<(...args: unknown[]) => Promise<Session>>(),
   deleteSessionMock: vi.fn<(...args: unknown[]) => Promise<void>>(),
+  openSessionEventStreamMock: vi.fn(() => {
+    const EventSourceCtor = globalThis.EventSource as
+      | (new (url: string) => EventSource)
+      | undefined;
+    const fallback = {
+      close: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+    } as unknown as EventSource;
+    const eventSource = EventSourceCtor ? new EventSourceCtor('http://localhost/events') : fallback;
+    return {
+      eventSource,
+      parseEvent: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('../api/client', () => ({
@@ -90,6 +134,7 @@ vi.mock('../api/client', () => ({
   fetchRunners: fetchRunnersMock,
   createSession: createSessionMock,
   deleteSession: deleteSessionMock,
+  openSessionEventStream: openSessionEventStreamMock,
 }));
 
 vi.mock('../hooks/useAuth', () => ({
@@ -202,20 +247,43 @@ describe('DashboardPage', () => {
     fetchRunnersMock.mockReset();
     createSessionMock.mockReset();
     deleteSessionMock.mockReset();
-    useMutationMock.mockImplementation(({ mutationFn, onSuccess }: MutationOptions) => ({
-      mutate: (value?: unknown) => {
-        const result = mutationFn(value);
-        void Promise.resolve(result).then(() => {
-          onSuccess?.();
-        });
-      },
-      mutateAsync: async (value?: unknown) => {
-        const result = await Promise.resolve(mutationFn(value));
-        onSuccess?.();
-        return result;
-      },
-      isPending: false,
-    }));
+    openSessionEventStreamMock.mockReset();
+    useMutationMock.mockImplementation(({ mutationFn, onSuccess, onError }: MutationOptions) => {
+      const result: MutationResult = {
+        mutate: (value?: unknown) => {
+          try {
+            const output = mutationFn(value);
+            void Promise.resolve(output)
+              .then((resolved) => {
+                result.isSuccess = true;
+                onSuccess?.(resolved);
+              })
+              .catch((error) => {
+                onError?.(error);
+              });
+          } catch (error) {
+            onError?.(error);
+          }
+        },
+        mutateAsync: async (value?: unknown) => {
+          try {
+            const resolved = await Promise.resolve(mutationFn(value));
+            result.isSuccess = true;
+            onSuccess?.(resolved);
+            return resolved;
+          } catch (error) {
+            onError?.(error);
+            throw error;
+          }
+        },
+        reset: () => {
+          result.isSuccess = false;
+        },
+        isPending: false,
+        isSuccess: false,
+      };
+      return result;
+    });
   });
 
   afterEach(() => {
@@ -398,6 +466,13 @@ describe('DashboardPage SSE failure banner', () => {
     globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
       return originalClearTimeout(handle);
     }) as typeof clearTimeout;
+    openSessionEventStreamMock.mockReset();
+    openSessionEventStreamMock.mockImplementation(() => ({
+      eventSource: new globalThis.EventSource('http://localhost/events'),
+      parseEvent: vi.fn(() => ({
+        session: createSession({}),
+      })),
+    }));
     useSessionEventConnection.getState().reset();
   });
 
