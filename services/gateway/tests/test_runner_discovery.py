@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -180,3 +180,67 @@ async def test_removed_runners_drop_bindings_and_sessions() -> None:
     assert await runner_registry.get("runner-b") is None
     assert await runner_registry.resolve_session_ws_target(session.id) is None
     assert await session_registry.list() == []
+
+
+@pytest.mark.anyio("asyncio")
+async def test_purge_sessions_tolerates_pre_deleted_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Session cleanup should ignore entries concurrently removed elsewhere."""
+
+    now = datetime.now(tz=UTC)
+    session_registry = SessionRegistry()
+    runner_registry = RunnerRegistry()
+
+    missing_runner_ids = {"runner-z"}
+    first = Session(
+        id=uuid4(),
+        runner_id="runner-z",
+        status=SessionStatus.INIT,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+        labels={},
+    )
+    second = Session(
+        id=uuid4(),
+        runner_id="runner-z",
+        status=SessionStatus.INIT,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+        labels={},
+    )
+    await session_registry.add(first)
+    await session_registry.add(second)
+    await runner_registry.register_session_ws_endpoint(
+        first.id,
+        runner_id=first.runner_id,
+        target="ws://runner-z/first",
+    )
+    await runner_registry.register_session_ws_endpoint(
+        second.id,
+        runner_id=second.runner_id,
+        target="ws://runner-z/second",
+    )
+
+    original_delete = session_registry.delete
+
+    async def _delete_with_race(session_id: UUID) -> None:
+        if session_id == first.id:
+            await original_delete(session_id)
+            raise KeyError("Session not found")
+        await original_delete(session_id)
+
+    monkeypatch.setattr(session_registry, "delete", _delete_with_race)
+
+    removed = await purge_sessions_for_missing_runners(
+        session_registry,
+        runner_registry,
+        missing_runner_ids,
+    )
+
+    assert removed == [second.id]
+    assert await session_registry.list() == []
+    assert await runner_registry.resolve_session_ws_target(first.id) is None
+    assert await runner_registry.resolve_session_ws_target(second.id) is None

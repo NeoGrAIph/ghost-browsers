@@ -102,8 +102,8 @@ async def execute_create_command(
         if public_ws is None
         else session.model_copy(update={"ws_public_endpoint": public_ws})
     )
-    enriched = _enrich_session(sanitized, runner, token_service, user)
-    await registry.upsert(enriched)
+    stored = await registry.upsert(sanitized)
+    enriched = _enrich_session(stored, runner, token_service, user)
     await _publish_session_event(bridge, enriched, SessionEventType.CREATED)
     return enriched
 
@@ -150,8 +150,8 @@ async def execute_update_command(
         if public_ws is None
         else session.model_copy(update={"ws_public_endpoint": public_ws})
     )
-    enriched = _enrich_session(sanitized, runner, token_service, user)
-    await registry.upsert(enriched)
+    stored = await registry.upsert(sanitized)
+    enriched = _enrich_session(stored, runner, token_service, user)
     event_type = (
         SessionEventType.ENDED
         if enriched.status is SessionStatus.DEAD
@@ -247,11 +247,11 @@ async def create_session(
     runner = await runners.get(session.runner_id)
     enriched = _enrich_session(sanitized, runner, token_service, user)
     try:
-        stored = await registry.add(enriched)
+        await registry.add(sanitized)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    await _publish_session_event(bridge, stored, SessionEventType.CREATED)
-    return stored
+    await _publish_session_event(bridge, enriched, SessionEventType.CREATED)
+    return enriched
 
 
 @router.get("/{session_id}", response_model=Session)

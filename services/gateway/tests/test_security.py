@@ -21,8 +21,9 @@ if str(SERVICE_ROOT) not in sys.path:
 from app import create_app  # noqa: E402
 from app.config import GatewaySettings  # noqa: E402
 from app.deps.security import authenticate_websocket, get_current_user  # noqa: E402
-from app.security import AuthenticatedUser, AuthenticationError  # noqa: E402
+from app.security import AuthenticatedUser, AuthenticationError, VncTokenService  # noqa: E402
 from tests.conftest import HttpxMockTransport  # noqa: E402
+
 
 
 class DummyAuthenticator:
@@ -256,3 +257,13 @@ async def test_websocket_external_client_without_token_is_rejected() -> None:
 
     assert websocket.closed_codes == [status.WS_1008_POLICY_VIOLATION]
     assert authenticator.tokens == []
+
+
+@pytest.mark.parametrize("ttl", [0, -90])
+def test_vnc_token_service_rejects_non_positive_ttl(ttl: int) -> None:
+    """`VncTokenService` refuses to operate with zero/negative TTL values."""
+
+    with pytest.raises(ValueError) as excinfo:
+        VncTokenService(secret="secret", ttl_seconds=ttl)
+
+    assert "between 1 and 300 seconds" in str(excinfo.value)
