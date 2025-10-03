@@ -122,6 +122,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - Взаимодействие с Gateway/SSE происходит только внутри доверенной сети кластера; авторизация на уровне HTTP не ожидается,
   вместо этого требуется сетевое разделение и настройка доверенных CIDR на стороне Gateway.
 - Доступность VNC зависит от бинарей `Xvfb`, `x11vnc` и `websockify`; при их отсутствии `ProcessVncController` отключается и сессии остаются без VNC-URL.
+- `SessionManager` гарантирует, что `session.vnc_enabled` не остаётся `True`, когда VNC-детали отсутствуют или сессия работает в headless-режиме; флаг пересчитывается при создании и апдейтах.
 - Docker-образ предполагает запуск под `pwuser`, PATH включает `.venv/bin`, а контекст сборки обязан содержать каталоги `camoufox` и `packages`, иначе Poetry не найдёт path-зависимости.
 - BuildKit cache mounts для Poetry/pip отключены: docker compose запускает сборку с rootless BuildKit и разделяемые кеши получают root-владельца, что ломает установку зависимостей (`PermissionError`).
 
@@ -173,3 +174,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-30 · gpt-5-codex · Добавлены pytest-конфигурации для автоматического импорта пакета `app` и задан `PYTHONPATH` внутри контейнера Runner, чтобы `uvicorn` и тесты работали без ручных переменных окружения.
 - 2025-10-31 · gpt-5-codex · Добавлена поддержка обязательных/запросных browser flags в cold launch и warm pool, нормализация значений и тесты на совместимость режимов.
 - 2025-10-31 · gpt-5-codex · Docker-образ расширен системными шрифтами, Windows-наборами, локалями и VNC-бинарями (Xvfb/x11vnc/websockify/noVNC) при сохранении поэтапной установки зависимостей через Poetry.
+- 2025-10-31 · gpt-5-codex · Синхронизирован флаг `vnc_enabled` с реальными VNC-деталями и добавлены регрессионные тесты на headless и сбойную аллокацию.
