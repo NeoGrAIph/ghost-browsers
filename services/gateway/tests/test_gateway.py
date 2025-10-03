@@ -11,7 +11,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import httpx
@@ -33,14 +33,15 @@ from app.deps.security import get_authenticator, get_current_user  # noqa: E402
 from app.security import AuthenticatedUser, KeycloakAuthenticator, VncTokenService  # noqa: E402
 from app.services.runner_client import RunnerCommandClient  # noqa: E402
 from app.services.runner_health import RunnerHealthClient  # noqa: E402
-from core import (
+from core import (  # noqa: E402
     Runner,
     Session,
     SessionEvent,
     SessionEventType,
     SessionStatus,
     SessionVncDetails,
-)  # noqa: E402
+)
+from tests.conftest import HttpxMockTransport  # noqa: E402
 
 if TYPE_CHECKING:
     from .conftest import HttpxMockTransport
@@ -199,15 +200,16 @@ def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> Non
     response = gateway_client.post("/sessions", json=session_body)
     assert response.status_code == 201
     payload = response.json()["vnc"]
-    http_parts = urlsplit(payload["http_url"])
-    ws_parts = urlsplit(payload["websocket_url"])
-    assert http_parts.path == f"/view/{session_id}"
-    assert ws_parts.path == f"/ws/{session_id}"
-    http_query = parse_qs(http_parts.query)
-    ws_query = parse_qs(ws_parts.query)
-    assert http_query.get("token") == [payload["token"]]
-    assert ws_query.get("token") == [payload["token"]]
-    assert payload["token"]
+    http_url = urlparse(payload["http_url"])
+    ws_url = urlparse(payload["websocket_url"])
+    assert http_url.scheme == "https"
+    assert ws_url.scheme == "wss"
+    assert http_url.path == f"/view/{session_id}"
+    assert ws_url.path == f"/ws/{session_id}"
+    token_params = parse_qs(http_url.query)
+    assert "token" in token_params
+    assert ws_url.query == http_url.query
+    assert token_params["token"][0] == payload["token"]
     assert payload["token_ttl_seconds"] == 120
 
 
@@ -265,11 +267,9 @@ async def test_lifespan_restores_sessions_from_healthy_runners() -> None:
         vnc_token_ttl_seconds=120,
     )
     app = create_app(settings)
-    app.state.runner_client = RunnerCommandClient(
-        transport=httpx.MockTransport(_list_handler),
-    )
+    app.state.runner_client = RunnerCommandClient(transport=httpx.MockTransport(_list_handler))
     app.state.runner_health_client = RunnerHealthClient(
-        transport=httpx.MockTransport(_health_handler),
+        transport=httpx.MockTransport(_health_handler)
     )
 
     async with app.router.lifespan_context(app):
@@ -312,9 +312,16 @@ def test_session_reads_reflect_runner_override_updates(
     response = gateway_client.post("/sessions", json=session_body)
     assert response.status_code == 201
     initial = response.json()["vnc"]
-    initial_http = urlsplit(initial["http_url"])
+    initial_http = urlparse(initial["http_url"])
+    initial_ws = urlparse(initial["websocket_url"])
+    assert initial_http.scheme == "https"
+    assert initial_ws.scheme == "wss"
     assert initial_http.path == f"/view/{session_id}"
-    assert parse_qs(initial_http.query).get("token") == [initial["token"]]
+    assert initial_ws.path == f"/ws/{session_id}"
+    initial_query = parse_qs(initial_http.query)
+    assert "token" in initial_query
+    assert initial_ws.query == initial_http.query
+    assert initial_query["token"][0] == initial["token"]
 
     registry = gateway_app.state.runner_registry
     runner = asyncio.run(registry.get("runner-1"))
@@ -333,33 +340,35 @@ def test_session_reads_reflect_runner_override_updates(
     detail = gateway_client.get(f"/sessions/{session_id}")
     assert detail.status_code == 200
     payload = detail.json()["vnc"]
-    http_parts = urlsplit(payload["http_url"])
-    ws_parts = urlsplit(payload["websocket_url"])
-    assert http_parts.path.startswith("/custom/")
-    assert session_id in http_parts.path
-    assert ws_parts.path.startswith("/ws/")
-    assert ws_parts.path.endswith(session_id)
+    http_parts = urlparse(payload["http_url"])
+    ws_parts = urlparse(payload["websocket_url"])
+    assert http_parts.scheme == "https"
+    assert ws_parts.scheme == "wss"
+    http_segments = [segment for segment in http_parts.path.split("/") if segment]
+    assert len(http_segments) >= 2
+    assert http_segments[0] == "custom"
+    assert http_segments[1] == session_id
+    assert ws_parts.path == f"/ws/{session_id}"
     http_query = parse_qs(http_parts.query)
-    ws_query = parse_qs(ws_parts.query)
-    assert http_query.get("token") == [payload["token"]]
-    assert ws_query.get("token") == [payload["token"]]
+    assert "token" in http_query
+    assert ws_parts.query == http_parts.query
+    assert http_query["token"][0] == payload["token"]
 
     listing = gateway_client.get("/sessions")
     assert listing.status_code == 200
     sessions = listing.json()
     entry = next(item for item in sessions if item["id"] == session_id)
-    list_http = entry["vnc"]["http_url"]
-    list_ws = entry["vnc"]["websocket_url"]
-    list_http_parts = urlsplit(list_http)
-    list_ws_parts = urlsplit(list_ws)
-    assert list_http_parts.path.startswith("/custom/")
-    assert session_id in list_http_parts.path
-    assert list_ws_parts.path.startswith("/ws/")
-    assert list_ws_parts.path.endswith(session_id)
-    list_http_query = parse_qs(list_http_parts.query)
-    list_ws_query = parse_qs(list_ws_parts.query)
-    assert "token" in list_http_query
-    assert "token" in list_ws_query
+    list_http = urlparse(entry["vnc"]["http_url"])
+    list_ws = urlparse(entry["vnc"]["websocket_url"])
+    list_http_segments = [segment for segment in list_http.path.split("/") if segment]
+    assert len(list_http_segments) >= 2
+    assert list_http_segments[0] == "custom"
+    assert list_http_segments[1] == session_id
+    assert list_ws.path == f"/ws/{session_id}"
+    list_query = parse_qs(list_http.query)
+    assert "token" in list_query
+    assert list_ws.query == list_http.query
+    assert list_query["token"][0] == entry["vnc"]["token"]
 
 
 def test_create_command_proxies_to_runner(
