@@ -9,6 +9,7 @@ import base64
 import json
 import logging
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -186,6 +187,61 @@ def test_vnc_token_generation(gateway_client: TestClient) -> None:
     assert payload["token_ttl_seconds"] == 120
     claims = jwt.decode(payload["token"], "unit-test-secret", algorithms=["HS256"])
     assert claims["sid"] == session_body["id"]
+
+
+def test_session_listing_refreshes_vnc_token_after_ttl(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """Gateway reissues VNC tokens for listings once the TTL elapses."""
+
+    gateway_app.state.vnc_tokens._ttl_seconds = 1
+
+    now = datetime.now(tz=UTC)
+    session_id = str(uuid4())
+    session_body = {
+        "id": session_id,
+        "runner_id": "runner-1",
+        "status": SessionStatus.INIT.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+        "vnc": {"http_url": "https://vnc.example/view"},
+        "ws_endpoint": "ws://runner-1/playwright/3",
+    }
+    response = gateway_client.post("/sessions", json=session_body)
+    assert response.status_code == 201
+
+    listing = gateway_client.get("/sessions")
+    assert listing.status_code == 200
+    payload = listing.json()
+    assert payload, "Expected at least one session in listing"
+    first_token = next(
+        (
+            item["vnc"]["token"]
+            for item in payload
+            if item["id"] == session_id and item.get("vnc") is not None
+        ),
+        None,
+    )
+    assert first_token is not None
+
+    time.sleep(1.1)
+
+    refreshed = gateway_client.get("/sessions")
+    assert refreshed.status_code == 200
+    refreshed_payload = refreshed.json()
+    refreshed_token = next(
+        (
+            item["vnc"]["token"]
+            for item in refreshed_payload
+            if item["id"] == session_id and item.get("vnc") is not None
+        ),
+        None,
+    )
+    assert refreshed_token is not None
+
+    assert refreshed_token != first_token
 
 
 def test_vnc_overrides_apply_runner_templates(gateway_client: TestClient) -> None:

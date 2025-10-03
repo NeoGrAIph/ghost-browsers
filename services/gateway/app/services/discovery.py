@@ -217,9 +217,16 @@ async def purge_sessions_for_missing_runners(
     removed_sessions: list[UUID] = []
     for session in sessions:
         if session.runner_id in removed_ids:
-            await session_registry.delete(session.id)
-            await runner_registry.drop_session_ws_endpoint(session.id)
-            removed_sessions.append(session.id)
+            try:
+                await session_registry.delete(session.id)
+            except KeyError:
+                pass
+            else:
+                removed_sessions.append(session.id)
+            try:
+                await runner_registry.drop_session_ws_endpoint(session.id)
+            except KeyError:
+                pass
     return removed_sessions
 
 
