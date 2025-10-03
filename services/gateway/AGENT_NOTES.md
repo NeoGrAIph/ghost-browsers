@@ -56,6 +56,8 @@
 - SSE реализовано через `StreamingResponse`, WebSocket — нативный FastAPI роутер; для обоих каналов используется единый event bridge.
 - WebSocket `/events/ws` теперь прекращает обработку при `AuthenticationError`, чтобы избежать повторного открытия уже закрытого
   соединения; покрыто тестом `test_websocket_event_invalid_token_closes_without_server_error`.
+- Ошибки сети/JSON при загрузке JWKS конвертируются в `AuthenticationError` с логированием, чтобы HTTP-эндпоинты отдавали 401/503
+  вместо 500; добавлен тест `test_http_endpoints_handle_unreachable_jwks`.
 - Маршруты `/workstations` валидируют payload через `WorkstationUpsertPayload`/`WorkstationEvent` и возвращают `WorkstationRecord`, сохраняя идентификаторы и состояние даже при мета-апдейтах.
 - Эндпоинты мутаций (`POST /sessions`, `/sessions/{id}/proxy`, `/sessions/{id}/touch`, `DELETE /sessions/{id}`)
   после успешного завершения формируют `SessionEvent` и отправляют его в bridge, чтобы UI обновлялся даже при изменениях,
@@ -158,3 +160,5 @@
   раннерами без bearer-токена.
 - 2025-10-28 · gpt-5-codex · Обновлён RunnerCommandClient: исключает пустые JSON-тела для GET/DELETE и добавлен регрессионный тест на отсутствие body.
 - 2025-10-30 · gpt-5-codex · `DELETE /sessions/commands/{id}` очищает WebSocket binding в RunnerRegistry аналогично прямому удалению; добавлен тест на вызов `drop_session_ws_endpoint`.
+- 2025-10-30 · gpt-5-codex · Обработаны сетевые ошибки при загрузке JWKS, добавлен интеграционный тест HTTP эндпоинтов на ответ 401/503
+  вместо 500.

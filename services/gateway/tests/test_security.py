@@ -8,17 +8,21 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import HTTPException, Request, status
+from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, QueryParams
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
+from app import create_app  # noqa: E402
 from app.config import GatewaySettings  # noqa: E402
 from app.deps.security import authenticate_websocket, get_current_user  # noqa: E402
 from app.security import AuthenticatedUser, AuthenticationError  # noqa: E402
+from tests.conftest import HttpxMockTransport  # noqa: E402
 
 
 class DummyAuthenticator:
@@ -197,6 +201,44 @@ async def test_websocket_trusted_client_bypasses_token_validation(
         record.__dict__.get("transport") == "websocket"
         for record in caplog.records
     )
+
+
+def _enqueue_connect_error(transport: HttpxMockTransport) -> None:
+    """Queue a mock httpx response that simulates a JWKS outage."""
+
+    def _raise_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("jwks unavailable", request=request)
+
+    transport.enqueue(_raise_error)
+
+
+def test_http_endpoints_handle_unreachable_jwks(
+    httpx_mock_transport: HttpxMockTransport,
+) -> None:
+    """HTTP endpoints surface authentication outages as 401/503 instead of 500."""
+
+    settings = GatewaySettings(
+        jwt_jwks_url="http://idp.local/realms/unit/protocol/openid-connect/certs",
+        vnc_token_secret="unit-test-secret",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer failing"}
+
+        _enqueue_connect_error(httpx_mock_transport)
+        sessions_response = client.get("/sessions", headers=headers)
+        assert sessions_response.status_code in {
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        }
+
+        _enqueue_connect_error(httpx_mock_transport)
+        events_response = client.get("/events", headers=headers)
+        assert events_response.status_code in {
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        }
 
 
 @pytest.mark.anyio("asyncio")
