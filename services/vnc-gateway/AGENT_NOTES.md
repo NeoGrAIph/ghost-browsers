@@ -23,6 +23,7 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 
 ## Decisions
 - 2025-02-14 · Runtime-образ собирается через builder-стейдж, который упаковывает сервис в wheel. Финальный слой устанавливает wheel и копирует исходники `app/`, поэтому рантайм остаётся лёгким, но при необходимости сохраняется возможность отладки по исходникам. Перед сборкой образа make-таргет `vnc-gateway-image` выполняет smoke-проверки (`ruff`, `pytest`), чтобы pipeline не публиковал образ с регрессиями.
+- Helm chart `docs/helm/platform` предоставляет шаблон Deployment/Service/Ingress для VNC Gateway, принимает `secretEnv` c общим `VNC_GATEWAY_TOKEN_SECRET` и прочими секретами, обеспечивая синхронизацию конфигурации с Gateway/Runner.
 
 ## Constraints & Invariants
 - Tokens must include the matching session identifier; mismatches immediately rejected.
@@ -49,6 +50,7 @@ poetry run pytest -q
 ## Changelog (for agents)
 Дата · Кем/чем изменено · Коротко *что и почему*.
 
-- 2025-10-09 · gpt-5-codex · Переписан WS-прокси на uvicorn/websockets `TaskGroup`-relay, добавлены интеграционные тесты с real сервером, внедрён Prometheus `/metrics` (active/total connections, token failures), расширен `TokenValidator` (nonce/iat cache) и документирован сценарий предотвращения replay.
 - 2025-10-10 · gpt-5-codex · Добавлена конфигурация метрик через настройки (Prometheus registry/OTLP exporter), обновлён `/metrics` endpoint и покрытие тестами.
+- 2025-10-09 · gpt-5-codex · Переписан WS-прокси на uvicorn/websockets `TaskGroup`-relay, добавлены интеграционные тесты с real сервером, внедрён Prometheus `/metrics` (active/total connections, token failures), расширен `TokenValidator` (nonce/iat cache) и документирован сценарий предотвращения replay.
+- 2025-10-03 · gpt-5-codex · Добавлены Helm-шаблоны/values для VNC Gateway с примерами секретов и документация по установке.
 - 2025-02-14 · gpt-5-codex · Добавлен Dockerfile с многоступенчатой сборкой, make/CI-таргеты для образа и документация по переменным окружения VNC Gateway.

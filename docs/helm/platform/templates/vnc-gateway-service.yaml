@@ -1,0 +1,20 @@
+{{- if .Values.vncGateway.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ghost-platform.componentName" (list . "vnc-gateway") }}
+  labels:
+    app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+    app.kubernetes.io/component: vnc-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.vncGateway.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+    app.kubernetes.io/component: vnc-gateway
+  ports:
+    - name: http
+      port: {{ .Values.vncGateway.service.port }}
+      targetPort: {{ .Values.vncGateway.service.port }}
+{{- end }}

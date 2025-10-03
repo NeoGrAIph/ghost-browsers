@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ghost-platform
+description: Helm chart for deploying the Ghost Browsers control plane components
+version: 0.1.0
+appVersion: "0.1.0"
+type: application

@@ -1,0 +1,25 @@
+camoufoxWorker:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/acme/camoufox-worker
+    tag: v1.4.0
+  service:
+    type: ClusterIP
+    port: 8080
+  env:
+    WORKER_MODE: orchestrator
+    GATEWAY_URL: https://gateway.example.com
+    JOB_TIMEOUT_SEC: "120"
+  secretEnv:
+    - name: GATEWAY_TOKEN
+      secretName: worker-gateway-token
+      secretKey: token
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  ingress:
+    enabled: false

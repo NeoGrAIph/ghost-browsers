@@ -1,0 +1,85 @@
+{{- if .Values.runner.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ghost-platform.componentName" (list . "runner") }}
+  labels:
+    app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+    app.kubernetes.io/component: runner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+spec:
+  replicas: {{ .Values.runner.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+      app.kubernetes.io/component: runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ghost-platform.fullname" . }}
+        app.kubernetes.io/component: runner
+{{- with .Values.runner.podLabels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.runner.podAnnotations }}
+      annotations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+{{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{- range .Values.imagePullSecrets }}
+        - name: {{ .name }}
+{{- end }}
+{{- end }}
+{{- if .Values.serviceAccountName }}
+      serviceAccountName: {{ .Values.serviceAccountName }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      containers:
+        - name: runner
+          image: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}"
+          imagePullPolicy: {{ .Values.runner.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.runner.service.port }}
+              name: http
+{{- $hasEnv := or (gt (len .Values.runner.env) 0) (gt (len .Values.runner.secretEnv) 0) }}
+{{- if $hasEnv }}
+          env:
+{{- range $key, $value := .Values.runner.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+{{- end }}
+{{- range .Values.runner.secretEnv }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .secretKey }}
+{{- end }}
+{{- end }}
+{{- if .Values.runner.extraEnvFromSecrets }}
+          envFrom:
+{{- range .Values.runner.extraEnvFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+{{- end }}
+{{- end }}
+{{- with .Values.runner.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+{{- end }}

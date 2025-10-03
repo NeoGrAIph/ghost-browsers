@@ -1,0 +1,35 @@
+vncGateway:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/acme/ghost-vnc-gateway
+    tag: v1.4.0
+  service:
+    type: ClusterIP
+    port: 8000
+  env:
+    VNC_GATEWAY_RUNNER_HTTP_BASE: http://runner.ghost.svc.cluster.local:8080
+    VNC_GATEWAY_RUNNER_WS_BASE: ws://runner.ghost.svc.cluster.local:8080
+    VNC_GATEWAY_METRICS_BACKEND: prometheus
+  secretEnv:
+    - name: VNC_GATEWAY_TOKEN_SECRET
+      secretName: gateway-vnc
+      secretKey: token
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 400m
+      memory: 512Mi
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: vnc-gateway.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - hosts:
+          - vnc-gateway.example.com
+        secretName: vnc-gateway-tls

@@ -1,0 +1,35 @@
+ui:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/acme/ghost-ui
+    tag: v1.4.0
+  service:
+    type: ClusterIP
+    port: 80
+  env:
+    VITE_GATEWAY_URL: https://gateway.example.com
+    VITE_KEYCLOAK_URL: https://id.example.com/realms/ghost
+    VITE_KEYCLOAK_CLIENT_ID: ghost-ui
+  secretEnv:
+    - name: VITE_KEYCLOAK_CLIENT_SECRET
+      secretName: ui-keycloak
+      secretKey: clientSecret
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: ui.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - hosts:
+          - ui.example.com
+        secretName: ui-tls

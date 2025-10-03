@@ -1,0 +1,43 @@
+gateway:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/acme/ghost-gateway
+    tag: v1.4.0
+  service:
+    type: ClusterIP
+    port: 8080
+  env:
+    KEYCLOAK_URL: https://id.example.com/realms/ghost
+    KEYCLOAK_REALM: ghost
+    KEYCLOAK_CLIENT_ID: ghost-gateway
+    DISCOVERY_MODE: k8s
+    JWT_JWKS_URL: https://id.example.com/realms/ghost/protocol/openid-connect/certs
+    GATEWAY_TRUSTED_CIDRS: 10.0.0.0/8,fd00::/64
+    GATEWAY_TRUSTED_HEADER: X-Forwarded-For
+    VNC_TOKEN_TTL_SEC: "300"
+  secretEnv:
+    - name: KEYCLOAK_CLIENT_SECRET
+      secretName: gateway-keycloak
+      secretKey: clientSecret
+    - name: VNC_TOKEN_SECRET
+      secretName: gateway-vnc
+      secretKey: token
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: gateway.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - hosts:
+          - gateway.example.com
+        secretName: gateway-tls
