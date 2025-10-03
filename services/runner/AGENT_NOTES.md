@@ -71,6 +71,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **Process-backed VNC controller**: Non-headless sessions allocate Xvfb/x11vnc/websockify helpers via `ProcessVncController`. The controller maintains a bounded pool of displays and ports, composes public HTTP/WS URLs from `RunnerSettings`, and tears down helpers whenever sessions terminate or switch to headless mode.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
+- **Local compose warm pool park**: docker-compose mounts `services/runner/config/warm-pool.local.json` и `browser-prefs.local.json`, обеспечивая демонстрационный парк рабочих станций с фиксированными `fingerprint_id` и набором тумблеров, который разделяют прогретые и холодные сессии; режим по умолчанию `WARM_POOL_MODE=hybrid` даёт возможность создавать холодные браузеры, когда парк занят.
 - **Bounded prewarm history**: менеджер хранит ошибки прогрева в `deque` с ограничением размера, что позволяет health-эндпоинту
   показывать последние сбои без риска утечки памяти.
 - **Container image**: Runner контейнер собирается из `mcr.microsoft.com/playwright/python`, использует Poetry для in-project виртуального окружения под учёткой `pwuser`, устанавливает production wheel `camoufox[geoip]==0.4.11`, прогружает артефакты Camoufox во время сборки, удаляет локальные stub-пакеты из образа и монтирует BuildKit-кеши для Poetry/pip.
@@ -158,3 +159,5 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-25 · gpt-5-codex · Dockerfile переключён на production `camoufox[geoip]==0.4.11` с прогревом артефактов на сборке,
   добавлены BuildKit-кеши, расширен `.dockerignore`, README-TASK дополнен инструкциями по сборке/запуску.
 - 2025-10-27 · gpt-5-codex · Добавлен make-таргет/CI-контур для сборки runner-образа с контейнерными тестами и подписями cosign.
+- 2025-10-28 · gpt-5-codex · Документирован локальный парк прогретых рабочих станций и примеры конфигов для docker compose.
+- 2025-10-29 · gpt-5-codex · Перевели docker compose на гибридный режим тёплого пула, чтобы локально запускались холодные сессии при исчерпании парка.

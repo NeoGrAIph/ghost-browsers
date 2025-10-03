@@ -1,0 +1,22 @@
+{
+  "profiles": {
+    "chrome/stable-en": {
+      "locale": "en-US",
+      "timezone": "UTC",
+      "features": {
+        "webgl": true,
+        "webrtc": false,
+        "do_not_track": true
+      }
+    },
+    "chrome/stable-ru": {
+      "locale": "ru-RU",
+      "timezone": "Europe/Moscow",
+      "features": {
+        "webgl": true,
+        "webrtc": false,
+        "do_not_track": true
+      }
+    }
+  }
+}

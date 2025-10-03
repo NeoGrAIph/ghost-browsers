@@ -3,6 +3,29 @@
 ## Общие
 - `KEYCLOAK_REALM` / `KEYCLOAK_URL` / `KEYCLOAK_CLIENT_ID`
 
+## Локальный запуск через docker compose
+
+Для локального развёртывания предусмотрен стек `docker-compose.yml`, который собирает `runner`, `gateway`, `vnc-gateway` и UI в
+одном origin. Прогретый пулл Runner'а — это **парк отдельных рабочих станций**: каждая станция описана в `services/runner/config/warm-pool.local.json`, имеет собственный `fingerprint_id`, набор `tags` и относительный путь до набора браузерных тумблеров (`prefs_rel_path`). Файл `services/runner/config/browser-prefs.local.json` содержит сами тумблеры; он монтируется внутрь Runner'а и используется как базовый каталог (`CAMOUFOX_PREFS_BASE_PATH`), чтобы прогретые и холодные сессии разделяли одинаковый профиль.
+
+1. Скопируйте `.env.example` в `.env` и при необходимости скорректируйте значения. Переменная `VNC_TOKEN_SECRET` **обязана** быть
+   одинаковой для `gateway` и `vnc-gateway`, иначе токены, выдаваемые `VncTokenService`, не пройдут проверку `TokenValidator`.
+   Шаблоны публичных VNC URL, которые перечислены в `RUNNERS`, также должны ссылаться на тот же хост, что и опубликованный порт
+   `vnc-gateway` (по умолчанию `http://localhost:8001`). `SLOT_LIMIT` в `.env` и `total_slots` в `RUNNERS` должны совпадать с числом
+   рабочих станций, перечисленных в `warm-pool.local.json`, чтобы Gateway показывал реальную вместимость парка. Режим
+   `WARM_POOL_MODE=hybrid` сохраняет приоритет за прогретым парком, но позволяет Runner'у автоматически запускать холодные
+   браузеры, когда свободных прогретых слотов не осталось.
+2. При необходимости отредактируйте `services/runner/config/warm-pool.local.json`, добавив или удалив рабочие станции, и синхронизируйте
+   для них `fingerprint_id`, `tags` и `prefs_rel_path`. Новые наборы тумблеров добавляйте в `services/runner/config/browser-prefs.local.json` — Runner смонтирует файл в `/etc/runner/browser-prefs.json` и передаст путь Camoufox при запуске прогретых и холодных браузеров.
+3. Запустите `docker compose up --build`. Стек пробрасывает порты `8081` (UI с Nginx и проксированным API `/api`), `8080`
+   (gateway), `8082` (прямой доступ к runner для отладки) и `8001` (VNC gateway).
+4. При добавлении новых runner'ов обновляйте переменную `RUNNERS` в `docker-compose.yml`, указывая уникальный `id`, `base_url` и
+   соответствующие публичные шаблоны `vnc_http_url_template`/`vnc_ws_url_template`. Все записи обязаны использовать общий
+   `VNC_TOKEN_SECRET` и ссылаться на корректные публичные адреса `vnc-gateway`, чтобы UI мог построить рабочие ссылки `SessionVncDetails`.
+
+> Примечание: UI внутри контейнера обслуживается Nginx конфигурацией `apps/ui/nginx.conf`, которая проксирует `/api/` в gateway,
+> обеспечивая единый origin и корректную работу REST/SSE/WebSocket вызовов без CORS middleware.
+
 ## Gateway
 - `DISCOVERY_MODE` = `k8s` | `static`
 - `RUNNERS` — список `host:port` при static

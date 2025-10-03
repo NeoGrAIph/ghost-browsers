@@ -1,0 +1,18 @@
+{
+  "workstations": [
+    {
+      "id": "workstation-alpha",
+      "label": "Chrome Stable · en-US",
+      "tags": ["chrome", "stable", "en-US"],
+      "fingerprint_id": "fp-alpha-2024-01",
+      "prefs_rel_path": "chrome/stable-en"
+    },
+    {
+      "id": "workstation-bravo",
+      "label": "Chrome Stable · ru-RU",
+      "tags": ["chrome", "stable", "ru-RU"],
+      "fingerprint_id": "fp-bravo-2024-01",
+      "prefs_rel_path": "chrome/stable-ru"
+    }
+  ]
+}
