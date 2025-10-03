@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from core import Session, SessionProxySettings
+from fastapi import HTTPException, status
+from pydantic import ValidationError
+
+
+logger = logging.getLogger(__name__)
 
 
 class SessionRegistry:
@@ -106,7 +112,19 @@ class SessionRegistry:
             if session is None:
                 raise KeyError("Session not found")
             observed_at = timestamp or datetime.now(tz=UTC)
-            updated = session.model_copy(update={"last_seen_at": observed_at})
+            try:
+                updated = session.model_copy(update={"last_seen_at": observed_at})
+            except ValidationError as exc:  # pragma: no cover - defensive guard
+                logger.warning(
+                    "Failed to update heartbeat for session %s: %s",
+                    session_id,
+                    exc,
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid heartbeat payload",
+                ) from exc
             sanitized = self._sanitize_session(updated)
             self._sessions[session_id] = sanitized
             return sanitized
