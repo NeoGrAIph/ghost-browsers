@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,8 +20,10 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from jose import jwt
+from starlette import status
 from starlette.responses import StreamingResponse
 from starlette.types import Scope
+from starlette.websockets import WebSocket as StarletteWebSocket, WebSocketDisconnect
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
@@ -30,7 +33,12 @@ from app import create_app  # noqa: E402
 from app.config import GatewaySettings  # noqa: E402
 from app.deps import get_vnc_token_service  # noqa: E402
 from app.deps.security import get_authenticator, get_current_user  # noqa: E402
-from app.security import AuthenticatedUser, KeycloakAuthenticator, VncTokenService  # noqa: E402
+from app.security import (  # noqa: E402
+    AuthenticatedUser,
+    AuthenticationError,
+    KeycloakAuthenticator,
+    VncTokenService,
+)
 from app.services.runner_client import RunnerCommandClient  # noqa: E402
 from app.services.runner_health import RunnerHealthClient  # noqa: E402
 from core import (  # noqa: E402
@@ -630,7 +638,11 @@ async def test_sse_event_forwarding(gateway_app: FastAPI) -> None:
     iterator = response.body_iterator
     consumer = asyncio.create_task(iterator.__anext__())
     await asyncio.sleep(0)
-    result = await publish_session_event(event=event, bridge=bridge)
+    result = await publish_session_event(
+        event=event,
+        bridge=bridge,
+        _user=AuthenticatedUser(subject="tester", email="tester@example.com"),
+    )
     assert result.status_code == 202
     chunk = await asyncio.wait_for(consumer, timeout=1)
     text = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
@@ -710,6 +722,48 @@ def test_websocket_event_forwarding(gateway_client: TestClient) -> None:
         assert response.status_code == 202
         message = websocket.receive_json()
         assert message["session"]["id"] == str(session.id)
+
+
+def test_websocket_event_invalid_token_closes_without_server_error(
+    gateway_app: FastAPI,
+    gateway_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejecting authentication should close once with 1008 and avoid server errors."""
+
+    close_codes: list[int] = []
+    original_close = StarletteWebSocket.close
+
+    async def tracking_close(self: StarletteWebSocket, *args, **kwargs) -> None:
+        code = kwargs.get("code")
+        if code is None and args:
+            code = args[0]
+        if code is None:
+            code = status.WS_1000_NORMAL_CLOSURE
+        close_codes.append(code)
+        await original_close(self, *args, **kwargs)
+
+    monkeypatch.setattr(StarletteWebSocket, "close", tracking_close)
+
+    class _RejectingAuthenticator:
+        async def authenticate(self, token: str) -> AuthenticatedUser:
+            """Always reject the provided bearer token for the test."""
+
+            raise AuthenticationError("invalid token")
+
+    authenticator = _RejectingAuthenticator()
+    gateway_app.state.authenticator = authenticator
+    gateway_app.dependency_overrides[get_authenticator] = lambda: authenticator
+
+    caplog.set_level(logging.ERROR)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with gateway_client.websocket_connect("/events/ws?token=invalid"):
+            pass
+
+    assert exc_info.value.code == status.WS_1008_POLICY_VIOLATION
+    assert close_codes == [status.WS_1008_POLICY_VIOLATION]
+    assert [record for record in caplog.records if record.levelno >= logging.ERROR] == []
 
 
 @pytest.mark.anyio

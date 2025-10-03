@@ -27,7 +27,8 @@
     `access_token` для совместимости с нативным `EventSource`.
   - `WS /events/ws` — WebSocket с тем же потоком событий.
   - `WS /sessions/{id}/ws` — прокси Playwright WebSocket каналов; требует Bearer токен в заголовке или параметре `token`.
-  - `POST /events` — приём `SessionEvent` от Runner (HTTP transport) с публикацией через общий bridge.
+  - `POST /events` — приём `SessionEvent` от Runner (HTTP transport) с публикацией через общий bridge; маршрут требует той же
+    аутентификации, что и клиентские SSE/REST-вызовы через зависимость `get_current_user`.
 - «Внутренние» HTTP/WS запросы могут авторизоваться по источнику IP: CIDR из `GATEWAY_TRUSTED_CIDRS` и (опционально)
   заголовок `GATEWAY_TRUSTED_HEADER` с оригинальным клиентским IP. Совпадение выдаёт синтетического пользователя
   `internal:<ip>` и логирует стратегию `auth_strategy=internal-bypass`.
@@ -53,6 +54,8 @@
 - Enrich-фаза переписывает `http_url`/`websocket_url`, добавляя query `token=<jwt>`, чтобы downstream-клиенты (UI/iframe, tooling) могли пользоваться готовыми ссылками без ручного выставления `X-VNC-Token`.
 - Переиспользуем подход из beta-контроллера: для каждого раннера можно настроить шаблоны публичных VNC-URL (HTTP/WS) и при регистрации сессии мы переписываем внутренние адреса на общую точку входа, что позволяет использовать ограниченное число наружных портов.
 - SSE реализовано через `StreamingResponse`, WebSocket — нативный FastAPI роутер; для обоих каналов используется единый event bridge.
+- WebSocket `/events/ws` теперь прекращает обработку при `AuthenticationError`, чтобы избежать повторного открытия уже закрытого
+  соединения; покрыто тестом `test_websocket_event_invalid_token_closes_without_server_error`.
 - Маршруты `/workstations` валидируют payload через `WorkstationUpsertPayload`/`WorkstationEvent` и возвращают `WorkstationRecord`, сохраняя идентификаторы и состояние даже при мета-апдейтах.
 - Эндпоинты мутаций (`POST /sessions`, `/sessions/{id}/proxy`, `/sessions/{id}/touch`, `DELETE /sessions/{id}`)
   после успешного завершения формируют `SessionEvent` и отправляют его в bridge, чтобы UI обновлялся даже при изменениях,
@@ -148,3 +151,9 @@
 - 2025-10-27 · gpt-5-codex · Уточнены docstring/импорт соглашения в сервисах и тестах, а также обновлены проверки переписывания VNC-URL, чтобы учитывать выдачу токенов в query-параметрах.
 - 2025-10-26 · gpt-5-codex · Привёл unit-тесты Gateway к текущей логике VNC-токенов: обновил ожидания URL на парсинг с query `token`, добавил импорт `HttpxMockTransport` и сортировку импортов для совместимости с Ruff.
 - 2025-10-27 · gpt-5-codex · Обновлён `RunnerRegistry.select_next`, чтобы игнорировать занятых/непринимающих раннеров и раннеров без свободных слотов; добавлены покрывающие unit-тесты.
+- 2025-10-28 · gpt-5-codex · Зафиксирована обработка ошибки аутентификации в `/events/ws`, добавлен интеграционный тест на закрытие с кодом 1008 без серверной ошибки.
+- 2025-10-30 · gpt-5-codex · Защитил `POST /events` аутентификацией через `get_current_user` и добавил тесты, проверяющие отказ для
+  анонимных вызовов и успех для авторизованных клиентов.
+- 2025-10-30 · gpt-5-codex · Покрыл обход по доверенным сетям для `POST /events`, чтобы зафиксировать совместимость с внутренними
+  раннерами без bearer-токена.
+- 2025-10-28 · gpt-5-codex · Обновлён RunnerCommandClient: исключает пустые JSON-тела для GET/DELETE и добавлен регрессионный тест на отсутствие body.

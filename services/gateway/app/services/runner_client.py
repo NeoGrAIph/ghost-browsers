@@ -268,7 +268,10 @@ class RunnerCommandClient:
                 timeout=self.timeout,
                 transport=self.transport,
             ) as client:
-                response = await client.request(method, path, json=json)
+                request_kwargs: dict[str, Any] = {}
+                if json is not None:
+                    request_kwargs["json"] = json
+                response = await client.request(method, path, **request_kwargs)
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:  # pragma: no cover - mapped error
             raise RunnerCommandError(

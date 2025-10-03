@@ -150,9 +150,10 @@ class RunnerProxy:
         response = Response(
             content=upstream_response.content,
             status_code=upstream_response.status_code,
-            headers=dict(filtered_headers),
-            media_type=upstream_response.headers.get("content-type"),
         )
+        response.raw_headers = []
+        for header, value in filtered_headers:
+            response.headers.append(header, value)
 
         if source == "query" and port_override is not None:
             response.set_cookie(
@@ -325,8 +326,8 @@ class RunnerProxy:
         }
 
     @staticmethod
-    def _filter_response_headers(headers: httpx.Headers) -> dict[str, str]:
-        """Filter upstream response headers to remove hop-by-hop entries."""
+    def _filter_response_headers(headers: httpx.Headers) -> list[tuple[str, str]]:
+        """Filter upstream response headers while preserving duplicates."""
 
         hop_by_hop = {
             "connection",
@@ -337,8 +338,12 @@ class RunnerProxy:
             "trailers",
             "transfer-encoding",
             "upgrade",
-        } 
-        return {k: v for k, v in headers.items() if k.lower() not in hop_by_hop}
+        }
+        return [
+            (key, value)
+            for key, value in headers.multi_items()
+            if key.lower() not in hop_by_hop
+        ]
 
 
 def _build_upstream_url(

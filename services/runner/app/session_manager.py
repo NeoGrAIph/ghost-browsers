@@ -21,6 +21,8 @@ from core.models import (
     SessionStatus,
     SessionVncDetails,
     StartUrlWait,
+    WorkstationMeta,
+    WorkstationState,
 )
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, PositiveInt
 
@@ -46,6 +48,8 @@ from .warm_pool import (
     WarmPoolManager,
     WarmPoolProvisioningError,
     WarmPoolReservation,
+    WarmPoolSnapshot,
+    WarmPoolState,
     WarmPoolStateError,
     WarmPoolStatistics,
 )
@@ -242,18 +246,22 @@ class SessionManager:
                 browser_handle = acquisition.handle
                 metadata = acquisition.metadata
                 warm_reservation = acquisition.reservation
-                workstation_id = (
-                    warm_reservation.snapshot.workstation_id
-                    if warm_reservation is not None
-                    else None
-                )
+                workstation_id: str | None = None
+                workstation_fingerprint_id: str | None = None
+                workstation_meta: WorkstationMeta | None = None
+                if warm_reservation is not None:
+                    snapshot = warm_reservation.snapshot
+                    workstation_id = snapshot.workstation_id
+                    workstation_fingerprint_id = snapshot.fingerprint_id
+                    workstation_meta = self._build_workstation_meta(snapshot)
                 if browser_handle.pid is not None:
                     metadata.setdefault("runner_browser_pid", browser_handle.pid)
-                vnc_enabled = (
-                    payload.vnc_enabled
-                    if payload.vnc_enabled is not None
-                    else (vnc_details is not None and not payload.headless)
-                )
+                if payload.vnc_enabled is None:
+                    vnc_enabled = vnc_details is not None and not payload.headless
+                else:
+                    vnc_enabled = payload.vnc_enabled
+                if payload.headless or vnc_details is None:
+                    vnc_enabled = False
                 try:
                     session = Session(
                         id=session_id,
@@ -272,6 +280,9 @@ class SessionManager:
                         vnc=vnc_details,
                         vnc_enabled=vnc_enabled,
                         metadata=metadata,
+                        workstation_id=workstation_id,
+                        workstation_fingerprint_id=workstation_fingerprint_id,
+                        workstation=workstation_meta,
                     )
                 except Exception:
                     if workstation_id is not None:
@@ -280,9 +291,10 @@ class SessionManager:
                         await self._safe_shutdown_cold_browser(browser_handle)
                     await self._discard_vnc_handle(session_id, vnc_handle)
                     raise
+                busy_snapshot: WarmPoolSnapshot | None = None
                 try:
                     if workstation_id is not None:
-                        await self._mark_warm_slot_busy(workstation_id)
+                        busy_snapshot = await self._mark_warm_slot_busy(workstation_id)
                 except SessionCapacityError:
                     if workstation_id is not None:
                         await self._cancel_warm_reservation(workstation_id)
@@ -290,6 +302,14 @@ class SessionManager:
                         await self._safe_shutdown_cold_browser(browser_handle)
                     await self._discard_vnc_handle(session_id, vnc_handle)
                     raise
+                if busy_snapshot is not None:
+                    workstation_meta = self._build_workstation_meta(busy_snapshot)
+                    update_payload: dict[str, Any] = {"workstation": workstation_meta}
+                    if busy_snapshot.fingerprint_id is not None:
+                        update_payload["workstation_fingerprint_id"] = (
+                            busy_snapshot.fingerprint_id
+                        )
+                    session = session.model_copy(update=update_payload, deep=True)
                 self._sessions[session_id] = session
                 self._browser_handles[session_id] = browser_handle
                 if workstation_id is not None:
@@ -314,6 +334,12 @@ class SessionManager:
                 raise SessionNotFoundError(session_id)
             existing = self._sessions[session_id]
             update_data = payload.model_dump(exclude_unset=True)
+            warm_session_tracked = session_id in self._warm_sessions
+            will_release_warm = (
+                warm_session_tracked
+                and existing.status is not SessionStatus.DEAD
+                and update_data.get("status") is SessionStatus.DEAD
+            )
             if "vnc" in update_data:
                 update_data["vnc"] = self._sanitize_vnc_payload(payload.vnc)
             reason = update_data.pop("reason", None)
@@ -335,6 +361,16 @@ class SessionManager:
                 update_data["labels"] = {**existing.labels, **merged_labels}
             if merged_metadata is not None:
                 update_data["metadata"] = {**existing.metadata, **merged_metadata}
+            if will_release_warm:
+                update_data["workstation_id"] = None
+                update_data["workstation_fingerprint_id"] = None
+                update_data["workstation"] = None
+            next_headless = update_data.get("headless")
+            if next_headless is None:
+                next_headless = existing.headless
+            next_vnc = update_data.get("vnc", existing.vnc)
+            if next_headless or next_vnc is None:
+                update_data["vnc_enabled"] = False
             session = existing.model_copy(update=update_data, deep=True)
             self._sessions[session_id] = session
             self._recalculate_active_sessions(existing.status, session.status)
@@ -348,7 +384,7 @@ class SessionManager:
             release_warm = (
                 existing.status is not SessionStatus.DEAD
                 and session.status is SessionStatus.DEAD
-                and session_id in self._warm_sessions
+                and warm_session_tracked
             )
             if release_warm:
                 await self._release_warm_slot(session_id)
@@ -899,6 +935,75 @@ class SessionManager:
             metadata["warm_pool"] = warm_metadata
         return metadata
 
+    def _map_warm_state(self, warm_state: WarmPoolState) -> WorkstationState:
+        """Translate warm pool states into public workstation lifecycle states.
+
+        Args:
+            warm_state: State reported by the warm pool snapshot for the
+                workstation backing the session.
+
+        Returns:
+            WorkstationState: State exposed via :class:`core.models.WorkstationMeta`.
+
+        Example:
+            >>> manager._map_warm_state(WarmPoolState.BUSY)  # doctest: +SKIP
+            <WorkstationState.ASSIGNED: 'assigned'>
+        """
+
+        if warm_state is WarmPoolState.IDLE:
+            return WorkstationState.AVAILABLE
+        if warm_state is WarmPoolState.BUSY:
+            return WorkstationState.ASSIGNED
+        if warm_state in {WarmPoolState.RESERVED, WarmPoolState.RECYCLING}:
+            return WorkstationState.PROVISIONING
+        return WorkstationState.UNAVAILABLE
+
+    def _build_workstation_meta(
+        self,
+        snapshot: WarmPoolSnapshot,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> WorkstationMeta:
+        """Return workstation metadata derived from a warm pool snapshot.
+
+        Args:
+            snapshot: Warm pool snapshot captured while reserving or marking a
+                workstation busy.
+            metadata: Optional dictionary merged into the workstation metadata
+                payload, allowing callers to surface additional descriptors such
+                as launch environments.
+
+        Returns:
+            WorkstationMeta: Public workstation metadata compatible with the
+            :class:`core.models.Session` contract.
+
+        Example:
+            >>> meta = manager._build_workstation_meta(snapshot)  # doctest: +SKIP
+            >>> meta.id  # doctest: +SKIP
+            'ws-1'
+        """
+
+        warm_pool = self._warm_pool
+        if warm_pool is not None:
+            builder = getattr(warm_pool, "_build_workstation_meta", None)
+            if callable(builder):
+                if metadata is None:
+                    return builder(snapshot)  # type: ignore[misc]
+                return builder(snapshot, metadata=dict(metadata))  # type: ignore[misc]
+        extra_metadata: dict[str, Any] = {"warm_pool_state": snapshot.state.value}
+        if snapshot.proxy_url:
+            extra_metadata.setdefault("proxy_url", snapshot.proxy_url)
+        if metadata:
+            extra_metadata.update(dict(metadata))
+        fingerprint = snapshot.fingerprint_id or "unknown"
+        return WorkstationMeta(
+            id=snapshot.workstation_id,
+            fingerprint_id=fingerprint,
+            state=self._map_warm_state(snapshot.state),
+            proxy_summary=snapshot.proxy_url,
+            metadata=extra_metadata,
+        )
+
     async def _cancel_warm_reservation(self, workstation_id: str) -> None:
         """Rollback a reserved warm slot back to ``idle`` state.
 
@@ -914,24 +1019,29 @@ class SessionManager:
         with contextlib.suppress(WarmPoolStateError):
             await self._warm_pool.cancel_reservation(workstation_id)
 
-    async def _mark_warm_slot_busy(self, workstation_id: str) -> None:
+    async def _mark_warm_slot_busy(self, workstation_id: str) -> WarmPoolSnapshot:
         """Transition a reserved warm slot into the ``busy`` state.
 
         Args:
             workstation_id: Identifier of the reserved workstation.
+
+        Returns:
+            WarmPoolSnapshot: Updated snapshot reflecting the busy state.
 
         Raises:
             SessionCapacityError: If the reservation vanished before it could be
                 marked busy.
 
         Example:
-            >>> await manager._mark_warm_slot_busy("ws-1")  # doctest: +SKIP
+            >>> snapshot = await manager._mark_warm_slot_busy("ws-1")  # doctest: +SKIP
+            >>> snapshot.state  # doctest: +SKIP
+            <WarmPoolState.BUSY: 'busy'>
         """
 
         if self._warm_pool is None:
             raise SessionCapacityError("warm pool is not configured")
         try:
-            await self._warm_pool.mark_busy(workstation_id)
+            return await self._warm_pool.mark_busy(workstation_id)
         except WarmPoolStateError as exc:
             raise SessionCapacityError(
                 f"warm workstation '{workstation_id}' is no longer reserved"

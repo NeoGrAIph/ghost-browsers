@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from ..deps import get_event_bridge
 from ..deps.security import authenticate_websocket, get_authenticator, get_current_user
-from ..security import AuthenticatedUser, KeycloakAuthenticator
+from ..security import AuthenticatedUser, AuthenticationError, KeycloakAuthenticator
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -19,6 +19,7 @@ router = APIRouter(prefix="/events", tags=["events"])
 async def publish_session_event(
     event: SessionEvent,
     bridge: Annotated[AbstractSessionEventBridge, Depends(get_event_bridge)],
+    _user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> Response:
     """Accept a :class:`SessionEvent` from a runner and fan it out to clients.
 
@@ -27,6 +28,9 @@ async def publish_session_event(
             runner.
         bridge: Application-scoped event bridge that relays events to SSE and
             WebSocket subscribers.
+        _user: Authenticated principal publishing the event. The value is not
+            used directly but ensures that callers are authorised via
+            :func:`get_current_user` before an event enters the system.
 
     Returns:
         Response: ``202 Accepted`` response confirming that the event was
@@ -65,7 +69,10 @@ async def websocket_events(
 ) -> None:
     """Relay session events over a WebSocket connection."""
 
-    await authenticate_websocket(websocket, authenticator)
+    try:
+        await authenticate_websocket(websocket, authenticator)
+    except AuthenticationError:
+        return
     await websocket.accept()
     bridge: AbstractSessionEventBridge = websocket.app.state.event_bridge  # type: ignore[attr-defined]
     subscription = await bridge.subscribe(replay_latest=True)
