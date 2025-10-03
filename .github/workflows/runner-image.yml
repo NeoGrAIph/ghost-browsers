@@ -1,0 +1,63 @@
+name: build-runner-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_tag:
+        description: "Tag runner-образа (пример: dev)"
+        required: true
+      camoufox_version:
+        description: "Override camoufox wheel version (пример: 0.4.11)"
+        required: false
+  push:
+    paths:
+      - "services/runner/Dockerfile"
+      - "services/runner/pyproject.toml"
+      - "services/runner/poetry.lock"
+      - "services/runner/**/*.py"
+      - "services/runner/**/py.typed"
+      - "services/runner/bin/**"
+      - "services/runner/tests/**"
+      - "camoufox/**"
+      - "packages/camoufox/**"
+      - "Makefile"
+      - ".github/workflows/runner-image.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      IMAGE_NAME: ghcr.io/${{ toLower(github.repository_owner) }}/runner
+      IMAGE_TAG: ${{ inputs.runner_tag || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Compose image reference
+        run: echo "IMAGE_REF=${IMAGE_NAME}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+      - name: Build image & run container checks
+        env:
+          RUNNER_IMAGE: ${{ env.IMAGE_REF }}
+          RUNNER_CAMOUFOX_VERSION: ${{ inputs.camoufox_version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${RUNNER_CAMOUFOX_VERSION}" ]; then
+            make runner-image RUNNER_IMAGE="${RUNNER_IMAGE}" RUNNER_CAMOUFOX_VERSION="${RUNNER_CAMOUFOX_VERSION}"
+          else
+            make runner-image RUNNER_IMAGE="${RUNNER_IMAGE}"
+          fi
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push runner image
+        run: docker push "${IMAGE_REF}"
+      - uses: sigstore/cosign-installer@v3.6.0
+      - name: Sign runner image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign sign --yes "${IMAGE_REF}"

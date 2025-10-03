@@ -58,6 +58,11 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   для документирования и сериализации warm-пула.
 
 ## Decisions
+- **Container delivery pipeline**: Runner образ собирается через `make runner-image`, который использует BuildKit
+  и прогоняет `poetry check`, `poetry install --with dev --no-root`, `PYTHONPATH=. poetry run pytest -q`,
+  а также `python -m camoufox path` и `python -m camoufox version` внутри контейнера. GitHub Actions workflow
+  `runner-image.yml` вызывает тот же таргет, пушит образ в GHCR и подписывает его `cosign` (keyless,
+  `COSIGN_EXPERIMENTAL=1`).
 - **In-memory publisher**: Стандартный транспорт построен на `InMemorySessionEventPublisher` и считается продукционным решением; при необходимости можно оборачивать его через `CallbackSessionEventPublisher` для сторонних интеграций без отказа от in-memory ядра.
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
 - **Workstation events**: `WarmPoolManager` публикует `workstation.state_changed|recycled|error` при любых переходах слота; маршруты `/workstations` только вызывают методы менеджера.
@@ -118,6 +123,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - `poetry install --no-root`
 - `PYTHONPATH=. poetry run pytest -q` (anyio-powered unit tests)
 - `poetry run ruff check .`
+- `make runner-image` — соберёт контейнер, выполнит `poetry check`, `poetry install --with dev --no-root`, `PYTHONPATH=. poetry run pytest -q`, `python -m camoufox path` и `python -m camoufox version` внутри образа.
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_config_warm_pool.py -q`
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_warm_pool.py -q`
 - Таргетно: `PYTHONPATH=. poetry run pytest services/runner/tests/test_workstations_api.py -q`
@@ -148,3 +154,4 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-24 · gpt-5-codex · Добавлен стресс-тест in-memory издателя (10k событий) и задокументированы пороги publish/drain.
 - 2025-10-25 · gpt-5-codex · Dockerfile переключён на production `camoufox[geoip]==0.4.11` с прогревом артефактов на сборке,
   добавлены BuildKit-кеши, расширен `.dockerignore`, README-TASK дополнен инструкциями по сборке/запуску.
+- 2025-10-27 · gpt-5-codex · Добавлен make-таргет/CI-контур для сборки runner-образа с контейнерными тестами и подписями cosign.

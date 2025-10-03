@@ -41,3 +41,15 @@
 ## Нефункциональные требования
 - Время запуска «тёплой» сессии ≤ 4 сек.
 - SLA событий: < 2 сек до доставки в UI.
+
+## Контур доставки runner-образа
+- **Локальная сборка**: `make runner-image` использует BuildKit (`docker buildx build --load`) и
+  запускает smoke-последовательность внутри только что собранного контейнера. Внутри
+  контейнера выполняются `poetry check`, установка dev-зависимостей (`poetry install --with dev --no-root`),
+  `PYTHONPATH=. poetry run pytest -q`, а также диагностика Camoufox (`python -m camoufox path` и
+  `python -m camoufox version`). Это гарантирует, что production-образ совместим с тестами без
+  необходимости держать виртуальное окружение на хосте.
+- **CI/CD**: workflow `.github/workflows/runner-image.yml` повторно использует make-таргет на GitHub Actions,
+  публикует артефакт в `ghcr.io/<org>/runner:<tag>` и подписывает образ через cosign (keyless, `COSIGN_EXPERIMENTAL=1`).
+  Пайплайн требует `packages:write` и `id-token:write`, чтобы операторы могли тянуть подписанный production-ready билд
+  без ручной сборки.
