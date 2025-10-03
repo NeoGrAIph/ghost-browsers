@@ -68,7 +68,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - **HTTP publisher toggle**: `get_event_publisher` читает `RunnerSettings.event_endpoint` и, если URL задан, использует `HttpSessionEventPublisher`, публикующий события в Gateway через `POST /events`.
 - **Workstation events**: `WarmPoolManager` публикует `workstation.state_changed|recycled|error` при любых переходах слота; маршруты `/workstations` только вызывают методы менеджера.
 - **SSE/WS обёртки**: `SseWorkstationEventPublisher` и `WebSocketWorkstationEventPublisher` форматируют события для стриминга в Gateway/UI.
-- **Camoufox SDK dependency**: Runner зависит от официального `camoufox==0.4.11[geoip]`, а локальный shim (`packages/camoufox`) лишь делегирует вызовы к нему. Тесты используют автofixture, которая подсовывает изолированный каталог установки и подменяет сетевые вызовы.
+- **Camoufox SDK dependency**: Runner зависит от официального `camoufox==0.4.11[geoip]`, а локальный shim (`packages/camoufox`) лишь делегирует вызовы к нему. Тесты используют автofixture, которая подсовывает изолированный каталог установки, подменяет сетевые вызовы и при отсутствии `camoufox_sdk` регистрирует заглушку `camoufox.pkgman`, чтобы сьют запускался офлайн.
 - **Process-backed VNC controller**: Non-headless sessions allocate Xvfb/x11vnc/websockify helpers via `ProcessVncController`. The controller maintains a bounded pool of displays and ports, composes public HTTP/WS URLs from `RunnerSettings`, and tears down helpers whenever sessions terminate or switch to headless mode.
 - **Gateway-signed VNC tokens**: Runner never persists VNC `token` or `token_ttl_seconds`; any user-supplied values are stripped and synthetic descriptors leave them `None` so that the gateway can issue signed credentials.
 - **Environment-driven settings**: `RunnerSettings.from_env` centralises configuration parsing without extra dependencies, easing future extension. Дополнительные параметры: `slot_limit`, базовые VNC URL, глобальный флаг прокси и ёмкость истории ошибок прогрева.
@@ -96,6 +96,9 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   `reap_expired_sessions`, завершает истёкшие по `idle_ttl_seconds` сессии и публикует события
   `session.ended` с reason=`idle-timeout`. Запускается/останавливается через `start()`/`stop()` и
   lifecycle-хуки FastAPI.
+- **Graceful shutdown**: `SessionManager.stop` освобождает reaper task group, завершает холодные
+  браузеры, дожидается `WarmPoolManager.drain()` и закрывает VNC-пайплайны, чтобы повторный
+  `start()` перезапустил warm pool с нуля.
 - **Prometheus registry**: Runner экспортирует `/metrics`, используя
   `prometheus_client.CollectorRegistry`; значения обновляются в момент изменения состояния
   (`active_sessions`, VNC аллокации, пробеги reaper-а) вместо ленивой агрегации на запрос.
@@ -178,3 +181,5 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - 2025-10-31 · gpt-5-codex · Сессии, созданные на warm-слотах, теперь запоминают workstation-метаданные и очищают их при релизе; добавлены проверки в unit-тестах.
 - 2025-10-31 · gpt-5-codex · Синхронизирован флаг `vnc_enabled` с реальными VNC-деталями и добавлены регрессионные тесты на headless и сбойную аллокацию.
 - 2025-10-31 · gpt-5-codex · Защищено `SessionManager.create_session` от сбоев публикации: откат аллокаций warm/VNC, обновлены метрики и добавлен регрессионный тест.
+- 2025-11-01 · gpt-5-codex · Переписан `SessionManager.stop`: холодные браузеры закрываются с `force=True`, warm pool drain вызывается на остановке, тесты покрывают рестарт.
+- 2025-11-02 · gpt-5-codex · Добавлено принудительное `cancel_scope.cancel()` перед остановкой reaper TaskGroup, обновлена авт.fixture для Camoufox (офлайн-заглушка `camoufox.pkgman`).

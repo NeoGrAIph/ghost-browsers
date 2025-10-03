@@ -585,8 +585,27 @@ class SessionManager:
         async with self._lock:
             task_group = self._reaper_task_group
             self._reaper_task_group = None
+            cold_session_ids = [
+                session_id
+                for session_id in self._browser_handles
+                if session_id not in self._warm_sessions
+            ]
+            warm_pool = self._warm_pool
+            self._warm_pool_started = False
         if task_group is not None:
+            # Cancel the reaper loop before exiting the task group context;
+            # otherwise the infinite sleep cycle would keep the awaitable
+            # pending indefinitely.
+            task_group.cancel_scope.cancel()
             await task_group.__aexit__(None, None, None)
+        for session_id in cold_session_ids:
+            await self._shutdown_browser(session_id, force=True)
+        async with self._lock:
+            self._browser_handles.clear()
+        if warm_pool is not None:
+            await warm_pool.drain()
+            async with self._lock:
+                self._warm_sessions.clear()
         await self._shutdown_all_vnc()
 
     async def _resolve_vnc(
