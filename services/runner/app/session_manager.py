@@ -256,11 +256,12 @@ class SessionManager:
                     workstation_meta = self._build_workstation_meta(snapshot)
                 if browser_handle.pid is not None:
                     metadata.setdefault("runner_browser_pid", browser_handle.pid)
-                vnc_enabled = (
-                    payload.vnc_enabled
-                    if payload.vnc_enabled is not None
-                    else (vnc_details is not None and not payload.headless)
-                )
+                if payload.vnc_enabled is None:
+                    vnc_enabled = vnc_details is not None and not payload.headless
+                else:
+                    vnc_enabled = payload.vnc_enabled
+                if payload.headless or vnc_details is None:
+                    vnc_enabled = False
                 try:
                     session = Session(
                         id=session_id,
@@ -364,6 +365,12 @@ class SessionManager:
                 update_data["workstation_id"] = None
                 update_data["workstation_fingerprint_id"] = None
                 update_data["workstation"] = None
+            next_headless = update_data.get("headless")
+            if next_headless is None:
+                next_headless = existing.headless
+            next_vnc = update_data.get("vnc", existing.vnc)
+            if next_headless or next_vnc is None:
+                update_data["vnc_enabled"] = False
             session = existing.model_copy(update=update_data, deep=True)
             self._sessions[session_id] = session
             self._recalculate_active_sessions(existing.status, session.status)
