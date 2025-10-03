@@ -1,12 +1,26 @@
-"""Pytest fixtures configuring Camoufox test doubles for the runner suite."""
+"""Pytest fixtures configuring Camoufox test doubles for the runner suite.
+
+The module also ensures that the ``app`` package resolves without requiring
+contributors to export ``PYTHONPATH`` manually. This mirrors the runtime
+Docker image where the service root is appended to the module search path.
+
+Example:
+    >>> import importlib
+    >>> importlib.import_module("app.config")  # doctest: +SKIP
+"""
 
 from __future__ import annotations
 
+import sys
 from importlib import import_module
 from pathlib import Path
 from typing import Iterator
 
 import pytest
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[1]
+if str(_SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SERVICE_ROOT))
 
 
 @pytest.fixture(autouse=True)

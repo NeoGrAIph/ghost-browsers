@@ -46,7 +46,8 @@ COPY --chown=pwuser:pwuser services/runner ./
 RUN rm -rf /workspace/camoufox /workspace/packages/camoufox
 
 ENV PATH="/workspace/services/runner/.venv/bin:${PATH}" \
-    CAMOUFOX_HEADLESS=virtual
+    CAMOUFOX_HEADLESS=virtual \
+    PYTHONPATH="/workspace/services/runner"
 
 EXPOSE 8080
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

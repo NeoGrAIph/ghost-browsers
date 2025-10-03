@@ -28,6 +28,7 @@ markers = [
     "anyio: mark tests requiring the AnyIO event loop",
 ]
 testpaths = ["tests"]
+pythonpath = ["app"]
 
 [build-system]
 requires = ["poetry-core>=1.9.0"]
