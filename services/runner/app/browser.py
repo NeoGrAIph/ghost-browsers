@@ -74,6 +74,35 @@ class BrowserSessionHandle:
             await self.process.wait()
 
 
+def _resolve_playwright_browser_name(name: str) -> str:
+    """Map runner-level browser identifiers to Playwright CLI names.
+
+    The runner exposes ``camoufox`` as the default browser identifier. The
+    upstream Playwright driver, however, recognises only the built-in browser
+    families (``chromium``, ``firefox``, ``webkit``).  Camoufox re-uses the
+    Firefox driver under the hood while injecting its own binary via
+    ``CAMOUFOX_BINARY``.  This helper keeps the public surface unchanged while
+    translating the value so that the CLI accepts it.
+
+    Args:
+        name: Browser identifier received from session payloads or warm pool
+            configuration.
+
+    Returns:
+        str: Name understood by the Playwright CLI.
+
+    Example:
+        >>> _resolve_playwright_browser_name("camoufox")
+        'firefox'
+    """
+
+    mapping = {
+        "camoufox": "firefox",
+    }
+    key = name.strip().lower()
+    return mapping.get(key, name)
+
+
 async def launch_browser(
     settings: RunnerSettings,
     *,
@@ -91,8 +120,10 @@ async def launch_browser(
         browser: Browser engine identifier requested by the session payload.
         headless: Whether the browser should run in headless mode.
         command: Optional override for the CLI invocation. Defaults to
-            ``[PLAYWRIGHT_CLI, "launch-server", browser]`` where ``PLAYWRIGHT_CLI``
-            comes from the environment or falls back to ``playwright``.
+            ``[PLAYWRIGHT_CLI, "launch-server", "--browser", resolved_browser]``
+            where ``PLAYWRIGHT_CLI`` comes from the environment (falling back to
+            ``playwright``) and ``resolved_browser`` maps runner identifiers like
+            ``camoufox`` to Playwright's native names.
         env: Additional environment variables merged with ``os.environ``.
         browser_flags: Mapping of Camoufox/Firefox specific flags that should
             be exported as environment variables before the Playwright process
@@ -120,7 +151,10 @@ async def launch_browser(
     """
 
     cli = os.environ.get("PLAYWRIGHT_CLI", "playwright")
-    command = command or [cli, "launch-server", browser]
+
+    if command is None:
+        resolved_browser = _resolve_playwright_browser_name(browser)
+        command = [cli, "launch-server", "--browser", resolved_browser]
     launch_env = {**os.environ, "CAMOUFOX_BINARY": str(settings.camoufox_path)}
     if headless:
         launch_env.setdefault("CAMOUFOX_HEADLESS", "virtual")
