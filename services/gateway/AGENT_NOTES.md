@@ -158,3 +158,4 @@
   раннерами без bearer-токена.
 - 2025-10-28 · gpt-5-codex · Обновлён RunnerCommandClient: исключает пустые JSON-тела для GET/DELETE и добавлен регрессионный тест на отсутствие body.
 - 2025-10-30 · gpt-5-codex · `DELETE /sessions/commands/{id}` очищает WebSocket binding в RunnerRegistry аналогично прямому удалению; добавлен тест на вызов `drop_session_ws_endpoint`.
+- 2025-10-30 · gpt-5-codex · Очистка сессий при пропаже раннера стала устойчивой к `KeyError` в реестре сессий; добавлен тест на конкурентное удаление.
