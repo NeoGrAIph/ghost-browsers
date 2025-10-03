@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-
 from app.services.runner_client import (
     RunnerCommandClient,
     RunnerCommandError,
@@ -17,7 +16,6 @@ from app.services.runner_client import (
     SessionUpdateCommand,
 )
 from core import Runner, Session, SessionStatus
-
 
 pytestmark = pytest.mark.anyio
 

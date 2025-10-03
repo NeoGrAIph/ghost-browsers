@@ -6,10 +6,8 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-
-from core import Runner
-
 from app.services.runner_registry import RunnerRegistry
+from core import Runner
 
 
 @pytest.fixture()

@@ -28,7 +28,11 @@ class SessionCreateCommand(BaseModel):
         ...     region="eu-central",
         ...     proxy_id="proxy-42",
         ... ).to_runner_payload()
-        {'browser': 'Chrome', 'headless': False, 'labels': {'region': 'eu-central', 'proxy_id': 'proxy-42'}}
+        {
+        ...     'browser': 'Chrome',
+        ...     'headless': False,
+        ...     'labels': {'region': 'eu-central', 'proxy_id': 'proxy-42'},
+        ... }
     """
 
     model_config = ConfigDict(extra="forbid")

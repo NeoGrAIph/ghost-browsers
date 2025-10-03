@@ -13,7 +13,6 @@ from fastapi import WebSocket
 from starlette import status
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-
 LOGGER = logging.getLogger(__name__)
 
 

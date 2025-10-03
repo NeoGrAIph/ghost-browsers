@@ -56,6 +56,7 @@ session_manager_spec.loader.exec_module(session_manager_module)
 
 from app.services.runner_client import SessionCreateCommand, SessionUpdateCommand  # noqa: E402
 from core import Session, SessionStatus  # noqa: E402
+
 SessionCreatePayload = session_manager_module.SessionCreatePayload
 SessionUpdatePayload = session_manager_module.SessionUpdatePayload
 
