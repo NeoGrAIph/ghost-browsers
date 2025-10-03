@@ -1,4 +1,4 @@
-.PHONY: bootstrap check runner-image runner-image-publish gateway-image gateway-image-publish
+.PHONY: bootstrap check runner-image runner-image-publish gateway-image gateway-image-publish vnc-gateway-image vnc-gateway-image-publish
 
 RUNNER_IMAGE ?= ghost-runner:local
 RUNNER_DOCKERFILE ?= services/runner/Dockerfile
@@ -18,11 +18,20 @@ GATEWAY_BUILD_ARGS := $(GATEWAY_EXTRA_BUILD_ARGS)
 GATEWAY_SIGN ?= false
 GATEWAY_COSIGN_ARGS ?= --yes
 
+VNC_GATEWAY_IMAGE ?= ghost-vnc-gateway:local
+VNC_GATEWAY_DOCKERFILE ?= services/vnc-gateway/Dockerfile
+VNC_GATEWAY_CONTEXT ?= .
+VNC_GATEWAY_EXTRA_BUILD_ARGS ?=
+VNC_GATEWAY_BUILD_ARGS := $(VNC_GATEWAY_EXTRA_BUILD_ARGS)
+VNC_GATEWAY_SIGN ?= false
+VNC_GATEWAY_COSIGN_ARGS ?= --yes
+VNC_GATEWAY_SMOKE_CMD := poetry install --with dev --no-root --no-interaction && poetry run ruff check . && poetry run pytest -q
+
 bootstrap:
-	pnpm install
-	cd services/gateway && poetry install --no-root
-	cd services/runner && poetry install --no-root
-	cd services/vnc-gateway && poetry install --no-root
+        pnpm install
+        cd services/gateway && poetry install --no-root
+        cd services/runner && poetry install --no-root
+        cd services/vnc-gateway && poetry install --no-root
 	cd packages/core && poetry install --no-root
 
 check:
@@ -46,7 +55,17 @@ gateway-image:
 	docker buildx build --load -f $(GATEWAY_DOCKERFILE) -t $(GATEWAY_IMAGE) $(GATEWAY_BUILD_ARGS) $(GATEWAY_CONTEXT)
 
 gateway-image-publish: gateway-image
-	docker push $(GATEWAY_IMAGE)
-	@if [ "$(GATEWAY_SIGN)" = "true" ]; then \
-	cosign sign $(GATEWAY_COSIGN_ARGS) $(GATEWAY_IMAGE); \
-	fi
+        docker push $(GATEWAY_IMAGE)
+        @if [ "$(GATEWAY_SIGN)" = "true" ]; then \
+        cosign sign $(GATEWAY_COSIGN_ARGS) $(GATEWAY_IMAGE); \
+        fi
+
+vnc-gateway-image:
+        cd services/vnc-gateway && $(VNC_GATEWAY_SMOKE_CMD)
+        docker buildx build --load -f $(VNC_GATEWAY_DOCKERFILE) -t $(VNC_GATEWAY_IMAGE) $(VNC_GATEWAY_BUILD_ARGS) $(VNC_GATEWAY_CONTEXT)
+
+vnc-gateway-image-publish: vnc-gateway-image
+        docker push $(VNC_GATEWAY_IMAGE)
+        @if [ "$(VNC_GATEWAY_SIGN)" = "true" ]; then \
+        cosign sign $(VNC_GATEWAY_COSIGN_ARGS) $(VNC_GATEWAY_IMAGE); \
+        fi

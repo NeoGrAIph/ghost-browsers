@@ -21,6 +21,9 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 - Runner proxy keeps a singleton `httpx.AsyncClient` and resolves `target_port` from query/referer/cookie (persisting it via `vnc-target-port` cookie) to build Runner URLs with configurable prefixes; WebSocket relay теперь ждёт оба направления через `TaskGroup`, отдаёт 1008 при невалидном `target_port` и 1011 при timeouts/сетевых ошибках.
 - Prometheus экспозиция реализована через `/metrics`, чтобы scrape-еры (Prometheus, VictoriaMetrics и т.д.) могли использовать стандартный текстовый формат без дополнительных middleware.
 
+## Decisions
+- 2025-02-14 · Runtime-образ собирается через builder-стейдж, который упаковывает сервис в wheel. Финальный слой устанавливает wheel и копирует исходники `app/`, поэтому рантайм остаётся лёгким, но при необходимости сохраняется возможность отладки по исходникам. Перед сборкой образа make-таргет `vnc-gateway-image` выполняет smoke-проверки (`ruff`, `pytest`), чтобы pipeline не публиковал образ с регрессиями.
+
 ## Constraints & Invariants
 - Tokens must include the matching session identifier; mismatches immediately rejected.
 - `iat` допускает максимум `clock_skew_tolerance_seconds` (10 секунд) относительно сервера; reuse токена до истечения TTL запрещён.
@@ -38,10 +41,14 @@ FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS
 ## How to Test
 ```bash
 cd services/vnc-gateway
-poetry install --no-root
+poetry install --with dev --no-root
 poetry run ruff check .
 poetry run pytest -q
 ```
 
+## Changelog (for agents)
+Дата · Кем/чем изменено · Коротко *что и почему*.
+
 - 2025-10-09 · gpt-5-codex · Переписан WS-прокси на uvicorn/websockets `TaskGroup`-relay, добавлены интеграционные тесты с real сервером, внедрён Prometheus `/metrics` (active/total connections, token failures), расширен `TokenValidator` (nonce/iat cache) и документирован сценарий предотвращения replay.
 - 2025-10-10 · gpt-5-codex · Добавлена конфигурация метрик через настройки (Prometheus registry/OTLP exporter), обновлён `/metrics` endpoint и покрытие тестами.
+- 2025-02-14 · gpt-5-codex · Добавлен Dockerfile с многоступенчатой сборкой, make/CI-таргеты для образа и документация по переменным окружения VNC Gateway.

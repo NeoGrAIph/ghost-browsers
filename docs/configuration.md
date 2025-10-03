@@ -27,7 +27,18 @@
 - `VITE_GATEWAY_URL` — базовый URL Gateway для REST/SSE (включая `POST /sessions`)
 
 ## VNC Gateway
-- `GATEWAY_URL` — базовый URL для валидации токенов
-- `CONNECT_TIMEOUT_MS`
+- `VNC_GATEWAY_RUNNER_HTTP_BASE` — базовый HTTP URL Runner'а, к которому
+  проксируются REST-запросы (по умолчанию `http://runner:8080`).
+- `VNC_GATEWAY_RUNNER_WS_BASE` — базовый WebSocket URL Runner'а для прокси
+  VNC-туннелей (по умолчанию `ws://runner:8080`).
+- `VNC_GATEWAY_TOKEN_SECRET` — общий секрет для проверки HMAC-токенов, который
+  Gateway использует совместно с VNC Gateway (по умолчанию `dev-secret`).
+- `VNC_GATEWAY_METRICS_BACKEND` — `prometheus` (значение по умолчанию) или
+  `otlp`; определяет куда отправляются метрики соединений.
+- `VNC_GATEWAY_METRICS_REGISTRY_IMPORT` — `module:attribute` с существующим
+  `CollectorRegistry`, если Prometheus-метрики нужно собирать в общую
+  регистрацию.
+- `VNC_GATEWAY_METRICS_OTLP_EXPORTER_IMPORT` — `module:attribute`, возвращающий
+  OTLP-экспортёр, когда `VNC_GATEWAY_METRICS_BACKEND=otlp`.
 
 > Секреты не хранятся в VCS. Используйте `.env` локально и Secret в k3s.
