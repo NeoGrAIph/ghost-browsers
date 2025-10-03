@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -441,7 +441,12 @@ async def _enrich_registry_sessions(
         gateway-minted access tokens when necessary.
 
     Example:
-        >>> await _enrich_registry_sessions([session], runners, token_service, user)  # doctest: +SKIP
+        >>> await _enrich_registry_sessions(  # doctest: +SKIP
+        ...     [session],
+        ...     runners,
+        ...     token_service,
+        ...     user,
+        ... )
     """
 
     snapshots = list(sessions)
@@ -514,7 +519,11 @@ async def _publish_session_event(
         have been notified.
 
     Example:
-        >>> await _publish_session_event(bridge, session, SessionEventType.UPDATED)  # doctest: +SKIP
+        >>> await _publish_session_event(  # doctest: +SKIP
+        ...     bridge,
+        ...     session,
+        ...     SessionEventType.UPDATED,
+        ... )
     """
 
     event = SessionEvent(

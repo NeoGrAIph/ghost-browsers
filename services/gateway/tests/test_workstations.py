@@ -6,13 +6,12 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from app import create_app
 from app.config import GatewaySettings
 from app.deps.security import get_authenticator, get_current_user
 from app.security import AuthenticatedUser
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
