@@ -166,6 +166,35 @@ def test_session_crud(gateway_client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_touch_session_rejects_naive_timestamp(gateway_client: TestClient) -> None:
+    """Touch endpoint rejects naive timestamps to avoid ambiguous updates."""
+
+    now = datetime.now(tz=UTC)
+    session_body = {
+        "id": str(uuid4()),
+        "runner_id": "runner-1",
+        "status": SessionStatus.INIT.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+        "ws_endpoint": "ws://runner-1/playwright/naive",
+    }
+    response = gateway_client.post("/sessions", json=session_body)
+    assert response.status_code == 201
+    session_id = response.json()["id"]
+
+    naive_timestamp = datetime.now().replace(microsecond=0).isoformat()
+
+    response = gateway_client.post(
+        f"/sessions/{session_id}/touch",
+        json={"timestamp": naive_timestamp},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Timestamp must include timezone information"
+
+
 def test_vnc_token_generation(gateway_client: TestClient) -> None:
     """Sessions containing VNC details receive signed short-lived tokens."""
 

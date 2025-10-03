@@ -346,8 +346,20 @@ async def touch_session(
 ) -> Session:
     """Update the ``last_seen_at`` timestamp for a session."""
 
+    timestamp_override = payload.timestamp
+    if timestamp_override is not None:
+        if (
+            timestamp_override.tzinfo is None
+            or timestamp_override.tzinfo.utcoffset(timestamp_override) is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Timestamp must include timezone information",
+            )
+        timestamp_override = timestamp_override.astimezone(UTC)
+
     try:
-        session = await registry.touch(session_id, timestamp=payload.timestamp)
+        session = await registry.touch(session_id, timestamp=timestamp_override)
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
