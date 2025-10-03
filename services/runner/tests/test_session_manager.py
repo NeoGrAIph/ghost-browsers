@@ -5,12 +5,12 @@ from __future__ import annotations
 import types
 from datetime import UTC, datetime, timedelta
 from typing import Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from app.config import RunnerSettings, WarmPoolMode
 from app.events import InMemorySessionEventPublisher
-from app.metrics import METRICS_REGISTRY
+from app.metrics import METRICS_REGISTRY, VNC_ALLOCATIONS_GAUGE
 from app.session_manager import (
     SessionCapacityError,
     SessionCreatePayload,
@@ -58,6 +58,9 @@ class _StubWarmPoolManager:
         self._slots: dict[str, dict[str, object]] = {}
         self._counter = 0
         self.started = False
+        self.start_calls = 0
+        self.drain_calls = 0
+        self.drained = False
         self.reservations: list[str] = []
         self.cancellations: list[str] = []
         self.busy: list[str] = []
@@ -73,6 +76,7 @@ class _StubWarmPoolManager:
     async def start(self) -> None:
         """Mark the stub as initialised."""
 
+        self.start_calls += 1
         self.started = True
 
     async def reserve_slot(self, workstation_id: str | None = None) -> WarmPoolReservation:
@@ -151,6 +155,25 @@ class _StubWarmPoolManager:
             proxy_url=slot["proxy"],
             state=WarmPoolState.IDLE,
         )
+
+    async def drain(self) -> list[WarmPoolSnapshot]:
+        """Record that all warm slots are being torn down."""
+
+        self.drain_calls += 1
+        self.started = False
+        self.drained = True
+        snapshots: list[WarmPoolSnapshot] = []
+        for workstation_id, slot in self._slots.items():
+            slot["state"] = WarmPoolState.DRAINING
+            snapshots.append(
+                WarmPoolSnapshot(
+                    workstation_id=workstation_id,
+                    fingerprint_id=slot["fingerprint"],
+                    proxy_url=slot["proxy"],
+                    state=WarmPoolState.DRAINING,
+                )
+            )
+        return snapshots
 
     def get_statistics(self) -> WarmPoolStatistics:
         """Return utilisation counters for compatibility with the real manager."""
@@ -1217,3 +1240,57 @@ async def test_create_session_rolls_back_on_mark_busy_failure() -> None:
     assert manager._browser_handles == {}
     assert warm_pool.busy == []
     assert await publisher.drain() == []
+
+
+@pytest.mark.anyio("asyncio")
+async def test_stop_shuts_down_cold_handles_and_drains_warm_pool(
+    stub_vnc_controller: _StubVncController,
+) -> None:
+    """``stop`` must tear down cold handles, drain warm slots, and allow restart."""
+
+    publisher = InMemorySessionEventPublisher()
+    warm_pool = _StubWarmPoolManager(workstations=["ws-stop"])
+    manager, warm_pool = _build_manager(
+        RunnerSettings(runner_id="runner-stop", camoufox_path="/usr/bin/camoufox"),
+        publisher,
+        vnc_controller=stub_vnc_controller,
+        warm_pool=warm_pool,
+    )
+    assert warm_pool is not None
+
+    await manager.start()
+    assert warm_pool.start_calls == 1
+    assert manager._reaper_task_group is not None
+
+    cold_session_id = uuid4()
+    warm_session_id = uuid4()
+    cold_handle = _StubBrowserHandle(ws_endpoint="ws://cold/stop", pid=6100)
+    warm_handle = _StubBrowserHandle(ws_endpoint="ws://warm/stop", pid=6200)
+    vnc_handle = await stub_vnc_controller.allocate(str(cold_session_id))
+
+    async with manager._lock:
+        manager._browser_handles[cold_session_id] = cold_handle
+        manager._browser_handles[warm_session_id] = warm_handle
+        manager._warm_sessions[warm_session_id] = "ws-stop"
+        manager._vnc_handles[cold_session_id] = vnc_handle
+    VNC_ALLOCATIONS_GAUGE.set(len(manager._vnc_handles))
+
+    drain_calls_before = warm_pool.drain_calls
+    await manager.stop()
+
+    assert manager._reaper_task_group is None
+    assert cold_handle.shutdown_calls == [{"force": True, "timeout": 5.0}]
+    assert warm_handle.shutdown_calls == []
+    assert warm_pool.drain_calls == drain_calls_before + 1
+    assert manager._browser_handles == {}
+    assert manager._warm_sessions == {}
+    assert manager._warm_pool_started is False
+    assert vnc_handle.released is True
+    sample = METRICS_REGISTRY.get_sample_value("runner_vnc_allocations")
+    assert sample is None or sample == pytest.approx(0.0)
+
+    await manager.start()
+    assert warm_pool.start_calls == 2
+    assert manager._reaper_task_group is not None
+
+    await manager.stop()
