@@ -24,6 +24,8 @@ from starlette import status
 from starlette.responses import StreamingResponse
 from starlette.types import Scope
 from starlette.websockets import WebSocket as StarletteWebSocket, WebSocketDisconnect
+from unittest.mock import AsyncMock
+from uuid import UUID
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
@@ -41,6 +43,7 @@ from app.security import (  # noqa: E402
 )
 from app.services.runner_client import RunnerCommandClient  # noqa: E402
 from app.services.runner_health import RunnerHealthClient  # noqa: E402
+from app.services.runner_registry import RunnerRegistry  # noqa: E402
 from core import (  # noqa: E402
     Runner,
     Session,
@@ -568,6 +571,91 @@ def test_delete_command_removes_session(
     assert response.json()["status"] == SessionStatus.DEAD.value
 
     assert gateway_client.get(f"/sessions/{session_id}").status_code == 404
+
+
+def test_delete_command_drops_ws_binding(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """DELETE command clears the runner WebSocket binding when completed."""
+
+    session_id = uuid4()
+    now = datetime.now(tz=UTC)
+    base_session = {
+        "id": str(session_id),
+        "runner_id": "runner-1",
+        "status": SessionStatus.READY.value,
+        "created_at": now.isoformat(),
+        "last_seen_at": now.isoformat(),
+        "headless": False,
+        "idle_ttl_seconds": 300,
+    }
+    assert gateway_client.post("/sessions", json=base_session).status_code == 201
+
+    delegate = gateway_app.state.runner_registry
+
+    class _RunnerRegistryProbe:
+        """Proxy registry forwarding calls while spying on drops."""
+
+        def __init__(self, inner: RunnerRegistry) -> None:
+            self._inner = inner
+            original_drop = inner.drop_session_ws_endpoint
+
+            async def _side_effect(target_session_id: UUID) -> None:
+                await original_drop(target_session_id)
+
+            self.drop_session_ws_endpoint = AsyncMock(side_effect=_side_effect)
+
+        async def get(self, runner_id: str) -> Runner | None:
+            return await self._inner.get(runner_id)
+
+        async def register_session_ws_endpoint(
+            self,
+            session_id: UUID,
+            *,
+            runner_id: str,
+            target: str | None,
+        ) -> str | None:
+            return await self._inner.register_session_ws_endpoint(
+                session_id,
+                runner_id=runner_id,
+                target=target,
+            )
+
+        async def resolve_session_ws_public(self, session_id: UUID) -> str | None:
+            return await self._inner.resolve_session_ws_public(session_id)
+
+    probe = _RunnerRegistryProbe(delegate)
+    gateway_app.state.runner_registry = probe
+
+    terminated = Session(
+        id=session_id,
+        runner_id="runner-1",
+        status=SessionStatus.READY,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+    ).model_copy(
+        update={
+            "status": SessionStatus.DEAD,
+            "ended_at": now,
+        }
+    )
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=terminated.model_dump(mode="json"))
+
+    gateway_app.state.runner_client = RunnerCommandClient(
+        transport=httpx.MockTransport(_handler)
+    )
+
+    try:
+        response = gateway_client.delete(f"/sessions/commands/{session_id}")
+    finally:
+        gateway_app.state.runner_registry = delegate
+
+    assert response.status_code == 200
+    probe.drop_session_ws_endpoint.assert_awaited_once_with(session_id)
 
 
 def test_vnc_token_service_enriches_missing_token() -> None:

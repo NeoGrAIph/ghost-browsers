@@ -204,6 +204,7 @@ async def execute_delete_command(
     )
     enriched = _enrich_session(sanitized, runner, token_service, user)
     await registry.delete(session_id)
+    await runners.drop_session_ws_endpoint(session_id)
     event_type = (
         SessionEventType.ENDED
         if enriched.status is SessionStatus.DEAD
