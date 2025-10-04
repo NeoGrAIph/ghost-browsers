@@ -304,7 +304,7 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(screen.getByText('Загружаем сессии…')).toBeTruthy();
-    expect(screen.getAllByText('Обновление…').length).toBe(2);
+    expect(screen.getByText('Обновление справочников…')).toBeTruthy();
     expect(screen.getByText('Загружаем раннеров…')).toBeTruthy();
   });
 
@@ -418,8 +418,18 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    fireEvent.click(await screen.findByText('session-alpha'));
-    fireEvent.click(screen.getByText('Удалить'));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Открыть детали сессии session-alpha' }),
+    );
+    await waitFor(() =>
+      screen
+        .getAllByRole('button', { name: 'Удалить' })
+        .some((button) => !button.hasAttribute('disabled')),
+    );
+    const deleteButton = screen
+      .getAllByRole('button', { name: 'Удалить' })
+      .find((button) => !button.hasAttribute('disabled'))!;
+    fireEvent.click(deleteButton);
 
     await waitFor(() => expect(deleteSessionMock).toHaveBeenCalledWith('session-alpha', { token: 'token-123' }));
     await waitFor(() => expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: queryKeys.sessions }));

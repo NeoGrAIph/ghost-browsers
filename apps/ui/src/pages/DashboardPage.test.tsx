@@ -161,7 +161,9 @@ describe('DashboardPage', () => {
     await waitFor(() => expect(fetchSessions).toHaveBeenCalled());
     await waitFor(() => expect(fetchRunners).toHaveBeenCalled());
 
-    fireEvent.click(await screen.findByRole('button', { name: /Chrome/i }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Открыть детали сессии session-delete' }),
+    );
     await waitFor(() =>
       screen
         .getAllByRole('button', { name: 'Удалить' })
