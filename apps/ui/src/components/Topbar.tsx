@@ -1,5 +1,6 @@
 import { useAuth } from '../hooks/useAuth';
 import { useAppTheme } from '../providers/ThemeProvider';
+import { GhostLogo } from './GhostLogo';
 
 /**
  * Application top bar with user info and theme toggle.
@@ -11,7 +12,7 @@ export function Topbar(): JSX.Element {
   return (
     <header className="topbar" role="banner">
       <div className="topbar__brand">
-        <span className="topbar__logo" aria-hidden>🕵🏻‍♂️</span>
+        <GhostLogo />
         <div>
           <strong>Ghost Browsers</strong>
           <span className="topbar__subtitle">Операторская консоль</span>

@@ -21,11 +21,8 @@ export function SessionActions({ session }: SessionActionsProps): JSX.Element {
   const [formError, setFormError] = useState<string | null>(null);
 
   const deleteMutation = useMutation({
-    mutationFn: async () => {
-      if (!session) {
-        return;
-      }
-      await deleteSession(session.id, { token: token ?? undefined });
+    mutationFn: async (sessionId: string) => {
+      await deleteSession(sessionId, { token: token ?? undefined });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
@@ -38,12 +35,8 @@ export function SessionActions({ session }: SessionActionsProps): JSX.Element {
     isPending: isUpdatingProxy,
     isSuccess: isProxyUpdated,
   } = useMutation({
-    mutationFn: async (payload: SessionProxyUpdate) => {
-      if (!session) {
-        throw new Error('Session is not selected');
-      }
-      return updateSessionProxy(session.id, payload, { token: token ?? undefined });
-    },
+    mutationFn: async ({ sessionId, payload }: { sessionId: string; payload: SessionProxyUpdate }) =>
+      updateSessionProxy(sessionId, payload, { token: token ?? undefined }),
     onSuccess: (updatedSession) => {
       setFormError(null);
       queryClient.setQueryData<Session[] | undefined>(queryKeys.sessions, (current) => {
@@ -91,7 +84,7 @@ export function SessionActions({ session }: SessionActionsProps): JSX.Element {
     }
 
     setFormError(null);
-    submitProxy(parsed.data);
+    submitProxy({ sessionId: session.id, payload: parsed.data });
   };
 
   const isFormDisabled = !session || isUpdatingProxy;
@@ -142,7 +135,12 @@ export function SessionActions({ session }: SessionActionsProps): JSX.Element {
       <button
         type="button"
         className="danger"
-        onClick={() => deleteMutation.mutate()}
+        onClick={() => {
+          if (!session) {
+            return;
+          }
+          deleteMutation.mutate(session.id);
+        }}
         disabled={!session || deleteMutation.isPending}
       >
         Удалить

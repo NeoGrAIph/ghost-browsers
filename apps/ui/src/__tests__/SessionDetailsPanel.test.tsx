@@ -35,7 +35,9 @@ describe('SessionDetailsPanel', () => {
       snapshotUrl: null,
     };
 
-    render(<SessionDetailsPanel session={session} />);
+    render(
+      <SessionDetailsPanel session={session} now={Date.parse('2024-01-01T00:02:00Z')} onTogglePin={() => {}} isPinned={false} />,
+    );
 
     const iframe = screen.getByTitle('VNC');
     if (!(iframe instanceof HTMLIFrameElement)) {

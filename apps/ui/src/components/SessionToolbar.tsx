@@ -5,6 +5,7 @@ import { useSessionFilters, SessionStatusFilter } from '../store/sessionFilters'
 interface SessionToolbarProps {
   readonly sessions: Session[];
   readonly onCreate: () => void;
+  readonly showCreateButton?: boolean;
 }
 
 const statusOptions: { readonly value: SessionStatusFilter; readonly label: string }[] = [
@@ -18,7 +19,11 @@ const statusOptions: { readonly value: SessionStatusFilter; readonly label: stri
 /**
  * Toolbar displayed above the session grid with search and filtering capabilities.
  */
-export function SessionToolbar({ sessions, onCreate }: SessionToolbarProps): JSX.Element {
+export function SessionToolbar({
+  sessions,
+  onCreate,
+  showCreateButton = true,
+}: SessionToolbarProps): JSX.Element {
   const { search, setSearch, status, setStatus, region, setRegion, proxyId, setProxyId, reset } =
     useSessionFilters();
 
@@ -89,11 +94,13 @@ export function SessionToolbar({ sessions, onCreate }: SessionToolbarProps): JSX
           Сбросить
         </button>
       </div>
-      <div className="toolbar__actions">
-        <button type="button" className="primary" onClick={onCreate}>
-          Создать сессию
-        </button>
-      </div>
+      {showCreateButton && (
+        <div className="toolbar__actions">
+          <button type="button" className="primary" onClick={onCreate}>
+            Создать сессию
+          </button>
+        </div>
+      )}
     </div>
   );
 }
