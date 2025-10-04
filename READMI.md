@@ -119,18 +119,57 @@ services/camoufox_worker/ # Нативный воркер Camoufox для фон
 - `docs/configuration.md` содержит переменные окружения, схемы helm-развёртывания и чек-листы безопасности.
 
 ## Сборка и запуск
+### Предварительные требования
+- Docker с включённым BuildKit (для локального стека).
+- Python >= 3.12, Poetry 1.8.x, Node.js >= 20, pnpm 9.
+
 ### Bootstrap окружения
 ```bash
+make bootstrap                     # устанавливает pnpm/poetry (через asdf) и общие хуки
+pnpm install --frozen-lockfile     # один раз в корне (workspace)
+poetry install --no-root           # выполняйте в нужном сервисе/пакете перед запуском тестов
 ```
-Зависимости: `pnpm`, `node >= 20`, `poetry`, `python >= 3.12`.
 
 ### Локальные проверки по сервисам
+- Python сервисы/пакеты:
+  ```bash
+  cd services/runner && poetry run ruff check . && poetry run pytest -q
+  cd services/gateway && poetry run ruff check . && poetry run pytest -q
+  cd services/vnc-gateway && poetry run pytest -q
+  ```
+- UI:
+  ```bash
+  pnpm -C apps/ui lint
+  pnpm -C apps/ui test
+  pnpm -C apps/ui build
+  ```
+
+### Комплексная проверка перед PR
 ```bash
+make check                         # прогоняет pytest/ruff по Python, lint/test по UI
+python -m camoufox path            # убедитесь, что Camoufox установлен (использует packages/camoufox shim)
+python -m camoufox version
 ```
 
-### Комплексная проверка
+### Локальный стек docker compose
 ```bash
+cp .env.example .env    # при необходимости переопределите секреты, слот-лимиты и CIDR
+docker compose up --build
 ```
+Стек собирает четыре контейнера:
+- `runner` — Playwright + Camoufox, слушает `http://localhost:8082`; использует warm pool JSON (`services/runner/config/*.json`).
+- `gateway` — REST/SSE/WS API `http://localhost:8080`, проксируется в UI как `/api`.
+- `vnc-gateway` — HTTP/WS прокси `http://localhost:8001`, проверяет VNC токены.
+- `ui` — Nginx со статикой React приложения (`http://localhost:8081`).
+
+Быстрые smoke-проверки после старта:
+```bash
+curl http://localhost:8082/health           # warm pool и путь к Camoufox
+curl http://localhost:8080/runners          # зарегистрированные раннеры и health-флаги
+curl -N http://localhost:8080/events        # SSE поток (в dev без JWT)
+curl http://localhost:8001/metrics          # метрики VNC прокси
+```
+UI доступен на `http://localhost:8081`, API — `http://localhost:8080` или `/api` за Nginx.
 
 ## Потоки данных и взаимодействия
 1. Клиент (UI или внешний сервис) вызывает `POST /sessions` на gateway.

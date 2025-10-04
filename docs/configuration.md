@@ -1,122 +1,92 @@
-# Конфигурация и переменные окружения (lean)
+# Конфигурация и запуск окружения
 
-## Общие
-- `KEYCLOAK_REALM` / `KEYCLOAK_URL` / `KEYCLOAK_CLIENT_ID`
+Документ описывает переменные окружения, конфигурационные файлы и порядок
+подготовки локального и production окружения Ghost Browsers.
 
-## Локальный запуск через docker compose
+## Общие шаги
+1. Скопируйте `.env.example` → `.env` и при необходимости измените значения
+   (например, секреты VNC, лимит слотов runner). Значения с `:-` в
+   `docker-compose.yml` имеют дефолты, поэтому `.env` можно не создавать для
+   быстрого старта.【F:docker-compose.yml†L5-L58】【F:.env.example†L1-L18】
+2. Установите зависимости: `make bootstrap`, `pnpm install --frozen-lockfile`,
+   `poetry install --no-root` в нужных сервисах.【F:AGENTS.md†L24-L55】
+3. Запустите стек: `docker compose up --build`. BuildKit соберёт образы runner,
+   gateway, vnc-gateway и ui, смонтирует warm pool JSON и пробросит порты
+   (`8080`, `8081`, `8082`, `8001`). Проверить готовность можно командами из
+   README (curl `/health`, `/runners`, `/events`, `/metrics`).【F:docker-compose.yml†L5-L58】【F:READMI.md†L123-L152】
 
-Для локального развёртывания предусмотрен стек `docker-compose.yml`, который собирает `runner`, `gateway`, `vnc-gateway` и UI в
-одном origin. Прогретый пулл Runner'а — это **парк отдельных рабочих станций**: каждая станция описана в `services/runner/config/warm-pool.local.json`, имеет собственный `fingerprint_id`, набор `tags` и относительный путь до набора браузерных тумблеров (`prefs_rel_path`). Файл `services/runner/config/browser-prefs.local.json` содержит сами тумблеры; он монтируется внутрь Runner'а и используется как базовый каталог (`CAMOUFOX_PREFS_BASE_PATH`), чтобы прогретые и холодные сессии разделяли одинаковый профиль.
+## Runner (`services/runner`)
+Runner использует `RunnerSettings` и JSON файлы для warm pool.
 
-1. При необходимости скопируйте `.env.example` в `.env` и скорректируйте значения. Для локального запуска `docker-compose`
-   использует значение `dev-secret` по умолчанию, поэтому шаг можно пропустить, если секрет не требуется менять. В проде или общем
-   стенде переменная `VNC_TOKEN_SECRET` **обязана** быть одинаковой для `gateway` и `vnc-gateway`, иначе токены, выдаваемые
-   `VncTokenService`, не пройдут проверку `TokenValidator`.
-   Шаблоны публичных VNC URL, которые перечислены в `RUNNERS`, также должны ссылаться на тот же хост, что и опубликованный порт
-   `vnc-gateway` (по умолчанию `http://localhost:8001`). `SLOT_LIMIT` в `.env` и `total_slots` в `RUNNERS` должны совпадать с числом
-   рабочих станций, перечисленных в `warm-pool.local.json`, чтобы Gateway показывал реальную вместимость парка. Режим
-   `WARM_POOL_MODE=hybrid` сохраняет приоритет за прогретым парком, но позволяет Runner'у автоматически запускать холодные
-   браузеры, когда свободных прогретых слотов не осталось.
-2. При необходимости отредактируйте `services/runner/config/warm-pool.local.json`, добавив или удалив рабочие станции, и синхронизируйте
-   для них `fingerprint_id`, `tags` и `prefs_rel_path`. Новые наборы тумблеров добавляйте в `services/runner/config/browser-prefs.local.json` — Runner смонтирует файл в `/etc/runner/browser-prefs.json` и передаст путь Camoufox при запуске прогретых и холодных браузеров.
-3. Запустите `docker compose up --build`. Стек пробрасывает порты `8081` (UI с Nginx и проксированным API `/api`), `8080`
-   (gateway), `8082` (прямой доступ к runner для отладки) и `8001` (VNC gateway).
-4. При добавлении новых runner'ов обновляйте переменную `RUNNERS` в `docker-compose.yml`, указывая уникальный `id`, `base_url` и
-   соответствующие публичные шаблоны `vnc_http_url_template`/`vnc_ws_url_template`. Все записи обязаны использовать общий
-   `VNC_TOKEN_SECRET` и ссылаться на корректные публичные адреса `vnc-gateway`, чтобы UI мог построить рабочие ссылки `SessionVncDetails`.
+- **Переменные окружения** (см. `config/settings.py`):
+  - `RUNNER_ID`, `SLOT_LIMIT`, `VNC_ENABLED` — идентификатор и вместимость
+    раннера; значения по умолчанию передаются из compose.
+  - `WARM_POOL_CONFIG_PATH`, `BROWSER_PREFS_PATH` — пути до JSON, смонтированных в
+    контейнер. Локальные примеры лежат в `services/runner/config/`.
+  - `WARM_POOL_MODE` (`warm`, `cold`, `hybrid`) — стратегия распределения слотов.
+  - `VNC_HTTP_BASE_URL`, `VNC_WS_BASE_URL` — базовые URL для генерации VNC
+    ссылок; должны соответствовать публичному адресу `vnc-gateway`.
+  - `EVENT_ENDPOINT` (опционально) — HTTP URL для публикации `SessionEvent` в
+    gateway (`POST /events`).
+  - Прокси (`PROXY_HTTP_BASE_URL`, `PROXY_HTTPS_BASE_URL`, `PROXY_SOCKS_BASE_URL`),
+    `START_URL`, `START_URL_WAIT_MS`, `PREWARM_NAVIGATION` — опциональные
+    настройки warm pool и холодных запусков.【F:services/runner/app/config/settings.py†L30-L208】
+- **Конфигурационные файлы**:
+  - `config/warm-pool.local.json` — список рабочих станций (`id`, `fingerprint_id`,
+    `tags`, `prefs_rel_path`).
+  - `config/browser-prefs.local.json` — набор профилей браузера, на которые
+    ссылаются станции через `prefs_rel_path`. Эти файлы монтируются в контейнер
+    как `/etc/runner/warm-pool.json` и `/etc/runner/browser-prefs.json`.
+- **Smoke чек**: после запуска `curl http://localhost:8082/health` и убедитесь,
+  что `warm_pool.total` совпадает с количеством станций в JSON.
 
-> Примечание: UI внутри контейнера обслуживается Nginx конфигурацией `apps/ui/nginx.conf`, которая проксирует `/api/` в gateway,
-> обеспечивая единый origin и корректную работу REST/SSE/WebSocket вызовов без CORS middleware.
+## Gateway (`services/gateway`)
+Gateway читает конфигурацию через `GatewaySettings.from_env`.
 
-## Gateway
-- `DISCOVERY_MODE` = `k8s` | `static`
-- `RUNNERS` — список `host:port` при static
-- `JWT_JWKS_URL` — публичный JWKS Keycloak
-- `VNC_TOKEN_TTL_SEC` (<= 300)
-- `GATEWAY_TRUSTED_CIDRS` — через запятую; список подсетей (IPv4/IPv6), из которых
-  запросы считаются «внутренними» и не требуют аутентификации. Пустые элементы
-  запрещены. Пример: `10.0.0.0/8,fd00::/64`.
-- `GATEWAY_TRUSTED_HEADER` — (опционально) имя заголовка, который может выставлять
-  ingress/sidecar с оригинальным IP-адресом клиента. Поддерживаются списки вида
-  `"10.1.2.3, 192.0.2.10"`; берётся первый валидный IP. Если заголовок отсутствует
-  или не содержит корректного адреса, применяется проверка токена.
+- `DISCOVERY_MODE` (`static`, `http`) и `DISCOVERY_ENDPOINT` — управляют
+  discovery. В compose используется `static` с JSON списком `RUNNERS`.
+- `RUNNERS` — JSON массив с объектами runner (`id`, `base_url`, `total_slots`,
+  шаблоны VNC URL). При изменении warm pool обновляйте `total_slots` и
+  `available_slots` для точной телеметрии.【F:services/gateway/app/config.py†L34-L108】
+- `VNC_TOKEN_SECRET`, `VNC_TOKEN_TTL_SEC` — параметры подписи токенов для VNC.
+  TTL ограничен диапазоном 1–300 секунд.
+- `JWT_JWKS_URL` — JWKS документ Keycloak; локально можно оставить заглушку.
+- `GATEWAY_TRUSTED_CIDRS`, `GATEWAY_TRUSTED_HEADER` — доверенные подсети и
+  заголовок исходного IP, позволяющие обходить JWT для внутренних вызовов.
+- `DISCOVERY_POLL_INTERVAL_SEC` — частота health-проб фоновым процессом.
 
-## Runner
-- `HTTP_PROXY`, `HTTPS_PROXY`, `SOCKS_PROXY` — индивидуальные прокси
-- `START_URL`, `START_URL_WAIT_MS`, `WARMUP`
-- `BROWSER_PREFS_PATH` — путь к «тумблерам» (ConfigMap/Secret)
-- `CAMOUFOX_HEADLESS=virtual` (по умолчанию)
-- (Опционально) `XDG_CACHE_HOME` — общий кэш, если потребуется
+После запуска убедитесь, что `curl http://localhost:8080/runners` возвращает
+активный runner и что события появляются в SSE `curl -N http://localhost:8080/events`.
 
-## UI
-- `VITE_GATEWAY_URL` — базовый URL Gateway для REST/SSE (включая `POST /sessions`)
+## VNC Gateway (`services/vnc-gateway`)
+VNC gateway использует `camou_vnc_gateway.config.Settings`.
 
-## VNC Gateway
-- `VNC_GATEWAY_RUNNER_HTTP_BASE` — базовый HTTP URL Runner'а, к которому
-  проксируются REST-запросы (по умолчанию `http://runner:8080`).
-- `VNC_GATEWAY_RUNNER_WS_BASE` — базовый WebSocket URL Runner'а для прокси
-  VNC-туннелей (по умолчанию `ws://runner:8080`).
-- `VNC_GATEWAY_TOKEN_SECRET` — общий секрет для проверки HMAC-токенов, который
-  Gateway использует совместно с VNC Gateway (по умолчанию `dev-secret`).
-- `VNC_GATEWAY_METRICS_BACKEND` — `prometheus` (значение по умолчанию) или
-  `otlp`; определяет куда отправляются метрики соединений.
-- `VNC_GATEWAY_METRICS_REGISTRY_IMPORT` — `module:attribute` с существующим
-  `CollectorRegistry`, если Prometheus-метрики нужно собирать в общую
-  регистрацию.
-- `VNC_GATEWAY_METRICS_OTLP_EXPORTER_IMPORT` — `module:attribute`, возвращающий
-  OTLP-экспортёр, когда `VNC_GATEWAY_METRICS_BACKEND=otlp`.
+- `VNC_GATEWAY_RUNNER_HTTP_BASE` / `WS_BASE` — адреса runner внутри сети
+  контейнеров (`http://runner:8080`, `ws://runner:8080`).
+- `VNC_GATEWAY_TOKEN_SECRET` — должен совпадать с gateway.
+- `VNC_GATEWAY_METRICS_BACKEND` — `prometheus` (по умолчанию) или `otlp`.
+- `VNC_GATEWAY_METRICS_REGISTRY_IMPORT` / `OTLP_EXPORTER_IMPORT` — путь к
+  кастомным экспортёрам (опционально).【F:services/vnc-gateway/app/camou_vnc_gateway/config.py†L6-L120】
 
-> Секреты не хранятся в VCS. Используйте `.env` локально и Secret в k3s.
+Smoke: `curl http://localhost:8001/metrics` должен вернуть Prometheus payload.
 
-## Helm deployment
+## UI (`apps/ui`)
+- В runtime UI использует переменную `VITE_GATEWAY_URL`; Dockerfile передаёт `/api`,
+  а `nginx.conf` проксирует этот путь в gateway.【F:apps/ui/Dockerfile†L1-L23】【F:apps/ui/nginx.conf†L1-L24】
+- Для локальной разработки Vite можно запустить `pnpm -C apps/ui dev -- --host` и
+  задать `VITE_GATEWAY_URL=http://localhost:8080`.
+- UI ожидает, что gateway доступен без дополнительного префикса (кроме `/api`
+  при работе через Nginx).
 
-Набор чарта для control-plane компонентов расположен в `docs/helm/platform`. Он
-собирает Deployments/Services/Ingress для `gateway`, `runner`, `vnc-gateway`,
-`ui` и `camoufox-worker`, поддерживает передачу переменных окружения и Secret-
-значений (например, `VNC_TOKEN_SECRET`, Keycloak client secret, токены Camoufox).
+## Camoufox worker (`services/camoufox_worker`)
+- `WORKER_MODE` (`native`, `orchestrator`) определяет основной entrypoint.
+- `GATEWAY_URL`, `GATEWAY_TOKEN`, `RUNNER_URL` — параметры доступа к control-plane.
+- Образ собирается аналогично runner: Camoufox предзагружается на этапе build,
+  запуск `python -m camoufox fetch` в рантайме запрещён.【F:services/camoufox_worker/AGENTS.md†L1-L33】
 
-1. Подготовьте namespace и базовые Secret'ы:
-
-   ```bash
-   kubectl create namespace ghost
-   kubectl create secret generic gateway-keycloak \
-     --namespace ghost \
-     --from-literal=clientSecret=... && \
-   kubectl create secret generic gateway-vnc \
-     --namespace ghost \
-     --from-literal=token=...
-   ```
-
-   Аналогично создайте секреты для Runner (`camoufox-credentials`), UI
-   (`ui-keycloak`), camoufox-worker (`worker-gateway-token`) и т.д. либо
-   подключите существующие Secret'ы через `extraEnvFromSecrets`.
-
-2. Выберите значения для окружения. В каталоге `docs/helm/platform` приведены
-   примеры (`gateway.values.yaml`, `runner.values.yaml`, `vnc-gateway.values.yaml`,
-   `ui.values.yaml`, `camoufox-worker.values.yaml`). Их можно комбинировать или
-   использовать как шаблон для собственного файла.
-
-3. Установите релиз Helm, передав необходимые overrides:
-
-   ```bash
-   helm install ghost ./docs/helm/platform \
-     --namespace ghost --create-namespace \
-     -f docs/helm/platform/values.yaml \
-     -f docs/helm/platform/gateway.values.yaml \
-     -f docs/helm/platform/runner.values.yaml \
-     -f docs/helm/platform/vnc-gateway.values.yaml \
-     -f docs/helm/platform/ui.values.yaml \
-     -f docs/helm/platform/camoufox-worker.values.yaml
-   ```
-
-   Для обновления конфигурации используйте `helm upgrade ghost ./docs/helm/platform -f ...`.
-
-4. Проверяйте состояние релиза стандартными командами Helm/Kubernetes:
-
-   ```bash
-   helm status ghost -n ghost
-   kubectl get pods,svc,ingress -n ghost
-   ```
-
-> Чарт не создаёт Secret'ы автоматически — их нужно подготовить заранее или
-> подключить существующие через `secretEnv`/`extraEnvFromSecrets`.
+## Helm
+Helm чарты находятся в `docs/helm/platform`. Они поддерживают передачу
+переменных и секретов (`secretEnv`, `extraEnvFromSecrets`) для всех компонентов.
+Перед деплоем подготовьте namespace и Secrets (`gateway-keycloak`, `gateway-vnc`,
+`camoufox-credentials` и т.д.). После обновления значений проверяйте релиз
+командами `helm status` и `kubectl get pods,svc,ingress`.
