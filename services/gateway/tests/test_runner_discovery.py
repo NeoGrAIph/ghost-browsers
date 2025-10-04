@@ -183,7 +183,9 @@ async def test_removed_runners_drop_bindings_and_sessions() -> None:
 
 
 @pytest.mark.anyio("asyncio")
-async def test_purge_sessions_tolerates_pre_deleted_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_purge_sessions_tolerates_pre_deleted_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Session cleanup should ignore entries concurrently removed elsewhere."""
 
     now = datetime.now(tz=UTC)

@@ -18,7 +18,7 @@ router = APIRouter(prefix="/runners", tags=["runners"])
 
 
 class RunnerStatus(BaseModel):
-    """Representation of a runner enriched with health metadata for the UI."""
+    """Representation of a runner enriched with UI-facing health and capability data."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +41,10 @@ class RunnerStatus(BaseModel):
         default=None,
         description="Public WebSocket VNC template exposed through the gateway",
     )
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="Capability flags advertised by the runner (e.g. 'browser:camoufox|Camoufox')",
+    )
 
 
 @router.get("", response_model=list[RunnerStatus])
@@ -51,4 +55,9 @@ async def list_runners(
     """Return all registered runners together with their health metadata."""
 
     runners = await registry.list()
-    return [RunnerStatus.model_validate(runner) for runner in runners]
+    snapshots: list[RunnerStatus] = []
+    for runner in runners:
+        payload = runner.model_dump()
+        payload["capabilities"] = sorted(runner.capabilities)
+        snapshots.append(RunnerStatus.model_validate(payload))
+    return snapshots

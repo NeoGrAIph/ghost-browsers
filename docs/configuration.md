@@ -47,7 +47,10 @@ Gateway читает конфигурацию через `GatewaySettings.from_e
   discovery. В compose используется `static` с JSON списком `RUNNERS`.
 - `RUNNERS` — JSON массив с объектами runner (`id`, `base_url`, `total_slots`,
   шаблоны VNC URL). При изменении warm pool обновляйте `total_slots` и
-  `available_slots` для точной телеметрии.【F:services/gateway/app/config.py†L34-L108】
+  `available_slots` для точной телеметрии. UI-композер берёт справочники
+  браузеров/регионов из `capabilities`, поэтому добавьте в каждый объект
+  флаги вида `"browser:<id>|<label>"`, `"region:<id>|<label>"` и (опционально)
+  `"proxy:<id>|<label>"`.【F:services/gateway/app/config.py†L34-L108】
 - `VNC_TOKEN_SECRET`, `VNC_TOKEN_TTL_SEC` — параметры подписи токенов для VNC.
   TTL ограничен диапазоном 1–300 секунд.
 - `JWT_JWKS_URL` — JWKS документ Keycloak; локально можно оставить заглушку.

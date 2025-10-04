@@ -17,6 +17,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   - `PATCH /sessions/{id}` — accepts `SessionUpdatePayload`, merges labels/metadata, returns updated `core.Session`.
   - `POST /sessions/{id}/touch` — обновляет `last_seen_at`, продлевая TTL и публикуя heartbeat-событие.
   - `DELETE /sessions/{id}` — marks session as `DEAD`, returns terminal snapshot.
+  - `GET /sessions/{id}{path:path}` — проксирует HTTP-ресурсы noVNC (включая `/vnc/vnc.html` и статические ассеты) на локальный websockify, удаляя служебный `token` query и перенося остальные параметры.
   - `GET /metrics` — Prometheus endpoint (``text/plain; version=0.0.4``) с gauge/counter-метриками
     runner-а: `runner_active_sessions`, `runner_reaper_runs_total`,
     `runner_reaper_expired_sessions_total`, `runner_reaper_last_run_timestamp`,
@@ -129,6 +130,7 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
 - `SessionManager` гарантирует, что `session.vnc_enabled` не остаётся `True`, когда VNC-детали отсутствуют или сессия работает в headless-режиме; флаг пересчитывается при создании и апдейтах.
 - Docker-образ предполагает запуск под `pwuser`, PATH включает `.venv/bin`, а контекст сборки обязан содержать каталоги `camoufox` и `packages`, иначе Poetry не найдёт path-зависимости.
 - BuildKit cache mounts для Poetry/pip отключены: docker compose запускает сборку с rootless BuildKit и разделяемые кеши получают root-владельца, что ломает установку зависимостей (`PermissionError`).
+- Модульные тесты браузерного лаунчера фиксируют AnyIO backend на `asyncio`, поскольку реализация использует прямые вызовы `asyncio.wait_for` и не совместима с `trio`.
 
 ## Known Gaps / TODO
 - [x] Зафиксирован профиль нагрузки для in-memory издателя: 10k событий (10 параллельных продюсеров) удерживают publish avg ≤ 20 мс, peak ≤ 100 мс, drain ≤ 200 мс (см. `test_inmemory_publisher_drain_latency_under_parallel_load`).
@@ -157,7 +159,9 @@ Warm workstation preloading is handled by ``app.warm_pool.WarmPoolManager`` whic
   чтобы `poetry install` и unit-тесты проходили в офлайн-окружении без лишних слешей.
 - 2025-10-25 · ChatGPT · Перешли на официальный SDK Camoufox с тестовыми двойниками (фикстура для подмены установки, обновлённые smoke-скрипты, pin версии `0.4.11[geoip]`).
 - 2025-10-10 · gpt-5-codex · Добавлен модуль `app.browser` с управлением процессом Playwright/Camoufox и интеграционными тестами на создание/завершение сессий.
+- 2025-11-05 · gpt-5-codex · Реализован HTTP-прокси `GET /sessions/{id}{path}` для noVNC статики, повторно использующий `httpx` и фильтрацию hop-by-hop заголовков; добавлены unit-тесты на проксирование и отсутствие VNC.
 - 2025-10-11 · gpt-5-codex · Добавлены фоновые reaper-задачи, TTL-метрики в `/health`, эндпоинт `POST /sessions/{id}/touch` и покрытие тестами.
+- 2025-10-04 · gpt-5-codex · `BrowserLaunchError` теперь поднимается без цепочки к `JSONDecodeError` для не-JSON wsEndpoint payload, а тесты закреплены за `asyncio` backend AnyIO.
 - 2025-10-12 · gpt-5-codex · Интегрирован процессный noVNC-контроллер, расширены настройки VNC и обновлены unit-тесты с заглушками.
 - 2025-10-13 · gpt-5-codex · Добавлены Prometheus-метрики, эндпоинт `/metrics` и тестовое покрытие на экспорт/счётчики.
 - 2025-10-14 · gpt-5-codex · Привели код и тесты к требованиям Ruff (импорт, длины строк, ошибки) и актуализировали конфигурацию линтера.

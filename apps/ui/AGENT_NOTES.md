@@ -43,6 +43,7 @@
 - Все сетевые вызовы через `ApiClient` (`fetch` + Zod валидация).
 - SSE обязателен для консистентного кеша React Query.
 - `SessionComposer` отправляет минимум (`browserName`, `region`, `proxyId?`) и при явном выборе прокидывает `runnerId`.
+- При пустых `browser`/`region` capability-флагах в `/runners` composer блокирует отправку; runner discovery/compose обязаны публиковать хотя бы по одному значению.
 - Токен Keycloak обновляется каждые 20 сек. и при событии `onTokenExpired`.
 - `VITE_GATEWAY_URL` должен быть определён на этапе сборки (`pnpm build`/`docker build`), иначе фронтенд не сможет обратиться к Gateway.
 
@@ -61,6 +62,7 @@
 - `make ui-image UI_EXTRA_BUILD_ARGS="--build-arg VITE_GATEWAY_URL=<url>"` — проверка Docker-сборки (линт/тесты выполняются внутри таргета).
 
 ## Changelog (for agents)
+- 2025-10-04 · gpt-5-codex · Зафиксировано требование к capability-флагам `/runners`, без которых composer не отображает опции.
 - 2025-11-20 · gpt-5-codex · Переработан Dashboard по мотивам Camofleet: табличный список, инспектор с копированием WS, закреплённые превью, wallboard и обновлённые стили.
 - 2025-11-19 · gpt-5-codex · Восстановлен entry-point `index.html`, из-за отсутствия которого `pnpm build` и Docker-сборка падали, и
   вычищен lint-варнинг в тесте `SessionDetailsPanel`.

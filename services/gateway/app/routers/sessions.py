@@ -79,7 +79,18 @@ async def execute_create_command(
                 detail="Runner not found",
             )
     else:
-        runner = await runners.select_next(requires_vnc=not payload.headless)
+        requires_vnc = not payload.headless
+        runner = await runners.select_next(requires_vnc=requires_vnc)
+        if runner is None:
+            # Fall back to the next available runner even if it is currently
+            # marked unhealthy. This prevents a short "cold start" window from
+            # rejecting the very first session request before the health probe
+            # succeeds, while still preferring healthy runners whenever
+            # possible.
+            runner = await runners.select_next(
+                requires_vnc=requires_vnc,
+                require_healthy=False,
+            )
         if runner is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

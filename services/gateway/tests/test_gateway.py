@@ -13,8 +13,9 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -24,9 +25,8 @@ from jose import jwt
 from starlette import status
 from starlette.responses import StreamingResponse
 from starlette.types import Scope
-from starlette.websockets import WebSocket as StarletteWebSocket, WebSocketDisconnect
-from unittest.mock import AsyncMock
-from uuid import UUID
+from starlette.websockets import WebSocket as StarletteWebSocket
+from starlette.websockets import WebSocketDisconnect
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
@@ -530,6 +530,32 @@ def test_runners_endpoint_exposes_health_snapshot(
     assert payload[0]["last_heartbeat_at"].startswith(now.isoformat()[:19])
 
 
+def test_runners_endpoint_exposes_capabilities(
+    gateway_app: FastAPI, gateway_client: TestClient
+) -> None:
+    """The runners endpoint should propagate capability flags for UI consumption."""
+
+    registry: RunnerRegistry = gateway_app.state.runner_registry
+    capabilities = {"browser:camoufox|Camoufox", "region:eu-central|EU Central"}
+    asyncio.run(
+        registry.upsert(
+            Runner(
+                id="runner-1",
+                base_url="http://runner-1",
+                total_slots=1,
+                supports_vnc=True,
+                capabilities=frozenset(capabilities),
+            )
+        )
+    )
+
+    response = gateway_client.get("/runners")
+    assert response.status_code == 200
+    payload = response.json()
+    runner_payload = next(item for item in payload if item["id"] == "runner-1")
+    assert runner_payload["capabilities"] == sorted(capabilities)
+
+
 def test_create_command_returns_503_when_no_vnc_runner_available(
     gateway_app: FastAPI, gateway_client: TestClient
 ) -> None:
@@ -548,7 +574,10 @@ def test_create_command_returns_503_when_no_vnc_runner_available(
     )
     asyncio.run(
         registry.record_health(
-            "runner-1", healthy=False, heartbeat_at=datetime.now(tz=UTC)
+            "runner-1",
+            healthy=False,
+            heartbeat_at=datetime.now(tz=UTC),
+            supports_vnc=False,
         )
     )
 
@@ -561,6 +590,55 @@ def test_create_command_returns_503_when_no_vnc_runner_available(
     )
     assert response.status_code == 503
     assert response.json()["detail"] == "No healthy runners available"
+
+
+def test_create_command_falls_back_to_unhealthy_runner(
+    gateway_app: FastAPI,
+    gateway_client: TestClient,
+) -> None:
+    """The gateway should schedule on an unhealthy runner when none are healthy."""
+
+    registry: RunnerRegistry = gateway_app.state.runner_registry
+    asyncio.run(
+        registry.record_health(
+            "runner-1",
+            healthy=False,
+            heartbeat_at=datetime.now(tz=UTC),
+        )
+    )
+
+    session_id = uuid4()
+    now = datetime.now(tz=UTC)
+    session = Session(
+        id=session_id,
+        runner_id="runner-1",
+        status=SessionStatus.INIT,
+        created_at=now,
+        last_seen_at=now,
+        headless=False,
+        idle_ttl_seconds=300,
+    )
+
+    recorded: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return httpx.Response(201, json=session.model_dump(mode="json"))
+
+    gateway_app.state.runner_client = RunnerCommandClient(
+        transport=httpx.MockTransport(_handler)
+    )
+
+    response = gateway_client.post(
+        "/sessions/commands",
+        json={
+            "browser_name": "Chrome",
+            "region": "eu-central",
+        },
+    )
+
+    assert response.status_code == 201
+    assert recorded and recorded[0].url.path == "/sessions"
 
 
 def test_update_command_mirrors_runner_changes(

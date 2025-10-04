@@ -4,8 +4,8 @@
 FastAPI service that validates short-lived VNC access tokens and proxies HTTP/WS traffic from the public Gateway to the Runner instances.
 
 ## Interfaces
-- `GET /sessions/{session_id}` — prefers `X-VNC-Token` header; falls back to `token`/`access_token` query parameters for pre-signed URLs; proxies to Runner HTTP API.
-- `WS /sessions/{session_id}/ws` — validates `X-VNC-Token` header and the same `token`/`access_token` query fallback before establishing the bidirectional tunnel to the Runner websocket endpoint.
+- `GET /sessions/{session_id}{path:path}` — prefers `X-VNC-Token` header; falls back to `token`/`access_token` query parameters for pre-signed URLs; proxies to Runner HTTP API and transparently preserves nested asset paths (`/vnc/vnc.html`, static bundles) used by noVNC.
+- `WS /sessions/{session_id}/ws{path:path}` — validates `X-VNC-Token` header and the same `token`/`access_token` query fallback before establishing the bidirectional tunnel to the Runner websocket endpoint; extra path components (e.g. `/ws/vnc/websockify`) are forwarded unchanged.
 - `GET /metrics` — Prometheus exposition endpoint (text format) when the Prometheus backend is enabled; returns `404` when OTLP-only metrics are configured.
 
 ## Data & Models
@@ -57,6 +57,7 @@ poetry run pytest -q
 ## Changelog (for agents)
 Дата · Кем/чем изменено · Коротко *что и почему*.
 
+- 2025-11-05 · gpt-5-codex · HTTP и WS маршруты теперь поддерживают вложенные пути для noVNC ресурсов (`/vnc/vnc.html`, `/ws/vnc/websockify`) и проксируют их без изменений; добавлены регрессионные тесты и обновлён RunnerProxy.
 - 2025-10-10 · gpt-5-codex · Добавлена конфигурация метрик через настройки (Prometheus registry/OTLP exporter), обновлён `/metrics` endpoint и покрытие тестами.
 - 2025-10-09 · gpt-5-codex · Переписан WS-прокси на uvicorn/websockets `TaskGroup`-relay, добавлены интеграционные тесты с real сервером, внедрён Prometheus `/metrics` (active/total connections, token failures), расширен `TokenValidator` (nonce/iat cache) и документирован сценарий предотвращения replay.
 - 2025-10-03 · gpt-5-codex · Добавлен дефолт `VNC_GATEWAY_TOKEN_SECRET=dev-secret` для локального docker-compose и описан опциональный override.

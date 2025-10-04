@@ -123,10 +123,11 @@ class RunnerProxy:
             if key != "target_port"
         ]
 
+        request_path = request.url.path
         upstream_url = _build_upstream_url(
             base=self._http_base,
             prefix=self._http_prefix,
-            path_suffix=f"/sessions/{session_id}",
+            path_suffix=request_path,
             port_override=port_override,
             query=query_items,
         )
@@ -192,10 +193,11 @@ class RunnerProxy:
             if key != "target_port"
         ]
 
+        request_path = websocket.scope.get("path", f"/sessions/{session_id}/ws")
         upstream_url = _build_upstream_url(
             base=self._ws_base,
             prefix=self._ws_prefix,
-            path_suffix=f"/sessions/{session_id}/ws",
+            path_suffix=request_path,
             port_override=port_override,
             query=query_items,
         )

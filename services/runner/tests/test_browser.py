@@ -7,9 +7,15 @@ import json
 from typing import Any, Awaitable, Callable
 
 import pytest
-
 from app.browser import _resolve_playwright_browser_name, launch_browser
 from app.config import RunnerSettings
+
+
+@pytest.fixture()
+def anyio_backend() -> str:
+    """Run AnyIO-powered tests on the asyncio backend."""
+
+    return "asyncio"
 
 
 class _DummyStream:
@@ -58,7 +64,10 @@ class _DummyProcess:
         self.returncode = 0
 
 
-def _make_launch_stub(recorded: dict[str, Any], payload: bytes) -> Callable[..., Awaitable[_DummyProcess]]:
+def _make_launch_stub(
+    recorded: dict[str, Any],
+    payload: bytes,
+) -> Callable[..., Awaitable[_DummyProcess]]:
     async def _fake_subprocess_exec(*args: Any, **kwargs: Any) -> _DummyProcess:
         recorded["args"] = args
         recorded["env"] = kwargs.get("env", {})
@@ -67,7 +76,7 @@ def _make_launch_stub(recorded: dict[str, Any], payload: bytes) -> Callable[...,
     return _fake_subprocess_exec
 
 
-@pytest.mark.anyio
+@pytest.mark.anyio("asyncio")
 @pytest.mark.parametrize(
     "payload, expected",
     [

@@ -168,8 +168,16 @@ curl http://localhost:8082/health           # warm pool и путь к Camoufox
 curl http://localhost:8080/runners          # зарегистрированные раннеры и health-флаги
 curl -N http://localhost:8080/events        # SSE поток (в dev без JWT)
 curl http://localhost:8001/metrics          # метрики VNC прокси
+# первый POST /sessions/commands теперь проходит сразу после старта стека
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H 'Content-Type: application/json' \
+  -d '{"browser_name":"Chrome","region":"eu-central","proxy_id":null}' \
+  http://localhost:8080/sessions/commands
 ```
 UI доступен на `http://localhost:8081`, API — `http://localhost:8080` или `/api` за Nginx.
+
+Runner по умолчанию стартует в гибридном режиме warm pool (`WARM_POOL_MODE=hybrid`), поэтому первые интерактивные сессии
+используют прогретые рабочие станции, а при их отсутствии автоматически переключаются на холодный запуск.
 
 ## Потоки данных и взаимодействия
 1. Клиент (UI или внешний сервис) вызывает `POST /sessions` на gateway.

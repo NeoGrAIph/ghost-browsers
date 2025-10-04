@@ -207,7 +207,7 @@ async def launch_browser(
             await _terminate_process(process, force=True)
             raise BrowserLaunchError(
                 f"Invalid wsEndpoint payload from Playwright: {text!r}"
-            )
+            ) from None
     else:
         ws_endpoint = payload.get("wsEndpoint") if isinstance(payload, dict) else None
         if not ws_endpoint:

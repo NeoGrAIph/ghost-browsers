@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from app.config import RunnerSettings
 from app.dependencies.session_manager import (
@@ -13,7 +14,7 @@ from app.dependencies.session_manager import (
 )
 from app.events import InMemorySessionEventPublisher
 from app.main import app
-from app.session_manager import SessionCreatePayload, SessionManager
+from app.session_manager import SessionCreatePayload, SessionManager, SessionUpdatePayload
 from app.warm_pool import (
     WarmPoolReservation,
     WarmPoolSnapshot,
@@ -484,3 +485,97 @@ async def test_create_session_returns_429_when_capacity_exhausted() -> None:
 
     assert response.status_code == 429
     assert response.json()["detail"] == "no warm workstations available"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_proxy_vnc_assets_streams_response(monkeypatch) -> None:
+    """VNC asset requests are proxied to the session-specific http_url."""
+
+    clock = _ApiStubClock(datetime(2024, 4, 1, 12, 0, 0, tzinfo=UTC))
+    settings = RunnerSettings(runner_id="runner-vnc", camoufox_path="/usr/bin/camoufox")
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        settings,
+        publisher,
+        clock=clock,
+        reaper_interval_seconds=5.0,
+        vnc_controller=_MainStubVncController(),
+        warm_pool_manager=_MainStubWarmPool(),
+    )
+
+    session = await manager.create_session(SessionCreatePayload(headless=False))
+    details = SessionVncDetails(
+        http_url="http://stub-vnc.local:7010/vnc/vnc.html?path=websockify",
+        websocket_url="ws://stub-vnc.local:7010/vnc/websockify",
+        token=None,
+        token_ttl_seconds=None,
+    )
+    await manager.update_session(session.id, SessionUpdatePayload(vnc=details))
+
+    app.dependency_overrides[get_runner_settings] = lambda: settings
+    app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    expected_url = "http://stub-vnc.local:7010/vnc/vnc.html?path=websockify"
+    payload = "<html>stub</html>"
+
+    class DummyAsyncClient:
+        """Minimal :class:`httpx.AsyncClient` stand-in for deterministic assertions."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            assert kwargs.get("follow_redirects") is False
+
+        async def __aenter__(self) -> "DummyAsyncClient":  # noqa: D401 - standard signature
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: D401 - standard signature
+            return None
+
+        async def request(self, method: str, url: str, headers: dict[str, str] | None = None):
+            assert method == "GET"
+            assert url == expected_url
+            assert headers is not None
+            return httpx.Response(200, content=payload.encode("utf-8"), headers={"Content-Type": "text/html"})
+
+    monkeypatch.setattr("httpx.AsyncClient", DummyAsyncClient)
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get(
+                f"/sessions/{session.id}/vnc/vnc.html",
+                params={"token": "ignored"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.text == payload
+
+
+@pytest.mark.anyio("asyncio")
+async def test_proxy_vnc_assets_returns_404_when_vnc_missing() -> None:
+    """Requests for sessions without VNC support return 404."""
+
+    settings = RunnerSettings(runner_id="runner-vnc-404", camoufox_path="/usr/bin/camoufox")
+    publisher = InMemorySessionEventPublisher()
+    manager = SessionManager(
+        settings,
+        publisher,
+        vnc_controller=_MainStubVncController(),
+        warm_pool_manager=_MainStubWarmPool(),
+    )
+
+    session = await manager.create_session(SessionCreatePayload(headless=True))
+
+    app.dependency_overrides[get_runner_settings] = lambda: settings
+    app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_session_manager] = lambda: manager
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get(f"/sessions/{session.id}/vnc/vnc.html")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session does not expose VNC assets"

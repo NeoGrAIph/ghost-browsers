@@ -33,6 +33,7 @@ class DummyRunnerProxy:
     def __init__(self) -> None:
         self.http_calls: list[tuple[str, Request]] = []
         self.ws_sessions: list[str] = []
+        self.ws_paths: list[tuple[str, str | None]] = []
 
     async def forward_http(self, *, session_id: str, request: Request):
         self.http_calls.append((session_id, request))
@@ -40,6 +41,7 @@ class DummyRunnerProxy:
 
     async def forward_websocket(self, *, session_id: str, websocket):
         self.ws_sessions.append(session_id)
+        self.ws_paths.append((session_id, websocket.scope.get("path")))
         await websocket.accept()
         await websocket.close()
 
@@ -194,6 +196,23 @@ def test_http_endpoint_accepts_query_token(
     assert runner_proxy.http_calls[-1][0] == "session-query"
 
 
+def test_http_endpoint_proxies_nested_assets(app, token_service: VncTokenService) -> None:
+    """Nested asset paths are forwarded verbatim to the runner proxy."""
+
+    client = TestClient(app)
+    token, _ = token_service.issue("session-nested")
+    response = client.get(
+        "/sessions/session-nested/vnc/vnc.html",
+        headers={"X-VNC-Token": token},
+        params={"token": "opaque"},
+    )
+    assert response.status_code == 200
+    runner_proxy: DummyRunnerProxy = app.state.runner_proxy
+    session_id, request = runner_proxy.http_calls[-1]
+    assert session_id == "session-nested"
+    assert request.url.path == "/sessions/session-nested/vnc/vnc.html"
+
+
 def test_websocket_endpoint_invokes_proxy(app, token_service: VncTokenService) -> None:
     """WebSocket endpoint triggers the proxy when token is valid."""
 
@@ -242,6 +261,21 @@ def test_websocket_endpoint_accepts_query_token(
         pass
     runner_proxy: DummyRunnerProxy = app.state.runner_proxy
     assert "session-ws-query" in runner_proxy.ws_sessions
+
+
+def test_websocket_endpoint_supports_nested_paths(
+    app, token_service: VncTokenService
+) -> None:
+    """Additional path components after ``/ws`` are preserved for upstream proxying."""
+
+    client = TestClient(app)
+    token, _ = token_service.issue("session-ws-nested")
+    with client.websocket_connect(
+        f"/sessions/session-ws-nested/ws/vnc/websockify?token={token}"
+    ):
+        pass
+    runner_proxy: DummyRunnerProxy = app.state.runner_proxy
+    assert ("session-ws-nested", "/sessions/session-ws-nested/ws/vnc/websockify") in runner_proxy.ws_paths
 
 
 def test_metrics_report_token_validation_failures(app, token_service: VncTokenService) -> None:

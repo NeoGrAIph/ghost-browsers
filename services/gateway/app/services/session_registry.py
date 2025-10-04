@@ -5,14 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
-
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from uuid import UUID
 
 from core import Session, SessionProxySettings
 from fastapi import HTTPException, status
 from pydantic import ValidationError
-
 
 logger = logging.getLogger(__name__)
 

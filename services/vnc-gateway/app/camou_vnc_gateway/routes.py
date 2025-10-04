@@ -91,13 +91,14 @@ RunnerProxyDep = Annotated[RunnerProxy, Depends(get_runner_proxy)]
 RegistryDep = Annotated[ConnectionRegistry, Depends(get_connection_registry)]
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}{resource_path:path}")
 async def proxy_session(
     session_id: str,
     request: Request,
     validator: ValidatorDep,
     proxy: RunnerProxyDep,
     registry: RegistryDep,
+    resource_path: str,
 ):
     """Validate the token and forward the HTTP request to Runner."""
 
@@ -115,13 +116,14 @@ async def proxy_session(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.websocket("/sessions/{session_id}/ws")
+@router.websocket("/sessions/{session_id}/ws{resource_path:path}")
 async def proxy_session_ws(
     websocket: WebSocket,
     session_id: str,
     validator: ValidatorDep,
     proxy: RunnerProxyDep,
     registry: RegistryDep,
+    resource_path: str,
 ):
     """Validate the WebSocket upgrade request and relay traffic."""
 

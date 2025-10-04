@@ -6,7 +6,6 @@ from datetime import datetime
 from uuid import UUID
 
 from core import WorkstationEvent, WorkstationEventType, WorkstationMeta
-
 from pydantic import BaseModel, ConfigDict, Field
 
 

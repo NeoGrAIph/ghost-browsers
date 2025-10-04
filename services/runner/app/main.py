@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any
+from collections.abc import Iterable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
+import httpx
 from core.models import Session
-from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from .config import RunnerSettings
@@ -65,6 +68,18 @@ RunnerSettingsDep = Annotated[RunnerSettings, Depends(get_runner_settings)]
 SessionManagerDep = Annotated[SessionManager, Depends(get_session_manager)]
 
 
+_HOP_BY_HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+}
+
+
 def _isoformat_or_none(value: datetime | None) -> str | None:
     """Return an ISO formatted timestamp or ``None`` when absent.
 
@@ -82,6 +97,57 @@ def _isoformat_or_none(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.isoformat()
+
+
+def _filter_request_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """Return a header mapping safe to forward to the local noVNC server."""
+
+    filtered: dict[str, str] = {}
+    for name, value in headers:
+        lowered = name.lower()
+        if lowered in _HOP_BY_HOP_HEADERS or lowered == "host":
+            continue
+        filtered[name] = value
+    return filtered
+
+
+def _merge_query_params(
+    base_items: list[tuple[str, str]],
+    override_items: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Merge base query pairs with request overrides preserving order."""
+
+    overridden_keys = {key for key, _ in override_items}
+    merged: list[tuple[str, str]] = [
+        (key, value) for key, value in base_items if key not in overridden_keys
+    ]
+    merged.extend(override_items)
+    return merged
+
+
+def _build_vnc_upstream_url(
+    *,
+    base_http_url: str,
+    asset_path: str,
+    request: Request,
+) -> str:
+    """Compose the absolute URL for the requested VNC asset."""
+
+    parsed = urlsplit(base_http_url)
+    resolved_path = asset_path or parsed.path or "/"
+    if not resolved_path.startswith("/"):
+        resolved_path = f"/{resolved_path}"
+
+    base_query = parse_qsl(parsed.query, keep_blank_values=True)
+    override_query = [
+        (key, value)
+        for key, value in request.query_params.multi_items()
+        if key.lower() != "token"
+    ]
+    merged_query = _merge_query_params(base_query, override_query)
+    query_string = urlencode(merged_query, doseq=True)
+
+    return urlunsplit((parsed.scheme, parsed.netloc, resolved_path, query_string, ""))
 
 
 @app.get("/health", summary="Runner health probe")
@@ -248,6 +314,64 @@ async def _on_shutdown() -> None:
     """Tear down background tasks before process exit."""
 
     await get_session_manager().stop()
+
+
+@app.get("/sessions/{session_id}{asset_path:path}", summary="Serve VNC assets")
+async def proxy_vnc_assets(
+    session_id: UUID,
+    asset_path: str,
+    request: Request,
+    manager: SessionManagerDep,
+) -> Response:
+    """Relay noVNC assets for ``session_id`` to callers such as the VNC gateway."""
+
+    try:
+        session = await manager.get_session(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="session not found",
+        ) from exc
+
+    details = session.vnc
+    if details is None or details.http_url is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="session does not expose VNC assets",
+        )
+
+    upstream_url = _build_vnc_upstream_url(
+        base_http_url=str(details.http_url),
+        asset_path=asset_path,
+        request=request,
+    )
+
+    headers = _filter_request_headers(request.headers.items())
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            upstream_response = await client.request(
+                request.method,
+                upstream_url,
+                headers=headers,
+            )
+    except httpx.RequestError as exc:  # pragma: no cover - network failure guard
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="failed to fetch VNC asset from local endpoint",
+        ) from exc
+
+    response = Response(
+        content=upstream_response.content,
+        status_code=upstream_response.status_code,
+        media_type=upstream_response.headers.get("content-type"),
+    )
+    response.raw_headers = []
+    for header, value in upstream_response.headers.multi_items():
+        if header.lower() in _HOP_BY_HOP_HEADERS:
+            continue
+        response.headers.append(header, value)
+    return response
 
 
 __all__ = ["app"]

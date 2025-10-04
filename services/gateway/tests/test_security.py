@@ -25,7 +25,6 @@ from app.security import AuthenticatedUser, AuthenticationError, VncTokenService
 from tests.conftest import HttpxMockTransport  # noqa: E402
 
 
-
 class DummyAuthenticator:
     """Minimal authenticator stub used to track authentication attempts."""
 

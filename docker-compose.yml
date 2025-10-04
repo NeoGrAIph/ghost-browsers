@@ -53,6 +53,11 @@ services:
             "available_slots": 2,
             "healthy": true,
             "supports_vnc": true,
+            "capabilities": [
+              "browser:camoufox|Camoufox",
+              "region:eu-central|EU Central",
+              "proxy:direct|Direct"
+            ],
             "vnc_http_url_template": "http://localhost:8001/sessions/{id}",
             "vnc_ws_url_template": "ws://localhost:8001/sessions/{id}/ws"
           }
